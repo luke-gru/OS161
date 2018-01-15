@@ -411,6 +411,7 @@ done:
  * Driver code for the stoplight problem.
  */
 
+
 #define NCARS 64
 #define NUM_QUADRANTS 4
 #define UNKNOWN_CAR -1
@@ -481,6 +482,8 @@ turnright_wrapper(void *index, unsigned long direction)
 		cv_wait(startcv, testlock);
 	}
 	lock_release(testlock);
+	kprintf_n("%s attempting right turn from dir: %d\n", curthread->t_name, (int)direction);
+
 	turnright((uint32_t)direction, (uint32_t)index);
 	V(endsem);
 
@@ -500,6 +503,7 @@ gostraight_wrapper(void *index, unsigned long direction)
 		cv_wait(startcv, testlock);
 	}
 	lock_release(testlock);
+		kprintf_n("%s attempting straight from dir: %d\n", curthread->t_name, (int)direction);
 	gostraight((uint32_t)direction, (uint32_t)index);
 	V(endsem);
 
@@ -519,6 +523,8 @@ turnleft_wrapper(void *index, unsigned long direction)
 		cv_wait(startcv, testlock);
 	}
 	lock_release(testlock);
+	kprintf_n("%s attempting left turn from dir: %d\n", curthread->t_name, (int)direction);
+
 	turnleft((uint32_t)direction, (uint32_t)index);
 	V(endsem);
 
@@ -558,9 +564,9 @@ inQuadrant(int quadrant, uint32_t index) {
 	quadrant_array[quadrant]++;
 	car_locations[index] = quadrant;
 	all_quadrant++;
-
+	int car_dir = car_directions[index];
 	lock_release(testlock);
-	kprintf_n("%s in quadrant %d\n", curthread->t_name, quadrant);
+	kprintf_n("%s in quadrant %d (direction: %d)\n", curthread->t_name, quadrant, car_dir);
 }
 
 void
@@ -586,8 +592,23 @@ leaveIntersection(uint32_t index) {
 	}
 
 	car_locations[index] = PASSED_CAR;
+	int car_dir = car_directions[index];
 	lock_release(testlock);
-	kprintf_n("%s left the intersection\n", curthread->t_name);
+	kprintf_n("%s left the intersection (direction: %d)\n", curthread->t_name, car_dir);
+}
+
+const char *car_turn_name(int turn);
+const char *car_turn_name(int turn) {
+	switch (turn) {
+		case GO_STRAIGHT:
+			return "straight";
+		case TURN_LEFT:
+			return "left";
+		case TURN_RIGHT:
+			return "right";
+		default:
+			return "??unknown";
+	}
 }
 
 int stoplight(int nargs, char **args) {
@@ -632,13 +653,15 @@ int stoplight(int nargs, char **args) {
 
 	stoplight_init();
 
+	const char *turn_name;
 	for (i = 0; i < NCARS; i++) {
 		kprintf_t(".");
 
 		direction = random() % 4;
 		turn = random() % 3;
 
-		snprintf(name, sizeof(name), "Car Thread %d", i);
+		turn_name = kstrdup(car_turn_name(turn));
+		snprintf(name, sizeof(name), "Car Thread %d (%s)", i, turn_name);
 
 		switch (turn) {
 			case GO_STRAIGHT:

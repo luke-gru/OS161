@@ -68,14 +68,24 @@
 #include <thread.h>
 #include <test.h>
 #include <synch.h>
+#include <current.h>
 
 /*
  * Called by the driver during initialization.
  */
 
+ struct semaphore *quad0, *quad1, *quad2, *quad3, *intersection;
+ struct lock *lk;
+
+
 void
 stoplight_init() {
-	return;
+	quad0 = sem_create("Quadrant 0", 1); // lock for quadrants
+	quad1 = sem_create("Quadrant 1", 1);
+	quad2 = sem_create("Quadrant 2", 1);
+	quad3 = sem_create("Quadrant 3", 1);
+  // only 3 cars may be in the intersection at once to prevent deadlock
+  intersection = sem_create("Intersection", 3);
 }
 
 /*
@@ -86,33 +96,114 @@ void stoplight_cleanup() {
 	return;
 }
 
+const char *sem_name(struct semaphore *);
+const char *sem_name(struct semaphore *sem) {
+  if (quad0 == sem) {
+    return "quad 0";
+  } else if (quad1 == sem) {
+    return "quad 1";
+  } else if (quad2 == sem) {
+    return "quad 2";
+  } else if (quad3 == sem) {
+    return "quad 3";
+  } else if (intersection == sem) {
+    return "intersection";
+  } else {
+    panic("bad semaphore");
+    return "??";
+  }
+}
+
+void My_P(struct semaphore *);
+void My_P(struct semaphore *sem) {
+  kprintf_t("%s waiting on sem %s\n", curthread->t_name, sem_name(sem));
+  P(sem);
+}
+void My_V(struct semaphore *);
+void My_V(struct semaphore *sem) {
+  kprintf_t("%s signaling sem %s\n", curthread->t_name, sem_name(sem));
+  V(sem);
+}
+
+struct semaphore *get_sem_for_quad(int);
+struct semaphore *get_sem_for_quad(int quad) {
+  switch (quad) {
+    case 0:
+      return quad0;
+    case 1:
+      return quad1;
+    case 2:
+      return quad2;
+    case 3:
+      return quad3;
+    default:
+      panic("invalid quadrant: %d", quad);
+      return quad0;
+  }
+}
+
 void
 turnright(uint32_t direction, uint32_t index)
 {
-	(void)direction;
-	(void)index;
-	/*
-	 * Implement this function.
-	 */
-	return;
+  struct semaphore *curSem;
+  int nextQuad = (int)direction;
+  curSem = get_sem_for_quad(nextQuad);
+  P(intersection);
+  My_P(curSem);
+  inQuadrant(nextQuad, index);
+
+  leaveIntersection(index);
+
+  My_V(curSem);
+  V(intersection);
 }
+
 void
 gostraight(uint32_t direction, uint32_t index)
 {
-	(void)direction;
-	(void)index;
-	/*
-	 * Implement this function.
-	 */
-	return;
+  struct semaphore *sem1, *sem2;
+  int nextQuad = (int)direction;
+  sem1 = get_sem_for_quad(nextQuad);
+
+  P(intersection);
+  My_P(sem1);
+  inQuadrant(nextQuad, index);
+
+  nextQuad = ((int)direction + 3) % 4;
+  sem2 = get_sem_for_quad(nextQuad);
+  My_P(sem2);
+  inQuadrant(nextQuad, index);
+  My_V(sem1);
+
+  leaveIntersection(index);
+  My_V(sem2);
+  V(intersection);
 }
+
 void
 turnleft(uint32_t direction, uint32_t index)
 {
-	(void)direction;
-	(void)index;
-	/*
-	 * Implement this function.
-	 */
-	return;
+  struct semaphore *sem1, *sem2, *sem3;
+  int nextQuad = (int)direction;
+  sem1 = get_sem_for_quad(nextQuad);
+
+  P(intersection);
+  My_P(sem1);
+  inQuadrant(nextQuad, index);
+
+  nextQuad = ((int)direction + 3) % 4;
+  sem2 = get_sem_for_quad(nextQuad);
+  My_P(sem2);
+  inQuadrant(nextQuad, index);
+  My_V(sem1);
+
+  nextQuad = ((int)direction + 2) % 4;
+  sem3 = get_sem_for_quad(nextQuad);
+  My_P(sem3);
+  inQuadrant(nextQuad, index);
+  My_V(sem2);
+
+  leaveIntersection(index);
+  My_V(sem3);
+  V(intersection);
 }

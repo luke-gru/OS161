@@ -100,21 +100,21 @@ syscall(struct trapframe *tf)
 	retval = 0;
 
 	switch (callno) {
-	    case SYS_reboot:
-		err = sys_reboot(tf->tf_a0);
-		break;
+		case SYS_reboot:
+			err = sys_reboot(tf->tf_a0);
+			break;
 
-	    case SYS___time:
-		err = sys___time((userptr_t)tf->tf_a0,
-				 (userptr_t)tf->tf_a1);
-		break;
+	  case SYS___time:
+			err = sys___time((userptr_t)tf->tf_a0,
+				(userptr_t)tf->tf_a1);
+			break;
 
 	    /* Add stuff here */
 
-	    default:
-		kprintf("Unknown syscall %d\n", callno);
-		err = ENOSYS;
-		break;
+	  default:
+			kprintf("Unknown syscall %d\n", callno);
+			err = ENOSYS;
+			break;
 	}
 
 
