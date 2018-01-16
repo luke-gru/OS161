@@ -42,6 +42,7 @@
 #include <vfs.h>
 #include <sfs.h>
 #include <syscall.h>
+#include <addrspace.h>
 #include <test.h>
 #include <prompt.h>
 #include "opt-sfs.h"
@@ -119,7 +120,7 @@ common_prog(int nargs, char **args)
 {
 	struct proc *proc;
 	int result;
-	unsigned tc;
+	//unsigned tc;
 
 	/* Create a process for the new program to run in. */
 	proc = proc_create_runprogram(args[0] /* name */);
@@ -127,16 +128,25 @@ common_prog(int nargs, char **args)
 		return ENOMEM;
 	}
 
-	tc = thread_count;
-
+	//tc = thread_count;
+	pid_t child_pid = 0;
 	result = thread_fork(args[0] /* thread name */,
 			proc /* new process */,
 			cmd_progthread /* thread function */,
 			args /* thread arg */, nargs /* thread arg */);
-	if (result) {
+	if (result != 0) {
 		kprintf("thread_fork failed: %s\n", strerror(result));
 		proc_destroy(proc);
 		return result;
+	}
+	child_pid = proc->pid; // FIXME: careful, proc could be destroyed by child thread...
+	if (child_pid > 0) {
+		result = proc_waitpid(child_pid);
+		if (result != 0) {
+			kprintf("exitstatus: %d\n", result);
+		}
+	} else {
+		panic("invalid child pid: %d", (int)child_pid);
 	}
 
 	/*
@@ -146,7 +156,7 @@ common_prog(int nargs, char **args)
 
 	// Wait for all threads to finish cleanup, otherwise khu be a bit behind,
 	// especially once swapping is enabled.
-	thread_wait_for_count(tc);
+	//thread_wait_for_count(tc);
 
 	return 0;
 }
@@ -365,7 +375,7 @@ cmd_quit(int nargs, char **args)
 
 	vfs_sync();
 	sys_reboot(RB_POWEROFF);
-	thread_exit();
+	thread_exit(0);
 	return 0;
 }
 

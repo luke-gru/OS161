@@ -45,6 +45,7 @@
 #include <threadlist.h>
 #include <threadprivate.h>
 #include <proc.h>
+#include <pid.h>
 #include <current.h>
 #include <synch.h>
 #include <addrspace.h>
@@ -417,7 +418,7 @@ cpu_hatch(unsigned software_number)
 	cpu_identify(buf, sizeof(buf));
 
 	V(cpu_startup_sem);
-	thread_exit();
+	thread_exit(0);
 }
 
 /*
@@ -533,7 +534,7 @@ thread_fork(const char *name,
 	/* Thread subsystem fields */
 	newthread->t_cpu = curthread->t_cpu;
 
-	/* Attach the new thread to its process */
+	/* Attach the new thread to the current process by default */
 	if (proc == NULL) {
 		proc = curthread->t_proc;
 	}
@@ -555,6 +556,10 @@ thread_fork(const char *name,
 	++thread_count;
 	wchan_wakeall(thread_count_wchan, &thread_count_lock);
 	spinlock_release(&thread_count_lock);
+
+	if (proc != kproc && proc->pid <= 0) {
+		KASSERT(proc_init_pid(proc) == 0);
+	}
 
 	/* Set up the switchframe so entrypoint() gets called */
 	switchframe_init(newthread, entrypoint, data1, data2);
@@ -614,13 +619,13 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 
 	/* Put the thread in the right place. */
 	switch (newstate) {
-	    case S_RUN:
-		panic("Illegal S_RUN in thread_switch\n");
-	    case S_READY:
-		thread_make_runnable(cur, true /*have lock*/);
-		break;
-	    case S_SLEEP:
-		cur->t_wchan_name = wc->wc_name;
+		case S_RUN:
+			panic("Illegal S_RUN in thread_switch\n");
+	  case S_READY:
+			thread_make_runnable(cur, true /*have lock*/);
+			break;
+	  case S_SLEEP:
+			cur->t_wchan_name = wc->wc_name;
 		/*
 		 * Add the thread to the list in the wait channel, and
 		 * unlock same. To avoid a race with someone else
@@ -781,7 +786,7 @@ thread_startup(void (*entrypoint)(void *data1, unsigned long data2),
 	entrypoint(data1, data2);
 
 	/* Done. */
-	thread_exit();
+	thread_exit(0);
 }
 
 /*
@@ -799,14 +804,18 @@ thread_startup(void (*entrypoint)(void *data1, unsigned long data2),
  * your kernel in leaking memory and cause some of the test161 checks to fail.
  *
  * Does not return.
+ * TODO: destroy and remove process from process table when last thread in process
+ * (which is always right now as there are no multi-threaded user-level processes).
  */
 void
-thread_exit(void)
+thread_exit(int status)
 {
 	struct thread *cur;
 
 	cur = curthread;
-
+	if (curproc && curproc->pid != INVALID_PID) {
+		pid_setexitstatus(status); // notifies parent that could be waiting on us
+	}
 	/*
 	 * Detach from our process. You might need to move this action
 	 * around, depending on how your wait/exit works.

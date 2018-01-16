@@ -27,40 +27,23 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _SYSCALL_H_
-#define _SYSCALL_H_
+#include <types.h>
+#include <syscall.h>
+#include <proc.h>
+//#include <vfs.h>
+#include <thread.h>
+#include <current.h>
+//#include <copyinout.h>
 
+#include <lib.h>
 
-#include <cdefs.h> /* for __DEAD */
-struct trapframe; /* from <machine/trapframe.h> */
+void
+sys_exit(int status)
+{
+  // Detaches current thread from process, and turns it into zombie, then exits
+  // from it to run other threads. Exorcise gets called once in a while (when starting
+  // and switching threads, which destroys the parts of the thread that can't be destroyed
+  // while it's running.
 
-/*
- * The system call dispatcher.
- */
-
-void syscall(struct trapframe *tf);
-
-/*
- * Support functions.
- */
-
-/* Helper for fork(). You write this. */
-void enter_forked_process(struct trapframe *tf);
-
-/* Enter user mode. Does not return. */
-__DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
-		       vaddr_t stackptr, vaddr_t entrypoint);
-
-
-/*
- * Prototypes for IN-KERNEL entry points for system call implementations.
- */
-
-int sys_reboot(int code);
-int sys_write(int fd, userptr_t buf, size_t count, int *retval);
-int sys_open(userptr_t path, int openflags, mode_t mode, int *retval);
-int sys_read(int fd, userptr_t buf, size_t count, int *retval);
-void sys_exit(int status);
-int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
-
-#endif /* _SYSCALL_H_ */
+  thread_exit(status);
+}

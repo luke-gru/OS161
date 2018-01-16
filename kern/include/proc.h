@@ -37,11 +37,33 @@
  */
 
 #include <spinlock.h>
+#include <kern/fcntl.h>
+#include <lib.h>
 
 struct addrspace;
 struct thread;
 struct vnode;
 
+#define FPATH_MAX 1024
+// TODO: move to filedes.c/filedes.h
+// Open file descriptor
+struct filedes {
+	char *pathname;
+	struct vnode *node;
+	int flags;
+	size_t offset;
+};
+
+const char *special_filedes_name(int fd);
+int special_filedes_flags(int fd);
+
+struct filedes *filedes_create(char *pathname, struct vnode *node, int flags);
+void filedes_destroy(struct filedes *file_des);
+
+bool file_is_open(struct filedes *file_des);
+bool file_is_writable(struct filedes *file_des);
+bool file_is_device(struct filedes *file_des);
+bool file_is_readable(struct filedes *file_des);
 /*
  * Process structure.
  *
@@ -59,16 +81,24 @@ struct vnode;
  * thread_switch needs to be able to fetch the current address space
  * without sleeping.
  */
+#define FILE_TABLE_LIMIT 1024
+#define MAX_USERPROCS 64
+struct proc *userprocs[MAX_USERPROCS];
+
 struct proc {
 	char *p_name;			/* Name of this process */
 	struct spinlock p_lock;		/* Lock for this structure */
 	unsigned p_numthreads;		/* Number of threads in this process */
 
+	pid_t pid; // set on thread_fork
+	struct proc *p_parent;
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
 
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
+	struct filedes *file_table[FILE_TABLE_LIMIT];
+	int next_filedes_idx;
 
 	/* add more material here as needed */
 };
@@ -78,6 +108,8 @@ extern struct proc *kproc;
 
 /* Call once during system startup to allocate data structures. */
 void proc_bootstrap(void);
+int proc_init_pid(struct proc *);
+int proc_init_filetable(struct proc *);
 
 /* Create a fresh process for use by runprogram(). */
 struct proc *proc_create_runprogram(const char *name);
@@ -90,6 +122,8 @@ int proc_addthread(struct proc *proc, struct thread *t);
 
 /* Detach a thread from its process. */
 void proc_remthread(struct thread *t);
+
+int proc_waitpid(pid_t pid); // wait on child process to finish, collect its exitstatus
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

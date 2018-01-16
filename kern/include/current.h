@@ -68,7 +68,7 @@
 #if defined(__NEED_CURTHREAD)
 
 #include <cpu.h>
-#define curthread curcpu->c_curthread
+#define curthread (curcpu->c_curthread)
 #define CURCPU_EXISTS() (curcpu != NULL)
 
 #endif
@@ -76,7 +76,7 @@
 #if defined(__NEED_CURCPU)
 
 #include <thread.h>
-#define curcpu curthread->t_cpu
+#define curcpu (curthread->t_cpu)
 #define CURCPU_EXISTS() (curthread != NULL)
 
 #endif
@@ -86,8 +86,8 @@
  *
  * curproc is always the current thread's process.
  */
-
-#define curproc (curthread->t_proc)
+#include <proc.h>
+#define curproc ((struct proc *)curthread->t_proc)
 
 
 #endif /* _CURRENT_H_ */

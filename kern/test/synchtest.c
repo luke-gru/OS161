@@ -490,7 +490,7 @@ cvtestthread(void *junk, unsigned long num)
 				kprintf_n("That's too fast... you must be busy-looping\n");
 				failif(true);
 				V(donesem);
-				thread_exit();
+				thread_exit(0);
 			}
 
 			testval2 = 0xFFFFFFFF;

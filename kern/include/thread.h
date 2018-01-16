@@ -159,7 +159,7 @@ int thread_fork(const char *name, struct proc *proc,
  * Cause the current thread to exit.
  * Interrupts need not be disabled.
  */
-__DEAD void thread_exit(void);
+__DEAD void thread_exit(int status);
 
 /*
  * Cause the current thread to yield to the next runnable thread, but

@@ -27,40 +27,40 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _SYSCALL_H_
-#define _SYSCALL_H_
+#include <types.h>
+#include <syscall.h>
+#include <proc.h>
+#include <vfs.h>
+#include <current.h>
+#include <kern/errno.h>
+#include <uio.h>
+#include <vnode.h>
 
+#include <lib.h>
 
-#include <cdefs.h> /* for __DEAD */
-struct trapframe; /* from <machine/trapframe.h> */
-
-/*
- * The system call dispatcher.
- */
-
-void syscall(struct trapframe *tf);
-
-/*
- * Support functions.
- */
-
-/* Helper for fork(). You write this. */
-void enter_forked_process(struct trapframe *tf);
-
-/* Enter user mode. Does not return. */
-__DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
-		       vaddr_t stackptr, vaddr_t entrypoint);
-
-
-/*
- * Prototypes for IN-KERNEL entry points for system call implementations.
- */
-
-int sys_reboot(int code);
-int sys_write(int fd, userptr_t buf, size_t count, int *retval);
-int sys_open(userptr_t path, int openflags, mode_t mode, int *retval);
-int sys_read(int fd, userptr_t buf, size_t count, int *retval);
-void sys_exit(int status);
-int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
-
-#endif /* _SYSCALL_H_ */
+int
+sys_read(int fd, userptr_t buf, size_t count, int *retval)
+{
+  //kprintf("sys_read\n");
+  struct filedes *file_des = curproc->file_table[fd];
+  if (!file_des || !file_is_open(file_des) || !file_is_readable(file_des)) {
+    return EBADF;
+  }
+  struct iovec iov;
+  struct uio myuio;
+  int res = 0;
+  (void)res;
+  uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_READ);
+  res = VOP_READ(file_des->node, &myuio);
+  if (res != 0) {
+    return res;
+  }
+  int bytes_read = count - myuio.uio_resid;
+  //kprintf("uio bytes read: %d\n", bytes_read);
+  if (bytes_read != (int)count) {
+    panic("invalid read in sys_read: %d", bytes_read);
+  }
+  file_des->offset = myuio.uio_offset;
+  *retval = bytes_read;
+  return 0;
+}

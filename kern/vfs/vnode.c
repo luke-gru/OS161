@@ -50,7 +50,7 @@ vnode_init(struct vnode *vn, const struct vnode_ops *ops,
 	vn->vn_ops = ops;
 	vn->vn_refcount = 1;
 	spinlock_init(&vn->vn_countlock);
-	vn->vn_fs = fs;
+	vn->vn_fs = fs; // NOTE: is NULL for devices
 	vn->vn_data = fsdata;
 	return 0;
 }
@@ -175,4 +175,8 @@ vnode_check(struct vnode *v, const char *opstr)
 
 	spinlock_release(&v->vn_countlock);
 	/*vfs_biglock_release();*/
+}
+
+bool vnode_is_device(struct vnode *node) {
+	return node != NULL && node->vn_fs == NULL;
 }

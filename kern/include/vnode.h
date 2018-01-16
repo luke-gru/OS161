@@ -279,6 +279,9 @@ int vnode_init(struct vnode *, const struct vnode_ops *ops,
  */
 void vnode_cleanup(struct vnode *);
 
+bool vnode_is_device(struct vnode *node);
+
+
 /*
  * Common stubs for vnode functions that just fail, in various ways.
  */

@@ -476,7 +476,8 @@ vfs_doadd(const char *dname, int mountable, struct device *dev, struct fs *fs)
 
 /*
  * Add a new device, by name. See above for the description of
- * mountable.
+ * mountable. Used to add console ("con"), dev/null ("null") and
+ * /dev/random ("random")
  */
 int
 vfs_adddev(const char *devname, struct device *dev, int mountable)
@@ -565,7 +566,7 @@ vfs_mount(const char *devname, void *data,
 	}
 
 	KASSERT(fs != NULL);
-	KASSERT(fs != SWAP_FS); 
+	KASSERT(fs != SWAP_FS);
 
 	kd->kd_fs = fs;
 

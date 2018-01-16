@@ -87,6 +87,7 @@ as_destroy(struct addrspace *as)
 	kfree(as);
 }
 
+// activate addrspace
 void
 as_activate(void)
 {
@@ -179,4 +180,3 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	return 0;
 }
-

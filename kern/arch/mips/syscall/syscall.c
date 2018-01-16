@@ -35,6 +35,7 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
+#include <proc.h>
 
 
 /*
@@ -80,7 +81,7 @@ syscall(struct trapframe *tf)
 {
 	int callno;
 	int32_t retval;
-	int err;
+	int err = 0;
 
 	KASSERT(curthread != NULL);
 	KASSERT(curthread->t_curspl == 0);
@@ -110,7 +111,19 @@ syscall(struct trapframe *tf)
 			break;
 
 	    /* Add stuff here */
-
+		case SYS_open:
+			err = sys_open((userptr_t)tf->tf_a0, (int)tf->tf_a1, (mode_t)tf->tf_a2, &retval);
+			break;
+		case SYS_write:
+			err = sys_write((int)tf->tf_a0, (userptr_t)tf->tf_a1, (size_t)tf->tf_a2, &retval);
+			break;
+		case SYS_read:
+			err = sys_read((int)tf->tf_a0, (userptr_t)tf->tf_a1, (size_t)tf->tf_a2, &retval);
+			break;
+		case SYS__exit:
+			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread
+			panic("shouldn't return from exit");
+			break;
 	  default:
 			kprintf("Unknown syscall %d\n", callno);
 			err = ENOSYS;
@@ -157,5 +170,16 @@ syscall(struct trapframe *tf)
 void
 enter_forked_process(struct trapframe *tf)
 {
-	(void)tf;
+		/*
+	 * Succeed and return 0.
+	 */
+	tf->tf_v0 = 0;
+	tf->tf_a3 = 0;
+
+	/*
+	 * Advance the PC.
+	 */
+	tf->tf_epc += 4;
+
+	mips_usermode(tf);
 }

@@ -83,5 +83,4 @@ void devnull_create(void);
 /* Function that kicks off device probe and attach. */
 void dev_bootstrap(void);
 
-
 #endif /* _DEVICE_H_ */

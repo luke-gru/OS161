@@ -51,7 +51,7 @@ struct vnode;  /* abstract structure for an on-disk file (vnode.h) */
  * See vnode.h for direct operations on vnodes.
  * See fs.h for direct operations on filesystems/devices.
  *
- *    vfs_setcurdir - change current directory of current thread by vnode
+ *    vfs_setcurdir - change current directory of current thread to vnode
  *    vfs_clearcurdir - change current directory of current thread to "none"
  *    vfs_getcurdir - retrieve vnode of current directory of current thread
  *    vfs_sync      - force all dirty buffers to disk

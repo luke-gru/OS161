@@ -313,4 +313,3 @@ vfs_rmdir(char *path)
 
 	return result;
 }
-
