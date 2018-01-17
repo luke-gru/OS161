@@ -127,7 +127,7 @@ vfs_chdir(char *path)
 	int result;
 
 	result = vfs_lookup(path, &vn);
-	if (result) {
+	if (result != 0) {
 		return result;
 	}
 	result = vfs_setcurdir(vn);

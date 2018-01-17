@@ -29,45 +29,20 @@
 
 #include <types.h>
 #include <syscall.h>
-#include <proc.h>
+#include <limits.h>
 #include <vfs.h>
-#include <thread.h>
-#include <current.h>
-#include <uio.h>
+#include <copyinout.h>
 
 #include <lib.h>
 
-void
-sys_exit(int status)
+int
+sys_chdir(userptr_t dirbuf, int *retval)
 {
-  // Detaches current thread from process, and turns it into zombie, then exits
-  // from it to run other threads. Exorcise gets called once in a while (when starting
-  // and switching threads, which destroys the parts of the thread that can't be destroyed
-  // while it's running.
-
-  thread_exit(status);
-}
-
-int sys_getpid(int *retval)
-{
-  *retval = (int)curproc->pid;
-  return 0;
-}
-
-int sys_getcwd(userptr_t buf, size_t buflen, int *retval)
-{
-  struct iovec iov;
-  struct uio useruio;
-  int result;
-
-  uio_uinit(&iov, &useruio, buf, buflen, 0, UIO_READ);
-
-  result = vfs_getcwd(&useruio);
-  if (result) {
-    return result;
+  char fname[PATH_MAX];
+  int copy_res = copyinstr(dirbuf, fname, sizeof(fname), NULL);
+  if (copy_res != 0) {
+    return copy_res;
   }
-
-  *retval = buflen - useruio.uio_resid;
-
-  return 0;
+  *retval = vfs_chdir(fname);
+  return *retval; // 0 on success
 }

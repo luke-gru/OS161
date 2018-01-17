@@ -276,7 +276,7 @@ int proc_init_filetable(struct proc *p) {
 		if (i == 0 || i == 1 || i == 2) {
 			if (console == NULL) {
 				const char *console_name = "con:";
-				console_result = vfs_lookup((char *)kstrdup(console_name), &console);
+				console_result = vfs_lookup(kstrdup(console_name), &console);
 				if (console_result != 0) {
 					panic("couldn't grab console vnode! Result: %d", console_result); // FIXME
 				}

@@ -120,6 +120,15 @@ syscall(struct trapframe *tf)
 		case SYS_read:
 			err = sys_read((int)tf->tf_a0, (userptr_t)tf->tf_a1, (size_t)tf->tf_a2, &retval);
 			break;
+		case SYS_getpid:
+			err = sys_getpid(&retval);
+			break;
+		case SYS_chdir:
+			err = sys_chdir((userptr_t)tf->tf_a0, &retval);
+			break;
+		case SYS___getcwd:
+			err = sys_getcwd((userptr_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);
+			break;
 		case SYS__exit:
 			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread
 			panic("shouldn't return from exit");

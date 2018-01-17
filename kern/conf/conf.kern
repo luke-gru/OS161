@@ -392,6 +392,7 @@ file      syscall/sys_open.c
 file      syscall/sys_write.c
 file      syscall/sys_read.c
 file      syscall/proc_syscalls.c
+file      syscall/file_syscalls.c
 #
 # Startup and initialization
 #
