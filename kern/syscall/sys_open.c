@@ -50,9 +50,8 @@ sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval)
   if (result < 0) {
     return result;
   }
-  struct filedes *new_filedes = filedes_create(fname, node, openflags);
-  curproc->file_table[curproc->next_filedes_idx] = new_filedes;
-  curproc->next_filedes_idx++;
-	*fd_retval = curproc->next_filedes_idx - 1; // file descriptor int
+  struct filedes *new_filedes = filedes_create(curproc, fname, node, openflags, -1);
+  // TODO: check return value
+	*fd_retval = new_filedes->ft_idx; // file descriptor int
   return 0;
 }

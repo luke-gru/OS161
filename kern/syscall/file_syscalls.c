@@ -32,8 +32,9 @@
 #include <limits.h>
 #include <vfs.h>
 #include <copyinout.h>
-
+#include <proc.h>
 #include <lib.h>
+#include <stat.h>
 
 int
 sys_chdir(userptr_t dirbuf, int *retval)
@@ -43,6 +44,48 @@ sys_chdir(userptr_t dirbuf, int *retval)
   if (copy_res != 0) {
     return copy_res;
   }
-  *retval = vfs_chdir(fname);
+  *retval = vfs_chdir(fname); // sets curproc->p_pwd
   return *retval; // 0 on success
+}
+
+int sys_close(int fd, int *retval) {
+  int res = file_close(fd);
+  *retval = res;
+  return res;
+}
+
+int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
+  (void)fd;
+  struct stat st;
+  // TODO: get info from VFS
+  st.st_size = 0;
+  st.st_mode = 0;
+  st.st_nlink = 0;
+  st.st_blocks = 0;
+  st.st_dev = 0;
+  st.st_ino = 0;
+  st.st_rdev = 0;
+  st.st_atime = 0; st.st_ctime = 0; st.st_mtime = 0;
+  st.st_atimensec = 0; st.st_ctimensec = 0; st.st_mtimensec = 0;
+  st.st_uid = 0;
+  st.st_gid = 0;
+  st.st_gen = 0;
+  st.st_blksize = 0;
+  copyout(&st, stat_buf, sizeof(struct stat));
+  *retval = 0;
+  return 0;
+}
+
+int sys_mkdir(userptr_t pathname, mode_t mode, int *retval) {
+  char path[PATH_MAX];
+  copyinstr(pathname, (void*)&path, sizeof(path), NULL);
+  int result = vfs_mkdir(path, mode);
+  *retval = result;
+  return result;
+}
+
+int sys_rmdir(userptr_t pathname, int *retval) {
+  (void)pathname;
+  (void)retval;
+  return 0;
 }

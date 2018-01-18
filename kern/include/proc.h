@@ -43,6 +43,7 @@
 struct addrspace;
 struct thread;
 struct vnode;
+struct proc;
 
 #define FPATH_MAX 1024
 // TODO: move to filedes.c/filedes.h
@@ -52,18 +53,23 @@ struct filedes {
 	struct vnode *node;
 	int flags;
 	size_t offset;
+	int ft_idx; // index into file table
 };
 
 const char *special_filedes_name(int fd);
 int special_filedes_flags(int fd);
 
-struct filedes *filedes_create(char *pathname, struct vnode *node, int flags);
-void filedes_destroy(struct filedes *file_des);
+struct filedes *filetable_get(struct proc *p, int fd);
+int filetable_put(struct proc *p, struct filedes *file_des, int idx);
+
+struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
+void filedes_destroy(struct proc *p, struct filedes *file_des);
 
 bool file_is_open(struct filedes *file_des);
 bool file_is_writable(struct filedes *file_des);
 bool file_is_device(struct filedes *file_des);
 bool file_is_readable(struct filedes *file_des);
+int  file_close(int fd);
 /*
  * Process structure.
  *

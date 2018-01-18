@@ -57,13 +57,20 @@ __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
  */
 
 int sys_reboot(int code);
+
 int sys_write(int fd, userptr_t buf, size_t count, int *retval);
 int sys_open(userptr_t path, int openflags, mode_t mode, int *retval);
+int sys_close(int fd, int *retval);
 int sys_read(int fd, userptr_t buf, size_t count, int *retval);
+int sys_fstat(int fd, userptr_t stat_buf, int *retval);
+int sys_mkdir(userptr_t pathname, mode_t mode, int *retval);
+int sys_rmdir(userptr_t pathname, int *retval);
+
 void sys_exit(int status);
 int sys_chdir(userptr_t dir, int *retval);
 int sys_getpid(int *retval);
 int sys_getcwd(userptr_t ubuf, size_t ubuf_len, int *retval);
+
 int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 
 #endif /* _SYSCALL_H_ */

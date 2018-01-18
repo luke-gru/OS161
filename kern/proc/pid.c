@@ -6,10 +6,7 @@
 #include <types.h>
 #include <kern/errno.h>
 #include <limits.h> // PID_MIN, PID_MAX
-//#include <kern/unistd.h>
 #include <lib.h>
-//#include <array.h>
-//#include <clock.h>
 #include <thread.h>
 #include <synch.h>
 #include <pid.h>
@@ -345,11 +342,10 @@ pid_setexitstatus(int status)
 
 /*
  * Waits on a pid, returning the exit status when it's available.
- * status and ret are a kernel pointers, but pid/flags may come from
+ * status and ret are kernel pointers, but pid/flags may come from
  * userland and may thus be maliciously invalid.
  *
- * status may be null, in which case the status is thrown away. ret
- * may only be null if WNOHANG is not set.
+ * status may be null, in which case the status is thrown away.
  */
 int
 pid_wait(pid_t theirpid, int *status)

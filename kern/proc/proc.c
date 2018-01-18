@@ -82,22 +82,60 @@ int special_filedes_flags(int i) {
 			return -1;
 	}
 }
-struct filedes *filedes_create(char *pathname, struct vnode *node, int flags) {
+struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
 	file_des->pathname = kstrdup(pathname);
 	file_des->node = node;
 	file_des->flags = flags;
 	file_des->offset = 0;
+	KASSERT(filetable_put(p, file_des, table_idx) != -1); // TODO: return error when too many files being opened
 	return file_des;
 }
-void filedes_destroy(struct filedes *file_des) {
+void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	kfree(file_des->pathname);
-	VOP_DECREF(file_des->node);
+	vfs_close(file_des->node); // just decrements reference, doesn't necessarily close the file, if others have it open
+	filetable_put(p, NULL, file_des->ft_idx);
 	kfree(file_des);
 }
 
+int filetable_put(struct proc *p, struct filedes *fd, int idx) {
+	if (!p) p = curproc;
+	struct filedes **fd_tbl = p->file_table;
+	// add or clear an fd from the table, given an index
+	if (idx >= 0) {
+		if (fd_tbl[idx] != NULL && fd != NULL) {
+			panic("filetable_put can't overwrite an fd: %d", idx); // FIXME
+			return -1;
+		}
+		fd_tbl[idx] = fd; // NOTE: can be NULL
+		if (fd) {
+			fd->ft_idx = idx;
+		}
+		return idx;
+	} else { // find first non-NULL index and add the fd there
+		for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
+			if (fd_tbl[i] == NULL) {
+				fd_tbl[i] = fd;
+				fd->ft_idx = i;
+				return i;
+			}
+		}
+	}
+	panic("too many open files"); // FIXME
+	return -1;
+}
+
+struct filedes *filetable_get(struct proc *p, int fd) {
+	KASSERT(fd >= 0);
+	if (fd < 0 || fd >= FILE_TABLE_LIMIT) {
+		return NULL;
+	}
+	if (!p) p = curproc;
+	return p->file_table[fd];
+}
+
 bool file_is_open(struct filedes *file_des) {
-	return file_des != NULL;
+	return filetable_get(curproc, file_des->ft_idx) != NULL;
 }
 bool file_is_readable(struct filedes *file_des) {
 	KASSERT(file_des);
@@ -112,6 +150,16 @@ bool file_is_writable(struct filedes *file_des) {
 bool file_is_device(struct filedes *file_des) {
 	KASSERT(file_des);
 	return vnode_is_device(file_des->node);
+}
+
+int file_close(int fd) {
+	struct filedes *file_des = filetable_get(curproc, fd);
+	if (!file_des) {
+		return -1; // deal with error better
+	}
+	filedes_destroy(curproc, file_des);
+	KASSERT(curproc->file_table[fd] == NULL);
+	return 0;
 }
 
 /*
@@ -183,9 +231,9 @@ proc_destroy(struct proc *proc)
 	}
 	// TODO: decrement reference, don't NULL out (for fork)
 	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
-		if (proc->file_table[i] != NULL) {
-			filedes_destroy(proc->file_table[i]);
-			proc->file_table[i] = NULL;
+		struct filedes *file_des;
+		if ((file_des = filetable_get(proc, i)) != NULL) {
+			filedes_destroy(proc, file_des);
 		}
 	}
 
@@ -268,31 +316,39 @@ proc_bootstrap(void)
 	pid_bootstrap();
 }
 
+/*
+ * Initialize process file table to hold only STDIN, STDOUT, STDERR
+ */
 int proc_init_filetable(struct proc *p) {
-	struct filedes **table = p->file_table;
 	struct vnode *console = NULL;
 	int console_result = 0;
-	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
-		if (i == 0 || i == 1 || i == 2) {
-			if (console == NULL) {
-				const char *console_name = "con:";
-				console_result = vfs_lookup(kstrdup(console_name), &console);
-				if (console_result != 0) {
-					panic("couldn't grab console vnode! Result: %d", console_result); // FIXME
-				}
-				KASSERT(console != NULL);
-			}
-			struct filedes *console_filedes = filedes_create(
-				(char *)special_filedes_name(i),
-				console,
-				special_filedes_flags(i)
-			);
-			KASSERT(console_filedes);
-			table[i] = console_filedes; // returns vnode* for the console device
-		} else {
-			table[i] = NULL; // FIXME: initialize from parent on fork
-		}
+	const char *console_name = "con:";
+	console_result = vfs_lookup(kstrdup(console_name), &console);
+	if (console_result != 0) {
+		panic("couldn't grab console vnode! Result: %d", console_result); // FIXME
 	}
+	KASSERT(console != NULL);
+	filedes_create(
+		p,
+		(char*)special_filedes_name(0),
+		console,
+		special_filedes_flags(0),
+		0
+	);
+	filedes_create(
+		p,
+		(char*)special_filedes_name(1),
+		console,
+		special_filedes_flags(1),
+		1
+	);
+	filedes_create(
+		p,
+		(char*)special_filedes_name(2),
+		console,
+		special_filedes_flags(2),
+		2
+	);
 	return 0;
 }
 

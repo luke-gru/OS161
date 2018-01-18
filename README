@@ -1,0 +1,38 @@
+OS161 Design Document
+
+Syscall from userspace:
+
+runprogram from menu.c:
+1) start in kernel mode with only kernel process after bootup
+2) create new process with proc_create_runprogram, has no address space, pid or parent,
+but does have file table
+3) Call thread_fork, passing the new process and arguments passed from cmdline menu,
+as well as function to call. Function just calls runprogram with the args.
+4) kernel process calls waitpid on the userspace process, waiting for its termination
+5) thread_fork:
+  attaches new thread struct to passed in process (proc_addthread). Initializes kernel stack memory for
+  thread (t_stack) and sets CPU to CPU of current thread. Sets thread to S_READY status.
+  Sets up switchframe to point to entrypoint function (switchframe_init). Initializes pidinfo of
+  passed in process. Add thread to CPU's runqueue. Unidle CPU if it's not the currently
+  running CPU of the thread.
+6) When new thread runs: (TODO: document context switch)
+  runprogram creates a new address space for the process, calls load_elf to get the entrypoint
+  address (main) for the passed in ELF executable. We then define our VM stack pointer, which right
+  now is hard-coded to be the stack pointer to the userspace VM address. We then call enter_new_process,
+  which enters user mode and doesn't return, passing the stackptr and entrypoint.
+7) This calls mips_usermode with an artificial trapframe, setting sp to top of stack and pc to
+entrypoint. mips_usermode is for functions entering usermode for first time. Calls asm_usermode,
+which calls exception_return in ASM, jumps to saved trapframe pc (entrypoint).
+8) We're now in userspace! A syscall is handled in trap.c (mips_trap), which is called
+from exception-mips1.S assembly, after preparing the trapframe for the kernel's C code handler.
+9) The file userland/lib/libc/arch/mips/syscalls-mips.S is responsible for the assembly that calls syscall command
+from userland, which generates a hardware interrupt. We trap the exception in kernel land and handle it in mips_trap, setting
+the trapframe's register contents (which are on the userland stack so they can get the return value after the syscall.
+
+
+Context switch:
+* Right now context switches (thread_switch) only occur because of wchan_sleep, and hardclock, which calls
+thread_yield and schedule (which is empty right now).
+
+thread_yield calls thread_switch, which stops the current thread and executes the new thread
+this is done by switchframe_switch, which is in switch.S assembly.

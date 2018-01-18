@@ -378,7 +378,7 @@ mips_usermode(struct trapframe *tf)
 	cpu_irqoff();
 
 	cputhreads[curcpu->c_number] = (vaddr_t)curthread;
-	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE;
+	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE; // top of stack (highest addr)
 
 	/*
 	 * This assertion will fail if either

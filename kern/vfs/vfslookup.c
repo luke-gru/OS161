@@ -123,7 +123,7 @@ vfs_clearbootfs(void)
 /*
  * Common code to pull the device name, if any, off the front of a
  * path and choose the vnode to begin the name lookup relative to.
- * FIXME: munges *path
+ * FIXME: munges *path and *subpath
  */
 
 static

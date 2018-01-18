@@ -120,6 +120,18 @@ syscall(struct trapframe *tf)
 		case SYS_read:
 			err = sys_read((int)tf->tf_a0, (userptr_t)tf->tf_a1, (size_t)tf->tf_a2, &retval);
 			break;
+		case SYS_close:
+			err = sys_close((int)tf->tf_a0, &retval);
+			break;
+		case SYS_fstat:
+			err = sys_fstat((int)tf->tf_a0, (userptr_t)tf->tf_a1, &retval);
+			break;
+		case SYS_mkdir:
+			err = sys_mkdir((userptr_t)tf->tf_a0, (mode_t)tf->tf_a1, &retval);
+			break;
+		case SYS_rmdir:
+			err = sys_rmdir((userptr_t)tf->tf_a0, &retval);
+			break;
 		case SYS_getpid:
 			err = sys_getpid(&retval);
 			break;

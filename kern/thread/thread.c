@@ -539,7 +539,7 @@ thread_fork(const char *name,
 		proc = curthread->t_proc;
 	}
 	result = proc_addthread(proc, newthread);
-	if (result) {
+	if (result != 0) {
 		/* thread_destroy will clean up the stack */
 		thread_destroy(newthread);
 		return result;
@@ -566,18 +566,18 @@ thread_fork(const char *name,
 
 	/* Lock the current cpu's run queue and make the new thread runnable */
 	thread_make_runnable(newthread, false);
-
+	// doesn't actually run the thread, but it will get run on some next call to thread_switch
 	return 0;
 }
 
 /*
  * High level, machine-independent context switch code.
  *
- * The current thread is queued appropriately and its state is changed
+ * The current thread is queued appropriately in the runqueue and its state is changed
  * to NEWSTATE; another thread to run is selected and switched to.
  *
  * If NEWSTATE is S_SLEEP, the thread is queued on the wait channel
- * WC, protected by the spinlock LK. Otherwise WC and Lk should be
+ * WC, protected by the spinlock LK. Otherwise WC and LK should be
  * NULL.
  */
 static
@@ -616,6 +616,18 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 		splx(spl);
 		return;
 	}
+	if (newstate == cur->t_state) {
+		kprintf("CPU %d: context switch for thread %s from %s to %s\n",
+			cur->t_cpu->c_number,
+			cur->t_name,
+			threadstate_name(cur->t_state),
+			threadstate_name(newstate)
+		);
+		spinlock_release(&curcpu->c_runqueue_lock);
+		splx(spl);
+		return;
+	}
+
 
 	/* Put the thread in the right place. */
 	switch (newstate) {
@@ -634,13 +646,15 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 		 * caller of wchan_sleep locked it until the thread is
 		 * on the list.
 		 */
-		threadlist_addtail(&wc->wc_threads, cur);
-		spinlock_release(lk);
-		break;
-	    case S_ZOMBIE:
-		cur->t_wchan_name = "ZOMBIE";
-		threadlist_addtail(&curcpu->c_zombies, cur);
-		break;
+			threadlist_addtail(&wc->wc_threads, cur);
+			spinlock_release(lk);
+			break;
+	  case S_ZOMBIE:
+			cur->t_wchan_name = "ZOMBIE";
+			threadlist_addtail(&curcpu->c_zombies, cur);
+			break;
+		default:
+			panic("invalid thread state: %d", (int)newstate);
 	}
 	cur->t_state = newstate;
 
@@ -661,7 +675,7 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 	 * lock to look at it, this should not be visible or matter.
 	 */
 
-	/* The current cpu is now idle. */
+	/* The current cpu is now considered idle. */
 	curcpu->c_isidle = true;
 	do {
 		next = threadlist_remhead(&curcpu->c_runqueue);
@@ -683,7 +697,7 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 	curcpu->c_curthread = next;
 	curthread = next;
 
-	/* do the switch (in assembler in switch.S) */
+	/* do the switch (in assembler in switch.S). Swaps registers and pc */
 	switchframe_switch(&cur->t_context, &next->t_context);
 
 	/*
@@ -838,7 +852,7 @@ thread_exit(int status)
 
 	/* Interrupts off on this processor */
 	splhigh();
-	thread_switch(S_ZOMBIE, NULL, NULL);
+	thread_switch(S_ZOMBIE, NULL, NULL); // run new thread
 	panic("braaaaaaaiiiiiiiiiiinssssss\n");
 }
 
@@ -1262,4 +1276,15 @@ void thread_wait_for_count(unsigned tc)
 		wchan_sleep(thread_count_wchan, &thread_count_lock);
 	}
 	spinlock_release(&thread_count_lock);
+}
+
+const char *threadstate_name(threadstate_t state) {
+	switch (state) {
+		case S_RUN: return "RUNNING";
+		case S_READY: return "READY";
+		case S_SLEEP: return "SLEEPING";
+		case S_ZOMBIE: return "ZOMBIE";
+		default:
+			panic("invalid thread state: %d", (int)state);
+	}
 }

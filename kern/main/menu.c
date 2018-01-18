@@ -92,7 +92,7 @@ cmd_progthread(void *ptr, unsigned long nargs)
 
 	strcpy(progname, args[0]);
 
-	result = runprogram(progname);
+	result = runprogram(progname, args, nargs);
 	if (result) {
 		kprintf("Running program %s failed: %s\n", args[0],
 			strerror(result));
@@ -128,7 +128,6 @@ common_prog(int nargs, char **args)
 		return ENOMEM;
 	}
 
-	//tc = thread_count;
 	pid_t child_pid = 0;
 	result = thread_fork(args[0] /* thread name */,
 			proc /* new process */,

@@ -89,7 +89,7 @@ vfs_setcurdir(struct vnode *dir)
 	curproc->p_cwd = dir;
 	spinlock_release(&curproc->p_lock);
 
-	if (old!=NULL) {
+	if (old != NULL) {
 		VOP_DECREF(old);
 	}
 
