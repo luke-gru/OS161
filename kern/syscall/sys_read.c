@@ -43,7 +43,8 @@ sys_read(int fd, userptr_t buf, size_t count, int *retval)
 {
   //kprintf("sys_read\n");
   struct filedes *file_des = curproc->file_table[fd];
-  if (!file_des || !file_is_open(file_des) || !file_is_readable(file_des)) {
+  if (!file_des || !file_is_open(file_des)) return EBADF;
+  if (!file_is_device(file_des) && !file_is_readable(file_des)) {
     return EBADF;
   }
   struct iovec iov;
@@ -56,10 +57,6 @@ sys_read(int fd, userptr_t buf, size_t count, int *retval)
     return res;
   }
   int bytes_read = count - myuio.uio_resid;
-  //kprintf("uio bytes read: %d\n", bytes_read);
-  if (bytes_read != (int)count) {
-    panic("invalid read in sys_read: %d", bytes_read);
-  }
   file_des->offset = myuio.uio_offset;
   *retval = bytes_read;
   return 0;

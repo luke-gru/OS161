@@ -85,7 +85,9 @@ int sys_mkdir(userptr_t pathname, mode_t mode, int *retval) {
 }
 
 int sys_rmdir(userptr_t pathname, int *retval) {
-  (void)pathname;
-  (void)retval;
-  return 0;
+  char path[PATH_MAX];
+  copyinstr(pathname, (void*)&path, sizeof(path), NULL);
+  int result = vfs_rmdir(path);
+  *retval = result;
+  return result;
 }

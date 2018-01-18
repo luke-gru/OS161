@@ -45,6 +45,158 @@
 #include <syscall.h>
 #include <test.h>
 #include <thread.h>
+#include <synch.h>
+#include <copyinout.h>
+/*
+ * argvdata struct
+ * temporary storage for argv, global and synchronized.  this is because
+ * a large number of simultaneous execv's could bring the system to its knees
+ * with a huge number of kmallocs (and even reasonable sized command lines
+ * might not fit on the stack).
+ */
+struct argvdata {
+	char *buffer;
+	char *bufend;
+	size_t *offsets; // pointer offsets into argv buffer
+	int nargs;
+	struct lock *lock;
+};
+
+static struct argvdata argdata;
+
+static
+void
+argvdata_bootstrap(void)
+{
+	argdata.lock = lock_create("argvlock");
+	if (argdata.lock == NULL) {
+		panic("Cannot create argv data lock");
+	}
+}
+
+// static
+// void
+// argvdata_shutdown(void)
+// {
+// 	lock_destroy(argdata.lock);
+// }
+
+static
+void argvdata_clear() {
+	KASSERT(lock_do_i_hold(argdata.lock));
+	if (argdata.buffer) kfree(argdata.buffer);
+	argdata.bufend = NULL;
+	argdata.buffer = NULL;
+	if (argdata.offsets) kfree(argdata.offsets);
+	argdata.offsets = NULL;
+	argdata.nargs = 0;
+}
+
+// NOTE: must hold argdata.lock
+static
+int argvdata_fill(char *progname, char **args, int argc) {
+	argvdata_clear();
+	argdata.offsets = kmalloc(sizeof(size_t) * argc);
+	size_t buflen = 0;
+	for (int i = 0; i < argc; i++) {
+		if (!args[i]) break;
+		kprintf("argvdata fill %d: %s\n", i, args[i]);
+		if (i == 0) {
+			KASSERT(strcmp(progname, args[i]) == 0);
+			argdata.offsets[i] = 0;
+		} else {
+			argdata.offsets[i] = buflen + 1; // current string arg pointer offset
+		}
+
+		buflen += strlen(args[i]) + 1; // add 1 for NULL character
+	}
+	argdata.buffer = kmalloc(buflen);
+	char *bufp = argdata.buffer;
+	// copy args into buffer
+	for (int i = 0; i < argc; i++) {
+		size_t arg_sz = strlen(args[i]) + 1; // with terminating NULL
+		memcpy(bufp, (const void *)args[i], arg_sz);
+		KASSERT(strcmp(bufp, args[i]) == 0);
+		KASSERT(argdata.buffer + argdata.offsets[i] == bufp);
+		if (i+1 == argc) { // last arg
+			// do nothing
+		} else { // more args
+			bufp += arg_sz + 1;
+		}
+	}
+	argdata.bufend = argdata.buffer + buflen + 1;
+	argdata.nargs = argc;
+	return 0;
+}
+
+/*
+ * copyout_args
+ * copies the argv out of the kernel space argvdata into the userspace.
+ * read through the comments to see how it works.
+ */
+static
+int
+copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
+{
+	userptr_t argbase, userargv, arg;
+	vaddr_t stack;
+	size_t buflen;
+	int i, result;
+
+	KASSERT(lock_do_i_hold(ad->lock));
+
+	/* we use the buflen a lot, precalc it */
+	buflen = ad->bufend - ad->buffer;
+
+	/* begin the stack at the passed in top */
+	stack = *stackptr;
+
+	/*
+	 * copy the block of strings to the top of the user stack.
+	 * we can do it as one big blob.
+	 */
+
+	/* figure out where the strings start */
+	stack -= buflen;
+
+	/* align to sizeof(void *) boundary, this is the argbase */
+	stack -= (stack & (sizeof(void *) - 1));
+	argbase = (userptr_t)stack;
+
+	/* now just copyout the whole block of arg strings  */
+	result = copyout(ad->buffer, argbase, buflen);
+	if (result) {
+		return result;
+	}
+
+	/*
+	 * now copy out the argv array itself.
+	 * the stack pointer is already suitably aligned.
+	 * allow an extra slot for the NULL that terminates the vector.
+	 */
+	stack -= (ad->nargs + 1)*sizeof(userptr_t);
+	userargv = (userptr_t)stack;
+
+	for (i = 0; i < ad->nargs; i++) {
+		arg = argbase + ad->offsets[i];
+		result = copyout(&arg, userargv, sizeof(userptr_t));
+		if (result) {
+			return result;
+		}
+		userargv += sizeof(userptr_t);
+	}
+
+	/* NULL terminate it */
+	arg = NULL;
+	result = copyout(&arg, userargv, sizeof(userptr_t));
+	if (result) {
+		return result;
+	}
+
+	*argv = (userptr_t)stack;
+	*stackptr = stack;
+	return 0;
+}
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -62,7 +214,7 @@ runprogram(char *progname, char **args, int nargs)
 
 	/* Open the file. */
 	result = vfs_open(progname, O_RDONLY, 0, &v);
-	if (result) {
+	if (result != 0) {
 		return result;
 	}
 
@@ -82,7 +234,7 @@ runprogram(char *progname, char **args, int nargs)
 
 	/* Load the executable, setting fields of curproc->p_addrspace. */
 	result = load_elf(v, &entrypoint);
-	if (result) {
+	if (result != 0) {
 		/* p_addrspace will go away when curproc is destroyed */
 		vfs_close(v);
 		return result;
@@ -93,13 +245,20 @@ runprogram(char *progname, char **args, int nargs)
 
 	/* Define the user stack in the address space */
 	result = as_define_stack(as, &stackptr);
-	if (result) {
+	if (result != 0) {
 		/* p_addrspace will go away when curproc is destroyed */
 		return result;
 	}
-	(void)args;
+
+	if (!argdata.lock) argvdata_bootstrap(); // TODO: move to bootstrap code
+	lock_acquire(argdata.lock);
+	argvdata_fill(progname, args, nargs);
+	userptr_t userspace_argv_ary;
+	copyout_args(&argdata, &userspace_argv_ary, &stackptr);
+	lock_release(argdata.lock);
+
 	/* Warp to user mode. */
-	enter_new_process(nargs /*argc*/, NULL /*userspace addr of argv*/,
+	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
 			  NULL /*userspace addr of environment*/,
 			  stackptr, entrypoint);
 
