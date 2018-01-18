@@ -55,10 +55,10 @@
  * might not fit on the stack).
  */
 struct argvdata {
-	char *buffer;
-	char *bufend;
-	size_t *offsets; // pointer offsets into argv buffer
-	int nargs;
+	char *buffer; // buffer for array of argument strings
+	char *bufend; // 1 past end of buffer
+	size_t *offsets; // pointer offsets into argv string buffer
+	int nargs; // same as argc, must be at least 1 (progname)
 	struct lock *lock;
 };
 
@@ -100,12 +100,9 @@ int argvdata_fill(char *progname, char **args, int argc) {
 	size_t buflen = 0;
 	for (int i = 0; i < argc; i++) {
 		if (!args[i]) break;
-		kprintf("argvdata fill %d: %s\n", i, args[i]);
+		//kprintf("argvdata fill %d: '%s'\n", i, args[i]);
 		if (i == 0) {
 			KASSERT(strcmp(progname, args[i]) == 0);
-			argdata.offsets[i] = 0;
-		} else {
-			argdata.offsets[i] = buflen + 1; // current string arg pointer offset
 		}
 
 		buflen += strlen(args[i]) + 1; // add 1 for NULL character
@@ -117,12 +114,9 @@ int argvdata_fill(char *progname, char **args, int argc) {
 		size_t arg_sz = strlen(args[i]) + 1; // with terminating NULL
 		memcpy(bufp, (const void *)args[i], arg_sz);
 		KASSERT(strcmp(bufp, args[i]) == 0);
+		argdata.offsets[i] = bufp - argdata.buffer;
 		KASSERT(argdata.buffer + argdata.offsets[i] == bufp);
-		if (i+1 == argc) { // last arg
-			// do nothing
-		} else { // more args
-			bufp += arg_sz + 1;
-		}
+		bufp += arg_sz + 1;
 	}
 	argdata.bufend = argdata.buffer + buflen + 1;
 	argdata.nargs = argc;

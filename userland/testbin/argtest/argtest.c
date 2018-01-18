@@ -54,7 +54,7 @@ main(int argc, char *argv[])
 		if (tmp==NULL) {
 			tmp = "[NULL]";
 		}
-		tprintf("argv[%d]: %s\n", i, tmp);
+		tprintf("argv[%d]: '%s'\n", i, tmp);
 		secprintf(SECRET, tmp, "/testbin/argtest");
 	}
 
