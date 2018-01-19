@@ -84,6 +84,7 @@ bool file_is_readable(char *path);
 bool file_is_writable(char *path);
 int  file_close(int fd);
 bool file_exists(char *path);
+bool file_is_dir(int fd);
 struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode);
 int file_write(struct filedes *file_des, struct uio *io, int *errcode);
 int file_read(struct filedes *file_des, struct uio *io, int *errcode);

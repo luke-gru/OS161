@@ -51,7 +51,7 @@
 #include <vfs.h>
 #include <pid.h>
 #include <kern/errno.h>
-#include <kern/stat.h>
+#include <stat.h>
 #include <kern/seek.h>
 #include <uio.h>
 
@@ -222,6 +222,18 @@ int file_close(int fd) {
 bool file_exists(char *path) {
 	(void)path;
 	return true; // TODO
+}
+
+bool file_is_dir(int fd) {
+	struct filedes *file_des = filetable_get(curproc, fd);
+	if (!file_des) return false;
+	struct stat st;
+	int errcode;
+	int res = filedes_stat(file_des, &st, &errcode);
+	if (res != 0) {
+		return false; // TODO: propagate error? add param *errcode?
+	}
+	return S_ISDIR(st.st_mode);
 }
 
 // Try opening or creating the file, returning non-NULL on success. On error, *retval is set

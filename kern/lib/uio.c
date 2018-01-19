@@ -92,10 +92,10 @@ uiomove(void *ptr, size_t n, struct uio *uio)
 			    break;
 		    case UIO_USERSPACE:
 		    case UIO_USERISPACE:
-			    if (uio->uio_rw == UIO_READ) {
+			    if (uio->uio_rw == UIO_READ) { // copy memory from kernel space to user space
 				    result = copyout(ptr, iov->iov_ubase,size);
 			    }
-			    else {
+			    else { // copy memory from userspace to kernel space
 				    result = copyin(iov->iov_ubase, ptr, size);
 			    }
 			    if (result) {

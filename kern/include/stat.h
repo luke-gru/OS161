@@ -46,5 +46,8 @@
 #define S_IFCHR  _S_IFCHR
 #define S_IFBLK  _S_IFBLK
 
+#define S_ISDIR(mode) ((mode & S_IFMT) == S_IFDIR)
+#define S_ISREG(mode) ((mode & S_IFMT) == S_IFREG)
+
 
 #endif /* _STAT_H */

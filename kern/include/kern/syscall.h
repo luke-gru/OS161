@@ -103,23 +103,31 @@
 
 //                              -- File-handle-related --
 #define SYS_open         45
+// TODO
 #define SYS_pipe         46
+// TODO
 #define SYS_dup          47
+// TODO
 #define SYS_dup2         48
 #define SYS_close        49
 #define SYS_read         50
+// TODO
 #define SYS_pread        51
 //#define SYS_readv      52
 //#define SYS_preadv     53
 #define SYS_getdirentry  54
 #define SYS_write        55
+// TODO
 #define SYS_pwrite       56
 //#define SYS_writev     57
 //#define SYS_pwritev    58
+// TODO
 #define SYS_lseek        59
 #define SYS_flock        60
+// TODO
 #define SYS_ftruncate    61
 #define SYS_fsync        62
+// TODO (manipulate fd flags)
 #define SYS_fcntl        63
 #define SYS_ioctl        64
 #define SYS_select       65
@@ -127,10 +135,12 @@
 
 //                              -- Pathname-related --
 #define SYS_link         67
+// TODO
 #define SYS_remove       68
 #define SYS_mkdir        69
 #define SYS_rmdir        70
 #define SYS_mkfifo       71
+// TODO
 #define SYS_rename       72
 #define SYS_access       73
 //                              (current directory)
@@ -146,8 +156,10 @@
 
 
 //                              -- Any-file-related --
+// TODO
 #define SYS_stat         81
 #define SYS_fstat        82
+// TODO
 #define SYS_lstat        83
 //                              (timestamps)
 #define SYS_utimes       84

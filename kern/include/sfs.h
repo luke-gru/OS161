@@ -75,6 +75,7 @@ struct sfs_fs {
  * Function for mounting a sfs (calls vfs_mount)
  */
 int sfs_mount(const char *device);
+int sfs_readdir(struct sfs_vnode *sv, int slot, struct sfs_direntry *sd);
 
 
 #endif /* _SFS_H_ */

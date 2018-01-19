@@ -129,6 +129,9 @@ syscall(struct trapframe *tf)
 		case SYS_mkdir:
 			err = sys_mkdir((userptr_t)tf->tf_a0, (mode_t)tf->tf_a1, &retval);
 			break;
+		case SYS_getdirentry:
+			err = sys_getdirentry((int)tf->tf_a0, (userptr_t)tf->tf_a1, (size_t)tf->tf_a2, &retval);
+			break;
 		case SYS_rmdir:
 			err = sys_rmdir((userptr_t)tf->tf_a0, &retval);
 			break;

@@ -175,6 +175,29 @@ sfs_stat(struct vnode *v, struct stat *statbuf)
 	return 0;
 }
 
+static int sfs_getdirentry(struct vnode *v, struct uio *io) {
+	struct sfs_vnode *sv = v->vn_data;
+	int slot = io->uio_offset; // XXX: hack, 0-indexed slot to look up entries
+	io->uio_offset = 0;
+	struct sfs_direntry dirent;
+	dirent.sfd_name[0] = 0;
+	vfs_biglock_acquire();
+	int res = sfs_readdir(sv, slot, &dirent); // fills dirent
+	vfs_biglock_release();
+	if (res != 0) {
+		//kprintf("getdirentry result failed with %d, dirname: '%s'\n,", res, dirent.sfd_name);
+		return res;
+	}
+
+	if (dirent.sfd_name[0] == 0) {
+		return 0; // no more entries
+	}
+	//kprintf("getdirentry result success: %d, dirname: '%s'\n,", res, dirent.sfd_name);
+	// write the file's name to the IO obj
+	res = uiomove(dirent.sfd_name, strlen(dirent.sfd_name)+1, io); // TODO: check return value
+	return 0;
+}
+
 /*
  * Return the type of the file (types as per kern/stat.h)
  */
@@ -256,7 +279,7 @@ sfs_truncate(struct vnode *v, off_t len)
 
 /*
  * Get the full pathname for a file. This only needs to work on directories.
- * Since we don't support subdirectories, assume it's the root directory
+ * Since we don't support subdirectories (yet), assume it's the root directory
  * and hand back the empty string. (The VFS layer takes care of the
  * device name, leading slash, etc.)
  */
@@ -276,7 +299,8 @@ sfs_namefile(struct vnode *vv, struct uio *uio)
 
 /*
  * Create a file. If EXCL is set, insist that the filename not already
- * exist; otherwise, if it already exists, just open it.
+ * exist; otherwise, if it already exists, just open it. FIXME: upper layer should
+ * do all the checks, we should just perform the ops here.
  */
 static
 int
@@ -626,7 +650,7 @@ const struct vnode_ops sfs_dirops = {
 
 	.vop_read = vopfail_uio_isdir,
 	.vop_readlink = vopfail_uio_inval,
-	.vop_getdirentry = vopfail_uio_nosys,
+	.vop_getdirentry = sfs_getdirentry,
 	.vop_write = vopfail_uio_isdir,
 	.vop_ioctl = sfs_ioctl,
 	.vop_stat = sfs_stat,

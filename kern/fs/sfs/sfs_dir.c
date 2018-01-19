@@ -43,7 +43,6 @@
  * Read the directory entry out of slot SLOT of a directory vnode.
  * The "slot" is the index of the directory entry, starting at 0.
  */
-static
 int
 sfs_readdir(struct sfs_vnode *sv, int slot, struct sfs_direntry *sd)
 {
@@ -236,4 +235,3 @@ sfs_lookonce(struct sfs_vnode *sv, const char *name,
 
 	return 0;
 }
-

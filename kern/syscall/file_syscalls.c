@@ -38,6 +38,7 @@
 #include <kern/errno.h>
 #include <kern/stat.h>
 #include <current.h>
+#include <vnode.h>
 
 int
 sys_chdir(userptr_t dirbuf, int *retval)
@@ -95,4 +96,36 @@ int sys_rmdir(userptr_t pathname, int *retval) {
   int result = vfs_rmdir(path);
   *retval = result;
   return result;
+}
+
+// get next filename in directory fd
+int sys_getdirentry(int fd, userptr_t dirname_ubuf, size_t buf_count, int *retval) {
+  if (!file_is_open(fd)) {
+    *retval = -1;
+    return EBADF;
+  }
+  if (!file_is_dir(fd)) {
+    *retval = -1;
+    return ENOTDIR;
+  }
+  struct filedes *file_des = filetable_get(curproc, fd);
+  KASSERT(file_des);
+  if (buf_count > PATH_MAX) {
+    buf_count = PATH_MAX;
+  }
+  struct iovec iov;
+  struct uio myuio;
+  uio_uinit(&iov, &myuio, dirname_ubuf, buf_count, file_des->offset, UIO_READ);
+  int res = VOP_GETDIRENTRY(file_des->node, &myuio);
+  if (res != 0) {
+    *retval = -1;
+    return res;
+  }
+  if (myuio.uio_offset == 0) { // no more entries
+    *retval = 0;
+    return 0;
+  }
+  file_des->offset += 1; // this is the offset to the next entry in the directory (the "slot")
+  *retval = myuio.uio_offset; // amount of bytes written to dirname_ubuf
+  return 0;
 }
