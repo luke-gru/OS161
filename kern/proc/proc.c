@@ -86,7 +86,7 @@ int special_filedes_flags(int i) {
 			return -1;
 	}
 }
-struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
+static struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
 	file_des->pathname = kstrdup(pathname);
 	file_des->node = node;
@@ -95,11 +95,25 @@ struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *nod
 	KASSERT(filetable_put(p, file_des, table_idx) != -1); // TODO: return error when too many files being opened
 	return file_des;
 }
-void filedes_destroy(struct proc *p, struct filedes *file_des) {
+static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	kfree(file_des->pathname);
 	vfs_close(file_des->node); // just decrements reference, doesn't necessarily close the file, if others have it open
 	filetable_put(p, NULL, file_des->ft_idx);
 	kfree(file_des);
+}
+
+// close file descriptor for current process. When I implement sharing of file descsriptors for child
+// processes, this will decrement the refcount of the filedes instead of always destroying it.
+void filedes_close(struct proc *p, struct filedes *file_des) {
+	KASSERT(file_des);
+	if (!p) p = curproc;
+	filedes_destroy(p, file_des);
+}
+// open file descriptor for current process. When I implement sharing of file descriptors for child
+// processes, this won't always create new filedes structs.
+struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
+	if (!p) p = curproc;
+	return filedes_create(p, pathname, node, flags, table_idx);
 }
 
 int filetable_put(struct proc *p, struct filedes *fd, int idx) {
@@ -199,7 +213,7 @@ int file_close(int fd) {
 	if (!file_des) {
 		return EBADF;
 	}
-	filedes_destroy(curproc, file_des);
+	filedes_close(curproc, file_des);
 	KASSERT(curproc->file_table[fd] == NULL);
 	return 0;
 }
@@ -219,11 +233,17 @@ struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode) 
 		*errcode = result;
 		return NULL;
 	}
-	struct filedes *new_filedes = filedes_create(curproc, path, node, openflags, -1);
-	// TODO: update file_des->offset to end of file if O_APPEND given with writable
+	struct filedes *new_filedes = filedes_open(curproc, path, node, openflags, -1);
 	if (!new_filedes) {
 		*errcode = EMFILE; // too many file descriptors for process
 		return NULL;
+	}
+	if (filedes_is_writable(new_filedes) && ((openflags & O_APPEND) != 0)) {
+		result = file_seek(new_filedes, 0, SEEK_END, errcode);
+		if (result != 0) {
+			filedes_close(curproc, new_filedes); // can't seek to end, so close file
+			return NULL;
+		}
 	}
 	return new_filedes;
 }
@@ -373,11 +393,10 @@ proc_destroy(struct proc *proc)
 		VOP_DECREF(proc->p_cwd);
 		proc->p_cwd = NULL;
 	}
-	// TODO: decrement reference, don't NULL out (for fork)
 	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
 		struct filedes *file_des;
 		if ((file_des = filetable_get(proc, i)) != NULL) {
-			filedes_destroy(proc, file_des);
+			filedes_close(proc, file_des);
 		}
 	}
 
@@ -472,21 +491,21 @@ int proc_init_filetable(struct proc *p) {
 		panic("couldn't grab console vnode! Result: %d", console_result); // FIXME
 	}
 	KASSERT(console != NULL);
-	filedes_create(
+	filedes_open(
 		p,
 		(char*)special_filedes_name(0),
 		console,
 		special_filedes_flags(0),
 		0
 	);
-	filedes_create(
+	filedes_open(
 		p,
 		(char*)special_filedes_name(1),
 		console,
 		special_filedes_flags(1),
 		1
 	);
-	filedes_create(
+	filedes_open(
 		p,
 		(char*)special_filedes_name(2),
 		console,

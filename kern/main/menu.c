@@ -248,15 +248,15 @@ static int cmd_touch(int nargs, char **args) {
 	}
 	char *fname = args[1];
 	int result;
-	// TODO: refactor, create file_close() that does this.
 	struct vnode *node;
 	result = vfs_open(fname, O_WRONLY|O_CREAT|O_EXCL, 0644, &node);
 	if (result != 0) {
 		kprintf("vfs_open failed (%s)\n", strerror(result));
 		return result;
 	}
-	struct filedes *new_filedes = filedes_create(curproc, fname, node, O_WRONLY|O_CREAT|O_EXCL, -1);
+	struct filedes *new_filedes = filedes_open(curproc, fname, node, O_WRONLY|O_CREAT|O_EXCL, -1);
 	KASSERT(new_filedes);
+	filedes_close(curproc, new_filedes);
 	kprintf("successfully created file '%s'\n", fname);
 	return 0;
 }
@@ -278,11 +278,7 @@ static int cmd_append_line_to_file(int nargs, char **args) {
 		kprintf("file_open failed (%s) [code: %d]\n", strerror(errcode), errcode);
 		return errcode;
 	}
-	int seek_res = file_seek(file_des, 0, SEEK_END, &errcode);
-	if (seek_res != 0) {
-		kprintf("file_seek failed (%s) [code: %d]\n", strerror(errcode), errcode);
-		return errcode;
-	}
+
 	struct iovec iov;
 	struct uio myuio;
 	uio_kinit(&iov, &myuio, line, strlen(line), file_des->offset, UIO_WRITE);

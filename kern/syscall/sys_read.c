@@ -40,15 +40,18 @@ int
 sys_read(int fd, userptr_t buf, size_t count, int *retval)
 {
   //kprintf("sys_read\n");
-  struct filedes *file_des = curproc->file_table[fd];
-  if (!file_des || !file_is_open(fd)) return EBADF;
+  struct filedes *file_des = filetable_get(curproc, fd);
+  if (!file_des || !file_is_open(fd)) {
+    *retval = -1;
+    return EBADF;
+  }
   struct iovec iov;
   struct uio myuio;
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_READ);
   int errcode = 0;
   int bytes_read = file_read(file_des, &myuio, &errcode);
   if (bytes_read == -1) {
-    *retval = errcode;
+    *retval = -1;
     return errcode;
   }
   *retval = bytes_read;

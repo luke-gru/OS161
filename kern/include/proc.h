@@ -66,8 +66,8 @@ int special_filedes_flags(int fd);
 struct filedes *filetable_get(struct proc *p, int fd);
 int filetable_put(struct proc *p, struct filedes *file_des, int idx);
 
-struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
-void filedes_destroy(struct proc *p, struct filedes *file_des);
+struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
+void filedes_close(struct proc *p, struct filedes *file_des);
 
 off_t filedes_size(struct filedes *file_des, int *errcode);
 int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode);

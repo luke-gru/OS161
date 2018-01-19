@@ -43,6 +43,7 @@ sys_write(int fd, userptr_t buf, size_t count, int *count_retval)
   //kprintf("sys_write\n");
   struct filedes *file_des = curproc->file_table[fd];
   if (!file_des) {
+    *count_retval = -1;
     return EBADF;
   }
   struct iovec iov;
@@ -51,6 +52,7 @@ sys_write(int fd, userptr_t buf, size_t count, int *count_retval)
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
   int res = file_write(file_des, &myuio, &errcode);
   if (res == -1) {
+    *count_retval = -1;
     return errcode;
   }
   *count_retval = res; // num bytes written

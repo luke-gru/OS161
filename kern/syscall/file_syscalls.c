@@ -45,12 +45,13 @@ sys_chdir(userptr_t dirbuf, int *retval)
   char fname[PATH_MAX];
   int copy_res = copyinstr(dirbuf, fname, sizeof(fname), NULL);
   if (copy_res != 0) {
+    *retval = -1;
     return copy_res;
   }
-  kprintf("dir: '%s'\n", fname);
+  //kprintf("dir: '%s'\n", fname);
   if (strcmp(fname, "") == 0) {
-    *retval = EINVAL;
-    return *retval;
+    *retval = -1;
+    return EINVAL;
   }
   *retval = vfs_chdir(fname); // sets curproc->p_pwd
   return *retval; // 0 on success

@@ -42,13 +42,13 @@ sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval)
   char fname[FPATH_MAX];
   int copy_res = copyinstr(filename, fname, sizeof(fname), NULL);
   if (copy_res != 0) {
-    *fd_retval = ENOMEM;
-    return copy_res;
+    *fd_retval = -1;
+    return ENOMEM;
   }
   int err = 0;
   struct filedes *fd = file_open(fname, openflags, mode, &err);
   if (fd == NULL) {
-    *fd_retval = err;
+    *fd_retval = -1;
     return err;
   }
 	*fd_retval = fd->ft_idx; // file descriptor int
