@@ -46,6 +46,7 @@ struct addrspace;
 struct thread;
 struct vnode;
 struct proc;
+struct stat;
 
 #define FPATH_MAX 1024
 // TODO: move to filedes.c/filedes.h
@@ -55,7 +56,8 @@ struct filedes {
 	struct vnode *node;
 	int flags;
 	size_t offset;
-	int ft_idx; // index into file table
+	int ft_idx; // index into file table of current process
+	//int refcount; // filedes may be shared by multiple processes
 };
 
 const char *special_filedes_name(int fd);
@@ -67,10 +69,14 @@ int filetable_put(struct proc *p, struct filedes *file_des, int idx);
 struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
 void filedes_destroy(struct proc *p, struct filedes *file_des);
 
+off_t filedes_size(struct filedes *file_des, int *errcode);
+int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode);
+
 bool filedes_is_open(struct filedes *file_des);
 bool filedes_is_writable(struct filedes *file_des);
 bool filedes_is_device(struct filedes *file_des);
 bool filedes_is_readable(struct filedes *file_des);
+bool filedes_is_seekable(struct filedes *file_des);
 
 // NOTE: takes a fd int because a file can be open more than once in a process, returning different file descriptors to the underlying file
 bool file_is_open(int fd);
@@ -81,6 +87,7 @@ bool file_exists(char *path);
 struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode);
 int file_write(struct filedes *file_des, struct uio *io, int *errcode);
 int file_read(struct filedes *file_des, struct uio *io, int *errcode);
+int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode);
 
 /*
  * Process structure.

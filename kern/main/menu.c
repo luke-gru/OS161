@@ -31,6 +31,8 @@
 #include <kern/errno.h>
 #include <kern/reboot.h>
 #include <kern/unistd.h>
+#include <kern/stat.h>
+#include <kern/seek.h>
 #include <limits.h>
 #include <lib.h>
 #include <uio.h>
@@ -264,14 +266,21 @@ static int cmd_append_line_to_file(int nargs, char **args) {
 		kprintf("Usage: af FILENAME 'line to add'\n");
 		return EINVAL;
 	}
-	char *fname = args[1];
-	fname[strlen(fname)] = '\n';
-	fname[strlen(fname)] = '\0';
-	char *line = args[2];
+	char *fname = kstrdup(args[1]);
+	char *line = kmalloc(strlen(args[2]) + 2); // for adding newline and terminating NULL
+	memcpy(line, args[2], strlen(args[2])+1);
+	strcat(line, "\n");
+	//kprintf("line: '%s', len: %d\n", line, (int)strlen(line));
+
 	int errcode = 0;
 	struct filedes *file_des = file_open(fname, O_WRONLY|O_APPEND, 0644, &errcode);
 	if (!file_des) {
 		kprintf("file_open failed (%s) [code: %d]\n", strerror(errcode), errcode);
+		return errcode;
+	}
+	int seek_res = file_seek(file_des, 0, SEEK_END, &errcode);
+	if (seek_res != 0) {
+		kprintf("file_seek failed (%s) [code: %d]\n", strerror(errcode), errcode);
 		return errcode;
 	}
 	struct iovec iov;

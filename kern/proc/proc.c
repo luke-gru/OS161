@@ -51,6 +51,8 @@
 #include <vfs.h>
 #include <pid.h>
 #include <kern/errno.h>
+#include <kern/stat.h>
+#include <kern/seek.h>
 #include <uio.h>
 
 /*
@@ -153,6 +155,29 @@ bool filedes_is_device(struct filedes *file_des) {
 	KASSERT(file_des);
 	return vnode_is_device(file_des->node);
 }
+bool filedes_is_seekable(struct filedes *file_des) {
+	KASSERT(file_des);
+	return VOP_ISSEEKABLE(file_des->node);
+}
+
+off_t filedes_size(struct filedes *file_des, int *errcode) {
+	struct stat st;
+	int res = filedes_stat(file_des, &st, errcode);
+	if (res != 0) {
+		return res; // errcode set above
+	}
+	return st.st_size;
+}
+
+int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode) {
+	KASSERT(file_des);
+	int res = VOP_STAT(file_des->node, st); // fills out stat struct
+	if (res != 0) {
+		*errcode = res;
+		return -1;
+	}
+	return 0;
+}
 
 bool file_is_open(int fd) {
 	return filetable_get(curproc, fd) != NULL;
@@ -160,12 +185,12 @@ bool file_is_open(int fd) {
 
 bool file_is_readable(char *path) {
 	(void)path;
-	return true;
+	return true; // TODO
 }
 
 bool file_is_writable(char *path) {
 	(void)path;
-	return true;
+	return true; // TODO
 }
 
 // Non-zero return value is error
@@ -226,10 +251,7 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 		*errcode = EBADF;
 		return -1;
 	}
-	// struct iovec iov;
-  // struct uio myuio;
   int res = 0;
-  // uio_kinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
   res = VOP_WRITE(file_des->node, io);
   if (res != 0) {
 		*errcode = res;
@@ -237,12 +259,51 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
   }
 	int count = io->uio_iov->iov_len;
 	int bytes_written = count - io->uio_resid;
-	//kprintf("uio bytes written: %d\n", bytes_written);
 	if (bytes_written != count) {
 		panic("invalid write in file_write: %d", bytes_written); // FIXME
 	}
 	file_des->offset = io->uio_offset;
 	return bytes_written;
+}
+
+// man 2 lseek for more info
+int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode) {
+	if (!file_des || !filedes_is_seekable(file_des)) {
+		*errcode = EBADF;
+		return -1;
+	}
+	off_t new_offset = offset;
+	off_t cur_size;
+	switch(whence) {
+  case SEEK_SET:
+		new_offset = offset;
+		break;
+	case SEEK_END:
+		cur_size = filedes_size(file_des, errcode);
+		if (cur_size == -1) {
+			return -1; // errcode set
+		}
+		if (offset > 0) { // offset should be negative in this case, as in seek backwards from the end of the file
+			*errcode = EINVAL;
+			return -1;
+		}
+	  new_offset = cur_size + offset;
+		break;
+	case SEEK_CUR:
+		new_offset = file_des->offset + offset;
+		break;
+	default:
+		*errcode = EINVAL;
+		return -1;
+	}
+
+	if (new_offset < 0 || new_offset > filedes_size(file_des, errcode)) {
+		*errcode = EINVAL;
+		return -1;
+	}
+	KASSERT(new_offset >= 0);
+	file_des->offset = (size_t)new_offset;
+	return 0;
 }
 
 /*
@@ -482,7 +543,7 @@ proc_create_runprogram(const char *name)
 	/* VFS fields */
 	KASSERT(proc_init_filetable(newproc) == 0);
 
-	// pid is initialized in thread_fork if thread_fork is passed a userspace process
+	// the pid is generated in thread_fork if thread_fork is passed a userspace process
 	newproc->pid = 0;
 
 	/*

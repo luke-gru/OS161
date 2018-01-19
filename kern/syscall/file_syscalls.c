@@ -36,6 +36,8 @@
 #include <lib.h>
 #include <stat.h>
 #include <kern/errno.h>
+#include <kern/stat.h>
+#include <current.h>
 
 int
 sys_chdir(userptr_t dirbuf, int *retval)
@@ -61,22 +63,18 @@ int sys_close(int fd, int *retval) {
 }
 
 int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
-  (void)fd;
+  struct filedes *file_des = filetable_get(curproc, fd);
+  if (!file_des) {
+    *retval = -1;
+    return EBADF;
+  }
+  int errcode = 0;
   struct stat st;
-  // TODO: get info from VFS
-  st.st_size = 0;
-  st.st_mode = 0;
-  st.st_nlink = 0;
-  st.st_blocks = 0;
-  st.st_dev = 0;
-  st.st_ino = 0;
-  st.st_rdev = 0;
-  st.st_atime = 0; st.st_ctime = 0; st.st_mtime = 0;
-  st.st_atimensec = 0; st.st_ctimensec = 0; st.st_mtimensec = 0;
-  st.st_uid = 0;
-  st.st_gid = 0;
-  st.st_gen = 0;
-  st.st_blksize = 0;
+  int res = filedes_stat(file_des, &st, &errcode);
+  if (res != 0) {
+    *retval = -1;
+    return errcode;
+  }
   copyout(&st, stat_buf, sizeof(struct stat));
   *retval = 0;
   return 0;

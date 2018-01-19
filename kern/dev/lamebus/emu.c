@@ -679,7 +679,7 @@ int
 emufs_file_gettype(struct vnode *v, uint32_t *result)
 {
 	(void)v;
-	*result = S_IFREG;
+	*result = S_IFREG; // NOTE: other file types not supported
 	return 0;
 }
 
