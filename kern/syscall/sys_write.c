@@ -30,36 +30,29 @@
 #include <types.h>
 #include <syscall.h>
 #include <proc.h>
-#include <vfs.h>
 #include <current.h>
 #include <kern/errno.h>
 #include <uio.h>
-#include <vnode.h>
 
 #include <lib.h>
 
+// NOTE: non-zero return value is an error
 int
 sys_write(int fd, userptr_t buf, size_t count, int *count_retval)
 {
   //kprintf("sys_write\n");
   struct filedes *file_des = curproc->file_table[fd];
-  if (!file_des || !file_is_open(file_des) || !file_is_writable(file_des)) {
+  if (!file_des) {
     return EBADF;
   }
   struct iovec iov;
   struct uio myuio;
-  int res = 0;
+  int errcode = 0;
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
-  res = VOP_WRITE(file_des->node, &myuio);
-  if (res != 0) {
-    return res;
+  int res = file_write(file_des, &myuio, &errcode);
+  if (res == -1) {
+    return errcode;
   }
-  int bytes_written = count - myuio.uio_resid;
-  //kprintf("uio bytes written: %d\n", bytes_written);
-  if (bytes_written != (int)count) {
-    panic("invalid write in sys_write: %d", bytes_written); // FIXME
-  }
-  file_des->offset = myuio.uio_offset;
-  *count_retval = bytes_written;
+  *count_retval = res; // num bytes written
   return 0;
 }

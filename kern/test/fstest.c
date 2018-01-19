@@ -122,7 +122,7 @@ fstest_remove(const char *fs, const char *namesuffix)
 
 	strcpy(buf, name);
 	err = vfs_remove(buf);
-	if (err) {
+	if (err != 0) {
 		kprintf("Could not remove %s: %s\n", name, strerror(err));
 		return -1;
 	}

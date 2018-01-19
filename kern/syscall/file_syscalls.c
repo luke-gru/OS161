@@ -35,6 +35,7 @@
 #include <proc.h>
 #include <lib.h>
 #include <stat.h>
+#include <kern/errno.h>
 
 int
 sys_chdir(userptr_t dirbuf, int *retval)
@@ -43,6 +44,11 @@ sys_chdir(userptr_t dirbuf, int *retval)
   int copy_res = copyinstr(dirbuf, fname, sizeof(fname), NULL);
   if (copy_res != 0) {
     return copy_res;
+  }
+  kprintf("dir: '%s'\n", fname);
+  if (strcmp(fname, "") == 0) {
+    *retval = EINVAL;
+    return *retval;
   }
   *retval = vfs_chdir(fname); // sets curproc->p_pwd
   return *retval; // 0 on success

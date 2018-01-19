@@ -45,6 +45,7 @@
 #include <addrspace.h>
 #include <test.h>
 #include <prompt.h>
+#include <current.h>
 #include "opt-sfs.h"
 #include "opt-net.h"
 #include "opt-synchprobs.h"
@@ -238,6 +239,52 @@ cmd_pwd(int nargs, char **args)
 	return 0;
 }
 
+static int cmd_touch(int nargs, char **args) {
+	if (nargs != 2) {
+		kprintf("Usage: touch FILENAME\n");
+		return EINVAL;
+	}
+	char *fname = args[1];
+	int result;
+	// TODO: refactor, create file_close() that does this.
+	struct vnode *node;
+	result = vfs_open(fname, O_WRONLY|O_CREAT|O_EXCL, 0644, &node);
+	if (result != 0) {
+		kprintf("vfs_open failed (%s)\n", strerror(result));
+		return result;
+	}
+	struct filedes *new_filedes = filedes_create(curproc, fname, node, O_WRONLY|O_CREAT|O_EXCL, -1);
+	KASSERT(new_filedes);
+	kprintf("successfully created file '%s'\n", fname);
+	return 0;
+}
+
+static int cmd_append_line_to_file(int nargs, char **args) {
+	if (nargs != 3) {
+		kprintf("Usage: af FILENAME 'line to add'\n");
+		return EINVAL;
+	}
+	char *fname = args[1];
+	fname[strlen(fname)] = '\n';
+	fname[strlen(fname)] = '\0';
+	char *line = args[2];
+	int errcode = 0;
+	struct filedes *file_des = file_open(fname, O_WRONLY|O_APPEND, 0644, &errcode);
+	if (!file_des) {
+		kprintf("file_open failed (%s) [code: %d]\n", strerror(errcode), errcode);
+		return errcode;
+	}
+	struct iovec iov;
+	struct uio myuio;
+	uio_kinit(&iov, &myuio, line, strlen(line), file_des->offset, UIO_WRITE);
+	int res = file_write(file_des, &myuio, &errcode);
+	if (res == -1) {
+		kprintf("file_write failed (%s)\n", strerror(errcode));
+		return errcode;
+	}
+	return 0;
+}
+
 /*
  * Command for running sync.
  */
@@ -393,7 +440,7 @@ cmd_mount(int nargs, char **args)
 {
 	char *fstype;
 	char *device;
-	unsigned i;
+	int i = 0;
 
 	if (nargs != 3) {
 		kprintf("Usage: mount fstype device:\n");
@@ -408,7 +455,7 @@ cmd_mount(int nargs, char **args)
 		device[strlen(device)-1] = 0;
 	}
 
-	for (i=0; i<ARRAYCOUNT(mounttable); i++) {
+	for (i=0; i < (int)ARRAYCOUNT(mounttable); i++) {
 		if (!strcmp(mounttable[i].name, fstype)) {
 			return mounttable[i].func(device);
 		}
@@ -558,6 +605,8 @@ static const char *opsmenu[] = {
 	"[pf]      Print a file              ",
 	"[cd]      Change directory          ",
 	"[pwd]     Print current directory   ",
+	"[touch]   Create new file           ",
+	"[af]      Add line to file          ",
 	"[sync]    Sync filesystems          ",
 	"[debug]   Drop to debugger          ",
 	"[panic]   Intentional panic         ",
@@ -711,6 +760,8 @@ static struct {
 	{ "unmount",	cmd_unmount },
 	{ "bootfs",	cmd_bootfs },
 	{ "pf",		printfile },
+	{ "touch", cmd_touch },
+	{ "af", cmd_append_line_to_file },
 	{ "cd",		cmd_chdir },
 	{ "pwd",	cmd_pwd },
 	{ "sync",	cmd_sync },

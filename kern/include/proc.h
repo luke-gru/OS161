@@ -38,6 +38,8 @@
 
 #include <spinlock.h>
 #include <kern/fcntl.h>
+#include <vfs.h>
+#include <uio.h>
 #include <lib.h>
 
 struct addrspace;
@@ -65,11 +67,21 @@ int filetable_put(struct proc *p, struct filedes *file_des, int idx);
 struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
 void filedes_destroy(struct proc *p, struct filedes *file_des);
 
-bool file_is_open(struct filedes *file_des);
-bool file_is_writable(struct filedes *file_des);
-bool file_is_device(struct filedes *file_des);
-bool file_is_readable(struct filedes *file_des);
+bool filedes_is_open(struct filedes *file_des);
+bool filedes_is_writable(struct filedes *file_des);
+bool filedes_is_device(struct filedes *file_des);
+bool filedes_is_readable(struct filedes *file_des);
+
+// NOTE: takes a fd int because a file can be open more than once in a process, returning different file descriptors to the underlying file
+bool file_is_open(int fd);
+bool file_is_readable(char *path);
+bool file_is_writable(char *path);
 int  file_close(int fd);
+bool file_exists(char *path);
+struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode);
+int file_write(struct filedes *file_des, struct uio *io, int *errcode);
+int file_read(struct filedes *file_des, struct uio *io, int *errcode);
+
 /*
  * Process structure.
  *

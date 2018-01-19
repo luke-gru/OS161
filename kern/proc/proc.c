@@ -50,6 +50,8 @@
 #include <vnode.h>
 #include <vfs.h>
 #include <pid.h>
+#include <kern/errno.h>
+#include <uio.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -134,32 +136,113 @@ struct filedes *filetable_get(struct proc *p, int fd) {
 	return p->file_table[fd];
 }
 
-bool file_is_open(struct filedes *file_des) {
+bool filedes_is_open(struct filedes *file_des) {
 	return filetable_get(curproc, file_des->ft_idx) != NULL;
 }
-bool file_is_readable(struct filedes *file_des) {
+bool filedes_is_readable(struct filedes *file_des) {
 	KASSERT(file_des);
 	return (file_des->flags & O_RDONLY) != 0 ||
 		(file_des->flags & O_RDWR) != 0;
 }
-bool file_is_writable(struct filedes *file_des) {
+bool filedes_is_writable(struct filedes *file_des) {
 	KASSERT(file_des);
 	return (file_des->flags & O_WRONLY) != 0 ||
 		(file_des->flags & O_RDWR) != 0;
 }
-bool file_is_device(struct filedes *file_des) {
+bool filedes_is_device(struct filedes *file_des) {
 	KASSERT(file_des);
 	return vnode_is_device(file_des->node);
 }
 
+bool file_is_open(int fd) {
+	return filetable_get(curproc, fd) != NULL;
+}
+
+bool file_is_readable(char *path) {
+	(void)path;
+	return true;
+}
+
+bool file_is_writable(char *path) {
+	(void)path;
+	return true;
+}
+
+// Non-zero return value is error
 int file_close(int fd) {
 	struct filedes *file_des = filetable_get(curproc, fd);
 	if (!file_des) {
-		return -1; // deal with error better
+		return EBADF;
 	}
 	filedes_destroy(curproc, file_des);
 	KASSERT(curproc->file_table[fd] == NULL);
 	return 0;
+}
+
+// Does the file exist on the mounted filesystem?
+bool file_exists(char *path) {
+	(void)path;
+	return true; // TODO
+}
+
+// Try opening or creating the file, returning non-NULL on success. On error, *retval is set
+// to a non-zero error code. On success, adds filedes to current process's file table.
+struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode) {
+	struct vnode *node;
+	int result = vfs_open(path, openflags, mode, &node);
+	if (result != 0) {
+		*errcode = result;
+		return NULL;
+	}
+	struct filedes *new_filedes = filedes_create(curproc, path, node, openflags, -1);
+	// TODO: update file_des->offset to end of file if O_APPEND given with writable
+	if (!new_filedes) {
+		*errcode = EMFILE; // too many file descriptors for process
+		return NULL;
+	}
+	return new_filedes;
+}
+
+int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
+	if (!filedes_is_device(file_des) && !filedes_is_readable(file_des)) {
+    *errcode = EBADF;
+		return -1;
+  }
+	int res = VOP_READ(file_des->node, io);
+  if (res != 0) {
+		*errcode = res;
+    return -1;
+  }
+	int count = io->uio_iov->iov_len;
+  int bytes_read = count - io->uio_resid;
+  file_des->offset = io->uio_offset; // update file offset
+  return bytes_read;
+}
+
+// Returns number of bytes written on success, and -1 on error with *errcode
+// set
+int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
+	if (!file_des || !filedes_is_writable(file_des)) {
+		*errcode = EBADF;
+		return -1;
+	}
+	// struct iovec iov;
+  // struct uio myuio;
+  int res = 0;
+  // uio_kinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
+  res = VOP_WRITE(file_des->node, io);
+  if (res != 0) {
+		*errcode = res;
+		return -1;
+  }
+	int count = io->uio_iov->iov_len;
+	int bytes_written = count - io->uio_resid;
+	//kprintf("uio bytes written: %d\n", bytes_written);
+	if (bytes_written != count) {
+		panic("invalid write in file_write: %d", bytes_written); // FIXME
+	}
+	file_des->offset = io->uio_offset;
+	return bytes_written;
 }
 
 /*

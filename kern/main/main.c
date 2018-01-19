@@ -117,6 +117,7 @@ boot(void)
 	/* Probe and initialize devices. Interrupts should come on. */
 	kprintf("Device probe...\n");
 	KASSERT(curthread->t_curspl > 0);
+
 	mainbus_bootstrap();
 	KASSERT(curthread->t_curspl == 0);
 	/* Now do pseudo-devices. */

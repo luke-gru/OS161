@@ -30,11 +30,9 @@
 #include <types.h>
 #include <syscall.h>
 #include <proc.h>
-#include <vfs.h>
 #include <current.h>
 #include <kern/errno.h>
 #include <uio.h>
-#include <vnode.h>
 
 #include <lib.h>
 
@@ -43,21 +41,16 @@ sys_read(int fd, userptr_t buf, size_t count, int *retval)
 {
   //kprintf("sys_read\n");
   struct filedes *file_des = curproc->file_table[fd];
-  if (!file_des || !file_is_open(file_des)) return EBADF;
-  if (!file_is_device(file_des) && !file_is_readable(file_des)) {
-    return EBADF;
-  }
+  if (!file_des || !file_is_open(fd)) return EBADF;
   struct iovec iov;
   struct uio myuio;
-  int res = 0;
-  (void)res;
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_READ);
-  res = VOP_READ(file_des->node, &myuio);
-  if (res != 0) {
-    return res;
+  int errcode = 0;
+  int bytes_read = file_read(file_des, &myuio, &errcode);
+  if (bytes_read == -1) {
+    *retval = errcode;
+    return errcode;
   }
-  int bytes_read = count - myuio.uio_resid;
-  file_des->offset = myuio.uio_offset;
   *retval = bytes_read;
   return 0;
 }

@@ -40,7 +40,7 @@
 #include <vnode.h>
 
 
-/* Does most of the work for open(). */
+/* Does most of the work for open(). NOTE: Any non-zero return value is an error */
 int
 vfs_open(char *path, int openflags, mode_t mode, struct vnode **ret)
 {
@@ -52,43 +52,48 @@ vfs_open(char *path, int openflags, mode_t mode, struct vnode **ret)
 	how = openflags & O_ACCMODE;
 
 	switch (how) {
-	    case O_RDONLY:
+	case O_RDONLY:
 		canwrite=0;
 		break;
-	    case O_WRONLY:
-	    case O_RDWR:
+	case O_WRONLY:
+	case O_RDWR:
 		canwrite=1;
 		break;
-	    default:
+	default:
 		return EINVAL;
 	}
 
 	if (openflags & O_CREAT) {
 		char name[NAME_MAX+1];
 		struct vnode *dir;
-		int excl = (openflags & O_EXCL)!=0;
-
-		result = vfs_lookparent(path, &dir, name, sizeof(name));
-		if (result) {
-			return result;
+		int excl = (openflags & O_EXCL) != 0;
+		// don't create if O_EXCL is given and the file exists
+		if (excl && vfs_lookup(path, &vn) == 0) {
+			return EEXIST;
+		} else if (excl) {
+			vn = NULL;
 		}
 
+		result = vfs_lookparent(path, &dir, name, sizeof(name));
+		if (result != 0) {
+			return result;
+		}
 		result = VOP_CREAT(dir, name, excl, mode, &vn);
+		//kprintf("result: %d, path: %s, name: %s\n", result, path, name);
 
 		VOP_DECREF(dir);
-	}
-	else {
+	} else {
 		result = vfs_lookup(path, &vn);
 	}
 
-	if (result) {
+	if (result != 0) {
 		return result;
 	}
 
 	KASSERT(vn != NULL);
 
 	result = VOP_EACHOPEN(vn, openflags);
-	if (result) {
+	if (result != 0) {
 		VOP_DECREF(vn);
 		return result;
 	}
@@ -96,11 +101,10 @@ vfs_open(char *path, int openflags, mode_t mode, struct vnode **ret)
 	if (openflags & O_TRUNC) {
 		if (canwrite==0) {
 			result = EINVAL;
-		}
-		else {
+		} else {
 			result = VOP_TRUNCATE(vn, 0);
 		}
-		if (result) {
+		if (result != 0) {
 			VOP_DECREF(vn);
 			return result;
 		}
@@ -271,7 +275,7 @@ vfs_readlink(char *path, struct uio *uio)
 }
 
 /*
- * Does most of the work for mkdir.
+ * Does most of the work for mkdir. Returns 0 on success
  */
 int
 vfs_mkdir(char *path, mode_t mode)
@@ -293,7 +297,7 @@ vfs_mkdir(char *path, mode_t mode)
 }
 
 /*
- * Does most of the work for rmdir.
+ * Does most of the work for rmdir. Returns 0 on success
  */
 int
 vfs_rmdir(char *path)

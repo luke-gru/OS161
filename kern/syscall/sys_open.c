@@ -30,28 +30,27 @@
 #include <types.h>
 #include <syscall.h>
 #include <proc.h>
-#include <vfs.h>
 #include <current.h>
 #include <copyinout.h>
+#include <kern/errno.h>
 
 #include <lib.h>
 
 int
 sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval)
 {
-  //kprintf("sys_open\n");
   char fname[FPATH_MAX];
   int copy_res = copyinstr(filename, fname, sizeof(fname), NULL);
   if (copy_res != 0) {
+    *fd_retval = ENOMEM;
     return copy_res;
   }
-  struct vnode *node;
-  int result = vfs_open(fname, openflags, mode, &node);
-  if (result < 0) {
-    return result;
+  int err = 0;
+  struct filedes *fd = file_open(fname, openflags, mode, &err);
+  if (fd == NULL) {
+    *fd_retval = err;
+    return err;
   }
-  struct filedes *new_filedes = filedes_create(curproc, fname, node, openflags, -1);
-  // TODO: check return value
-	*fd_retval = new_filedes->ft_idx; // file descriptor int
+	*fd_retval = fd->ft_idx; // file descriptor int
   return 0;
 }
