@@ -464,6 +464,7 @@ proc_destroy(struct proc *proc)
 	spinlock_cleanup(&proc->p_lock);
 
 	struct proc *p;
+	// TODO: lock userprocs access
 	for (int i = 0; i < MAX_USERPROCS; i++) {
 		p = userprocs[i];
 		if (p != NULL && p->pid == proc->pid) {
@@ -473,6 +474,19 @@ proc_destroy(struct proc *proc)
 
 	kfree(proc->p_name);
 	kfree(proc);
+}
+
+// TODO: lock userprocs access
+unsigned proc_numprocs(void) {
+	unsigned num = 0;
+	struct proc *p = NULL;
+	for (int i = 0; i < MAX_USERPROCS; i++) {
+		p = userprocs[i];
+		if (p != NULL && p->pid != INVALID_PID) {
+			num++;
+		}
+	}
+	return num;
 }
 
 /*
@@ -545,6 +559,18 @@ int proc_init_pid(struct proc *p) {
 	}
 	return -1;
 }
+// TODO: use hash table instead of linear array
+struct proc *proc_lookup(pid_t pid) {
+	struct proc *found = NULL;
+	// TODO: lock userprocs access
+	for (int i = 0; i < MAX_USERPROCS; i++) {
+		found = userprocs[i];
+		if (found && found->pid == pid) {
+			return found;
+		}
+	}
+	return NULL;
+}
 
 /*
  * Create a fresh proc for use by runprogram.
@@ -615,6 +641,7 @@ proc_addthread(struct proc *proc, struct thread *t)
 
 	spl = splhigh();
 	t->t_proc = proc;
+	t->t_pid = proc->pid;
 	splx(spl);
 
 	return 0;
@@ -645,6 +672,7 @@ proc_remthread(struct thread *t)
 
 	spl = splhigh();
 	t->t_proc = NULL;
+	t->t_pid = INVALID_PID;
 	splx(spl);
 }
 
@@ -701,5 +729,7 @@ proc_waitpid(pid_t child_pid) {
 	if (res != 0) {
 		return res;
 	}
+	struct proc *child = proc_lookup(child_pid);
+	if (child) proc_destroy(child);
 	return status;
 }

@@ -109,7 +109,7 @@ int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode);
  */
 #define FILE_TABLE_LIMIT 1024
 #define MAX_USERPROCS 64
-struct proc *userprocs[MAX_USERPROCS];
+struct proc *userprocs[MAX_USERPROCS]; // current userspace processes
 
 struct proc {
 	char *p_name;			/* Name of this process */
@@ -135,7 +135,9 @@ extern struct proc *kproc;
 /* Call once during system startup to allocate data structures. */
 void proc_bootstrap(void);
 int proc_init_pid(struct proc *);
+struct proc *proc_lookup(pid_t pid);
 int proc_init_filetable(struct proc *);
+unsigned proc_numprocs(void); // number of user processes
 
 /* Create a fresh process for use by runprogram(). */
 struct proc *proc_create_runprogram(const char *name);
@@ -143,13 +145,14 @@ struct proc *proc_create_runprogram(const char *name);
 /* Destroy a process. */
 void proc_destroy(struct proc *proc);
 
-/* Attach a thread to a process. Must not already have a process. */
+/* Attach a thread to a process. Must not already have a process */
 int proc_addthread(struct proc *proc, struct thread *t);
 
 /* Detach a thread from its process. */
 void proc_remthread(struct thread *t);
 
-int proc_waitpid(pid_t pid); // wait on child process to finish, collect its exitstatus
+// wait on child process to finish, collect its exitstatus and clean it up
+int proc_waitpid(pid_t pid);
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

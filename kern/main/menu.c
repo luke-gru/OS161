@@ -102,15 +102,6 @@ cmd_progthread(void *ptr, unsigned long nargs)
 
 /*
  * Common code for cmd_prog and cmd_shell.
- *
- * Note that this does not wait for the subprogram to finish, but
- * returns immediately to the menu. This is usually not what you want,
- * so you should have it call your system-calls-assignment waitpid
- * code after forking.
- *
- * Also note that because the subprogram's thread uses the "args"
- * array and strings, until you do this a race condition exists
- * between that code and the menu input code.
  */
 static
 int
@@ -118,7 +109,6 @@ common_prog(int nargs, char **args)
 {
 	struct proc *proc;
 	int result;
-	//unsigned tc;
 
 	/* Create a process for the new program to run in. */
 	proc = proc_create_runprogram(args[0] /* name */);
@@ -136,24 +126,19 @@ common_prog(int nargs, char **args)
 		proc_destroy(proc);
 		return result;
 	}
-	child_pid = proc->pid; // FIXME: careful, proc could be destroyed by child thread...
+	// FIXME: careful, proc could be destroyed by child thread upon exit, in which case
+	// this memory access is invalid
+	child_pid = proc->pid;
 	if (child_pid > 0) {
+		KASSERT(proc_numprocs() <= 1);
 		result = proc_waitpid(child_pid);
+
 		if (result != 0) {
 			kprintf("exitstatus: %d\n", result);
 		}
 	} else {
 		panic("invalid child pid: %d", (int)child_pid);
 	}
-
-	/*
-	 * The new process will be destroyed when the program exits...
-	 * once you write the code for handling that.
-	 */
-
-	// Wait for all threads to finish cleanup, otherwise khu be a bit behind,
-	// especially once swapping is enabled.
-	//thread_wait_for_count(tc);
 
 	return 0;
 }

@@ -384,7 +384,7 @@ pid_wait(pid_t theirpid, int *status)
 
 	if (them->pi_exited == 0) {
 		/* don't need to loop on this */
-		cv_wait(them->pi_cv, pidlock);
+		cv_wait(them->pi_cv, pidlock); // blocks until the process exits
 		KASSERT(them->pi_exited == 1);
 	}
 

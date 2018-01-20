@@ -146,6 +146,7 @@ thread_create(const char *name)
 	thread->t_context = NULL;
 	thread->t_cpu = NULL;
 	thread->t_proc = NULL;
+	thread->t_pid = INVALID_PID;
 	HANGMAN_ACTORINIT(&thread->t_hangman, thread->t_name);
 
 	/* Interrupt state fields */
@@ -250,7 +251,7 @@ cpu_create(unsigned hardware_number)
 
 	result = proc_addthread(kproc, c->c_curthread);
 	if (result) {
-		panic("cpu_create: proc_addthread:: %s\n", strerror(result));
+		panic("cpu_create: proc_addthread for kernel:: %s\n", strerror(result));
 	}
 
 	cpu_machdep_init(c);
@@ -301,11 +302,18 @@ void
 exorcise(void)
 {
 	struct thread *z;
+	struct proc *p;
 
 	while ((z = threadlist_remhead(&curcpu->c_zombies)) != NULL) {
 		KASSERT(z != curthread);
 		KASSERT(z->t_state == S_ZOMBIE);
+		pid_t pid = z->t_pid;
 		thread_destroy(z);
+		p = proc_lookup(pid);
+		if (p) {
+			proc_destroy(p);
+		}
+
 	}
 }
 
@@ -538,6 +546,7 @@ thread_fork(const char *name,
 	if (proc == NULL) {
 		proc = curthread->t_proc;
 	}
+
 	result = proc_addthread(proc, newthread);
 	if (result != 0) {
 		/* thread_destroy will clean up the stack */
@@ -559,6 +568,7 @@ thread_fork(const char *name,
 
 	if (proc != kproc && proc->pid <= 0) {
 		KASSERT(proc_init_pid(proc) == 0);
+		newthread->t_pid = proc->pid;
 	}
 
 	/* Set up the switchframe so entrypoint() gets called */
@@ -825,9 +835,10 @@ void
 thread_exit(int status)
 {
 	struct thread *cur;
+	struct proc *curp = curproc;
 
 	cur = curthread;
-	if (curproc && curproc->pid != INVALID_PID) {
+	if (curp && curp->pid != INVALID_PID) {
 		pid_setexitstatus(status); // notifies parent that could be waiting on us
 	}
 	/*
