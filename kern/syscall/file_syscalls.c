@@ -82,6 +82,22 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   return 0;
 }
 
+int sys_lseek(int fd, off_t offset, int whence, int *retval) {
+  struct filedes *file_des = filetable_get(curproc, fd);
+  if (!file_des) {
+    *retval = -1;
+    return EBADF;
+  }
+  int errcode = 0;
+  int res = file_seek(file_des, offset, whence, &errcode);
+  if (res != 0) {
+    *retval = -1;
+    return errcode;
+  }
+  *retval = (int)file_des->offset;
+  return 0;
+}
+
 int sys_mkdir(userptr_t pathname, mode_t mode, int *retval) {
   char path[PATH_MAX];
   copyinstr(pathname, (void*)&path, sizeof(path), NULL);

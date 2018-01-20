@@ -61,6 +61,7 @@ int sfs_dir_unlink(struct sfs_vnode *sv, int slot);
 int sfs_lookonce(struct sfs_vnode *sv, const char *name,
 		struct sfs_vnode **ret,
 		int *slot);
+int sfs_readdir(struct sfs_vnode *sv, int slot, struct sfs_direntry *sd);
 
 /* Functions in sfs_inode.c */
 int sfs_sync_inode(struct sfs_vnode *sv);

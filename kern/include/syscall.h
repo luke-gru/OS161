@@ -63,11 +63,9 @@ int sys_open(userptr_t path, int openflags, mode_t mode, int *retval);
 int sys_close(int fd, int *retval);
 int sys_read(int fd, userptr_t buf, size_t count, int *retval);
 int sys_fstat(int fd, userptr_t stat_buf, int *retval);
+int sys_lseek(int fd, off_t offset, int whence, int *retval);
 int sys_mkdir(userptr_t pathname, mode_t mode, int *retval);
 int sys_rmdir(userptr_t pathname, int *retval);
-// NOTE: this is a horrible system call, it only returns the filename, and makes the
-// kernel keep track of the progress of the directory listing, which is why BSD now
-// has getdirentries() instead (man 2 getdirentries for more info)
 int sys_getdirentry(int fd, userptr_t fname_buf, size_t buf_count, int *retval);
 
 void sys_exit(int status);

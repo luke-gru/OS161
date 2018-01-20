@@ -126,6 +126,9 @@ syscall(struct trapframe *tf)
 		case SYS_fstat:
 			err = sys_fstat((int)tf->tf_a0, (userptr_t)tf->tf_a1, &retval);
 			break;
+		case SYS_lseek:
+			err = sys_lseek((int)tf->tf_a0, (off_t)tf->tf_a1, (int)tf->tf_a2, &retval);
+			break;
 		case SYS_mkdir:
 			err = sys_mkdir((userptr_t)tf->tf_a0, (mode_t)tf->tf_a1, &retval);
 			break;

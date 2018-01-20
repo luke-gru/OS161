@@ -91,7 +91,7 @@ sfs_eachopendir(struct vnode *v, int openflags)
 }
 
 /*
- * Called for read(). sfs_io() does the work.
+ * Read from a file
  */
 static
 int
@@ -110,7 +110,7 @@ sfs_read(struct vnode *v, struct uio *uio)
 }
 
 /*
- * Called for write(). sfs_io() does the work.
+ * Write to a file
  */
 static
 int
@@ -167,7 +167,7 @@ sfs_stat(struct vnode *v, struct stat *statbuf)
 	statbuf->st_size = sv->sv_i.sfi_size;
 	statbuf->st_nlink = sv->sv_i.sfi_linkcount;
 
-	/* We don't support this yet */
+	/* We don't support this yet (TODO) */
 	statbuf->st_blocks = 0;
 
 	/* Fill in other fields as desired/possible... */
@@ -228,7 +228,8 @@ sfs_gettype(struct vnode *v, uint32_t *ret)
 }
 
 /*
- * Check if seeking is allowed. The answer is "yes".
+ * Check if seeking is allowed. We only support regular files and directories,
+ * which are both seekable.
  */
 static
 bool
@@ -275,13 +276,14 @@ int
 sfs_truncate(struct vnode *v, off_t len)
 {
 	struct sfs_vnode *sv = v->vn_data;
+	KASSERT(sv->sv_i.sfi_type == SFS_TYPE_FILE);
 
 	return sfs_itrunc(sv, len);
 }
 
 /*
  * Get the full pathname for a file. This only needs to work on directories.
- * Since we don't support subdirectories (yet), assume it's the root directory
+ * Since we don't support subdirectories (TODO), assume it's the root directory
  * and hand back the empty string. (The VFS layer takes care of the
  * device name, leading slash, etc.)
  */
@@ -412,6 +414,7 @@ sfs_link(struct vnode *dir, const char *name, struct vnode *file)
 
 /*
  * Delete a file.
+ * TODO: support deleting directories with sfs_rmdir
  */
 static
 int
@@ -448,9 +451,9 @@ sfs_remove(struct vnode *dir, const char *name)
 }
 
 /*
- * Rename a file.
+ * Rename a file or directory.
  *
- * Since we don't support subdirectories, assumes that the two
+ * Since we don't support subdirectories (TODO), assumes that the two
  * directories passed are the same.
  */
 static
@@ -476,7 +479,7 @@ sfs_rename(struct vnode *d1, const char *n1,
 		return result;
 	}
 
-	/* We don't support subdirectories */
+	/* We don't support subdirectories (TODO) */
 	KASSERT(g1->sv_i.sfi_type == SFS_TYPE_FILE);
 
 	/*
@@ -574,7 +577,7 @@ sfs_lookparent(struct vnode *v, char *path, struct vnode **ret,
 /*
  * Lookup gets a vnode for a pathname.
  *
- * Since we don't support subdirectories, it's easy - just look up the
+ * Since we don't support subdirectories (TODO), it's easy - just look up the
  * name.
  */
 static
@@ -599,6 +602,56 @@ sfs_lookup(struct vnode *v, char *path, struct vnode **ret)
 	}
 
 	*ret = &final->sv_absvn;
+
+	vfs_biglock_release();
+	return 0;
+}
+
+static
+int
+sfs_mkdir(struct vnode *v, const char *path, mode_t mode) {
+	struct sfs_fs *sfs = v->vn_fs->fs_data;
+	struct sfs_vnode *sv_d = v->vn_data;
+	struct sfs_vnode *new_d;
+	uint32_t ino;
+	int result;
+	(void)mode;
+
+	vfs_biglock_acquire();
+
+	/* Look up the name */
+	result = sfs_dir_findname(sv_d, path, &ino, NULL, NULL);
+	if (result != 0 && result != ENOENT) { // some error occured during lookup
+		vfs_biglock_release();
+		return result;
+	}
+
+	/* If it exists, fail */
+	if (result == 0) {
+		vfs_biglock_release();
+		return EEXIST;
+	}
+
+	/* Didn't exist - create it */
+	result = sfs_makeobj(sfs, SFS_TYPE_DIR, &new_d);
+	if (result != 0) {
+		vfs_biglock_release();
+		return result;
+	}
+
+	/* Link it into the directory */
+	result = sfs_dir_link(sv_d, path, new_d->sv_ino, NULL);
+	if (result != 0) {
+		VOP_DECREF(&new_d->sv_absvn);
+		vfs_biglock_release();
+		return result;
+	}
+
+	/* Update the linkcount of the new dir */
+	new_d->sv_i.sfi_linkcount++;
+
+	/* and consequently mark it dirty. */
+	new_d->sv_dirty = true;
 
 	vfs_biglock_release();
 	return 0;
@@ -663,13 +716,13 @@ const struct vnode_ops sfs_dirops = {
 	.vop_truncate = vopfail_truncate_isdir,
 	.vop_namefile = sfs_namefile,
 
-	.vop_creat = sfs_creat,
+	.vop_creat = sfs_creat, // create a named file in the given directory
 	.vop_symlink = vopfail_symlink_nosys,
-	.vop_mkdir = vopfail_mkdir_nosys,
+	.vop_mkdir = sfs_mkdir,
 	.vop_link = sfs_link,
-	.vop_remove = sfs_remove,
+	.vop_remove = sfs_remove, // remove a named file in the given directory
 	.vop_rmdir = vopfail_string_nosys,
-	.vop_rename = sfs_rename,
+	.vop_rename = sfs_rename, // rename a named file in the given directory
 
 	.vop_lookup = sfs_lookup,
 	.vop_lookparent = sfs_lookparent,
