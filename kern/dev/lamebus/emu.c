@@ -579,7 +579,7 @@ emufs_getdirentry(struct vnode *v, struct uio *uio)
 	struct emufs_vnode *ev = v->vn_data;
 	uint32_t amt;
 
-	KASSERT(uio->uio_rw==UIO_READ);
+	KASSERT(uio->uio_rw == UIO_READ);
 
 	amt = uio->uio_resid;
 	if (amt > EMU_MAXIO) {

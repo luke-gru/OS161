@@ -126,6 +126,6 @@ int sys_getdirentry(int fd, userptr_t dirname_ubuf, size_t buf_count, int *retva
     return 0;
   }
   file_des->offset += 1; // this is the offset to the next entry in the directory (the "slot")
-  *retval = myuio.uio_offset; // amount of bytes written to dirname_ubuf
+  *retval = buf_count - myuio.uio_resid; // amount of bytes written to dirname_ubuf
   return 0;
 }

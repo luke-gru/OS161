@@ -146,7 +146,7 @@ uiomovezeros(size_t n, struct uio *uio)
 
 /*
  * Convenience function to initialize an iovec and uio for kernel I/O.
- * Copies kernel process data to uio struct.
+ * Copies kernel process data to uio struct for use internally in the kernel
  */
 
 void
@@ -165,7 +165,7 @@ uio_kinit(struct iovec *iov, struct uio *u,
 }
 
 /*
- * Copies user process data to uio struct.
+ * Copies user process data to kernel land, or kernel data to userland
  */
 void
 uio_uinit(struct iovec *iov, struct uio *u,
@@ -180,4 +180,5 @@ uio_uinit(struct iovec *iov, struct uio *u,
 		u->uio_segflg = UIO_USERSPACE;
 		u->uio_rw = rw;
 		u->uio_space = curproc->p_addrspace;
+		KASSERT(u->uio_space);
 }

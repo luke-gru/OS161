@@ -377,8 +377,8 @@ proc_create(const char *name)
 /*
  * Destroy a proc structure.
  *
- * Note: nothing currently calls this. Your wait/exit code will
- * probably want to do so.
+ * Note: You can't destroy the currently running process, this is only callable
+ * from other processes.
  */
 void
 proc_destroy(struct proc *proc)
@@ -393,6 +393,7 @@ proc_destroy(struct proc *proc)
 
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
+	KASSERT(proc != curproc);
 
 	/*
 	 * We don't take p_lock in here because we must have the only

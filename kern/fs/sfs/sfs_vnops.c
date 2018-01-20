@@ -178,6 +178,8 @@ sfs_stat(struct vnode *v, struct stat *statbuf)
 static int sfs_getdirentry(struct vnode *v, struct uio *io) {
 	struct sfs_vnode *sv = v->vn_data;
 	int slot = io->uio_offset; // XXX: hack, 0-indexed slot to look up entries
+	KASSERT(io->uio_rw == UIO_READ);
+
 	io->uio_offset = 0;
 	struct sfs_direntry dirent;
 	dirent.sfd_name[0] = 0;
