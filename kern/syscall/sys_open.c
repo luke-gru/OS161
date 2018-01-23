@@ -33,6 +33,7 @@
 #include <current.h>
 #include <copyinout.h>
 #include <kern/errno.h>
+#include <kern/seek.h>
 
 #include <lib.h>
 
@@ -42,15 +43,22 @@ sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval)
   char fname[FPATH_MAX];
   int copy_res = copyinstr(filename, fname, sizeof(fname), NULL);
   if (copy_res != 0) {
+    DEBUG(DB_SYSCALL, "sys_open failed to copy filename, error: %d\n", copy_res);
     *fd_retval = -1;
     return ENOMEM;
   }
   int err = 0;
   struct filedes *fd = file_open(fname, openflags, mode, &err);
   if (fd == NULL) {
+    DEBUG(DB_SYSCALL, "sys_open failed with error: %d\n", err);
     *fd_retval = -1;
     return err;
   }
+  file_seek(fd, 0, SEEK_SET, &err);
+  if (err != 0) {
+    DEBUG(DB_SYSCALL, "sys_open seek 0 failed with error: %d\n", err);
+  }
+  fd->offset = 0;
 	*fd_retval = fd->ft_idx; // file descriptor int
   return 0;
 }

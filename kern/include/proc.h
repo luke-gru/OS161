@@ -49,6 +49,7 @@ struct thread;
 struct vnode;
 struct proc;
 struct stat;
+struct trapframe;
 
 #define FPATH_MAX 1024
 // TODO: move to filedes.c/filedes.h
@@ -116,7 +117,8 @@ struct proc *userprocs[MAX_USERPROCS]; // current userspace processes
 
 struct proc {
 	char *p_name;			/* Name of this process */
-	struct spinlock p_lock;		/* Lock for this structure */
+	struct spinlock p_lock;		  /* Lock for this structure to be used for very fine-grained locking */
+	struct lock *p_mutex;			  /* Lock to be used for more coarse-grained locking */
 	unsigned p_numthreads;		/* Number of threads in this process */
 
 	pid_t pid; // set on thread_fork
@@ -168,10 +170,10 @@ void proc_remthread(struct thread *t);
 // (NOTE: blocks, for use internally in kernel process
 int proc_waitpid_sleep(pid_t pid, int *errcode);
 // Marks current process as sleeping, queues it on CPU and gets it to wait for child to exit.
-// When child exits, process continues in non-interrupt context and returns status to userlevel
+// When child exits, process continues, returning the exitstatus to userlevel
 // status buffer.
 int proc_waitpid_nosleep(pid_t child_pid, userptr_t status_buf, int *errcode);
-int proc_fork(struct proc *parent, struct thread *th, int *errcode);
+int proc_fork(struct proc *parent, struct thread *th, struct trapframe *tf, int *errcode);
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

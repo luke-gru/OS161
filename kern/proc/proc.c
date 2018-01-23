@@ -53,6 +53,7 @@
 #include <kern/errno.h>
 #include <stat.h>
 #include <kern/seek.h>
+#include <kern/fcntl.h>
 #include <uio.h>
 #include <syscall.h>
 
@@ -169,13 +170,11 @@ bool filedes_is_open(struct filedes *file_des) {
 }
 bool filedes_is_readable(struct filedes *file_des) {
 	KASSERT(file_des);
-	return (file_des->flags & O_RDONLY) != 0 ||
-		(file_des->flags & O_RDWR) != 0;
+	return (file_des->flags & O_ACCMODE) != O_WRONLY;
 }
 bool filedes_is_writable(struct filedes *file_des) {
 	KASSERT(file_des);
-	return (file_des->flags & O_WRONLY) != 0 ||
-		(file_des->flags & O_RDWR) != 0;
+	return (file_des->flags & O_ACCMODE) != O_RDONLY;
 }
 bool filedes_is_device(struct filedes *file_des) {
 	KASSERT(file_des);
@@ -253,6 +252,7 @@ struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode) 
 	struct vnode *node;
 	int result = vfs_open(path, openflags, mode, &node);
 	if (result != 0) {
+		panic("FILE ALREADY OPEN");
 		*errcode = result;
 		return NULL;
 	}
@@ -273,19 +273,23 @@ struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode) 
 
 int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
 	if (!filedes_is_device(file_des) && !filedes_is_readable(file_des)) {
+		panic("file not readable");
     *errcode = EBADF;
 		return -1;
   }
-	lock_acquire(file_des->lk);
-	int res = VOP_READ(file_des->node, io);
+	if (!lock_do_i_hold(file_des->lk))
+		lock_acquire(file_des->lk);
+	int res = VOP_READ(file_des->node, io); // 0 on success
   if (res != 0) {
-		*errcode = res;
+		*errcode = EIO;
 		lock_release(file_des->lk);
     return -1;
   }
-	int count = io->uio_iov->iov_len;
-  int bytes_read = count - io->uio_resid;
-  file_des->offset = io->uio_offset; // update file offset
+  int count = io->uio_iov->iov_len;
+	int bytes_read = count - io->uio_resid;
+	if (bytes_read > 0)
+ 		file_des->offset = io->uio_offset; // update file offset
+
 	lock_release(file_des->lk);
   return bytes_read;
 }
@@ -298,7 +302,8 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 		return -1;
 	}
   int res = 0;
-	lock_acquire(file_des->lk);
+	if (!lock_do_i_hold(file_des->lk))
+		lock_acquire(file_des->lk);
   res = VOP_WRITE(file_des->node, io);
   if (res != 0) {
 		*errcode = res;
@@ -388,6 +393,7 @@ proc_create(const char *name)
 
 	proc->pid = INVALID_PID;
 	bzero((void *)proc->file_table, FILE_TABLE_LIMIT);
+	proc->p_mutex = lock_create("proc mutex");
 
 	return proc;
 }
@@ -492,10 +498,11 @@ proc_destroy(struct proc *proc)
 	}
 
 	kfree(proc->p_name);
+	lock_destroy(proc->p_mutex);
 	kfree(proc);
 }
 
-int proc_fork(struct proc *parent_pr, struct thread *parent_th, int *err) {
+int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe *tf, int *err) {
 	KASSERT(is_current_userspace_proc(parent_pr));
 	struct proc *child_pr = NULL;
 	child_pr = proc_create(parent_pr->p_name);
@@ -505,14 +512,17 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, int *err) {
 	}
 	child_pr->p_parent = parent_pr;
 	child_pr->p_addrspace = NULL;
-	int res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
+	lock_acquire(parent_pr->p_mutex);
+	int res = as_copy(proc_getas(), &child_pr->p_addrspace); // NOTE assumes parent_pr == curproc
 	if (res != 0) {
+		lock_release(parent_pr->p_mutex);
 		*err = res;
 		return -1;
 	}
 	KASSERT(child_pr->p_addrspace != NULL);
 	res = proc_inherit_filetable(parent_pr, child_pr);
 	if (res != 0) {
+		lock_release(parent_pr->p_mutex);
 		*err = res;
 		return -1;
 	}
@@ -524,14 +534,17 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, int *err) {
 	res = thread_fork_from_proc(
 		parent_th,
 		child_pr,
+		tf,
 		&fork_errcode
 	);
 	if (res < 0) {
 		*err = fork_errcode;
+		lock_release(parent_pr->p_mutex);
 		proc_destroy(child_pr);
 		return -1;
 	} else {
 		KASSERT(child_pr->pid > 0);
+		lock_release(parent_pr->p_mutex);
 		return child_pr->pid;
 	}
 }
@@ -806,19 +819,23 @@ proc_setas(struct addrspace *newas)
 	return oldas;
 }
 
-int
-proc_waitpid_sleep(pid_t child_pid, int *errcode) {
+int proc_waitpid_sleep(pid_t child_pid, int *errcode) {
 	KASSERT_CAN_SLEEP();
 	int status = -1001; // should be set below
 	DEBUG(DB_SYSCALL, "waiting on process %d\n", (int)child_pid);
 	int res = pid_wait_sleep(child_pid, &status);
 	if (res != 0) {
+		DEBUG(DB_SYSCALL, "waiting on process failed, error: %d\n", res);
 		*errcode = res;
 		return -1;
 	}
 	DEBUG(DB_SYSCALL, "done waiting on process %d, exitstatus %d\n", (int)child_pid, status);
+	exorcise();
 	struct proc *child = proc_lookup(child_pid);
-	if (child) proc_destroy(child); // NOTE: process could already have exited, which is fine
+	if (child) {
+		panic("child should have been exorcised!");
+		return -1;
+	}
 	return status; // exitstatus
 }
 

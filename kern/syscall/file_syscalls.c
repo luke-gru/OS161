@@ -59,7 +59,12 @@ sys_chdir(userptr_t dirbuf, int *retval)
 }
 
 int sys_close(int fd, int *retval) {
+  (void)fd;
   int res = file_close(fd);
+  if (res != 0) {
+    DEBUG(DB_SYSCALL, "Error closing fd %d for process %d: code=%d (%s))",
+      fd, curproc->pid, res, strerror(res));
+  }
   *retval = res;
   return res;
 }
@@ -67,6 +72,8 @@ int sys_close(int fd, int *retval) {
 int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
+    DEBUG(DB_SYSCALL, "Error during fstat: fd %d for process %d: file not open)",
+      fd, curproc->pid);
     *retval = -1;
     return EBADF;
   }
@@ -74,6 +81,8 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   struct stat st;
   int res = filedes_stat(file_des, &st, &errcode);
   if (res != 0) {
+    DEBUG(DB_SYSCALL, "Error during fstat fd %d for process %d: code=%d (%s))",
+      fd, curproc->pid, errcode, strerror(errcode));
     *retval = -1;
     return errcode;
   }
@@ -85,12 +94,16 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
 int sys_lseek(int fd, off_t offset, int whence, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
+    DEBUG(DB_SYSCALL, "Error during lseek: fd %d for process %d, file not open",
+      fd, curproc->pid);
     *retval = -1;
     return EBADF;
   }
   int errcode = 0;
   int res = file_seek(file_des, offset, whence, &errcode);
   if (res != 0) {
+    DEBUG(DB_SYSCALL, "Error during lseek: fd %d for process %d, code=%d, err=%s",
+      fd, curproc->pid, errcode, strerror(errcode));
     *retval = -1;
     return errcode;
   }

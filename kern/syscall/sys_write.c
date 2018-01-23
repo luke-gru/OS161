@@ -39,47 +39,61 @@
 #include <console_lock.h>
 #include <current.h>
 #include <cpu.h>
+#include <spl.h>
 extern struct spinlock kprintf_spinlock;
 
 // NOTE: non-zero return value is an error
-int
-sys_write(int fd, userptr_t buf, size_t count, int *count_retval)
-{
-  //kprintf("sys_write\n");
+int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
+  bool is_console = (fd == 1 || fd == 2);
   bool dolock = curthread->t_in_interrupt == false
 		&& curthread->t_curspl == 0
 		&& curcpu->c_spinlocks == 0;
 
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
+    DEBUG(DB_SYSCALL, "sys_write failed, fd %d not open in process %d\n", fd, curproc->pid);
     *count_retval = -1;
     return EBADF;
   }
   struct iovec iov;
   struct uio myuio;
   int errcode = 0;
+   // avoid extraneous context switches on lock acquisition when printing to console
+   // so we don't get interleaved output
+  if (!is_console)
+    lock_acquire(file_des->lk);
+  // disable interrupts during writes to avoid race conditions writing to the same file
+  int spl = splhigh();
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
-  if (dolock) {
-    DEBUG_CONSOLE_LOCK(fd);
-  } else {
-    spinlock_acquire(&kprintf_spinlock);
+  if (is_console) {
+    if (dolock) {
+      DEBUG_CONSOLE_LOCK(fd);
+    } else {
+      spinlock_acquire(&kprintf_spinlock);
+    }
   }
 
-  int res = file_write(file_des, &myuio, &errcode);
+  int res = file_write(file_des, &myuio, &errcode); // releases filedes lock
+  splx(spl);
   if (res == -1) {
-    if (dolock) {
-      DEBUG_CONSOLE_UNLOCK();
-    } else {
-      spinlock_release(&kprintf_spinlock);
+    DEBUG(DB_SYSCALL, "sys_write failed with error: %d\n", errcode);
+    if (is_console) {
+      if (dolock) {
+        DEBUG_CONSOLE_UNLOCK();
+      } else {
+        spinlock_release(&kprintf_spinlock);
+      }
     }
     *count_retval = -1;
     return errcode;
   }
   *count_retval = res; // num bytes written
-  if (dolock) {
-    DEBUG_CONSOLE_UNLOCK();
-  } else {
-    spinlock_release(&kprintf_spinlock);
+  if (is_console) {
+    if (dolock) {
+      DEBUG_CONSOLE_UNLOCK();
+    } else {
+      spinlock_release(&kprintf_spinlock);
+    }
   }
   return 0;
 }

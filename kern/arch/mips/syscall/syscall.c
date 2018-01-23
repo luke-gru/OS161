@@ -150,12 +150,7 @@ syscall(struct trapframe *tf)
 			err = sys_getcwd((userptr_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);
 			break;
 		case SYS_fork:
-			if (curthread->t_tf) {
-			 	//trapframe_free(curthread->t_tf);
-			 	//curthread->t_tf = NULL;
-			}
-			curthread->t_tf = trapframe_copy(tf);
-			err = sys_fork(&retval);
+			err = sys_fork(tf, &retval);
 			break;
 		case SYS_waitpid:
 			err = sys_waitpid((pid_t)tf->tf_a0, (userptr_t)tf->tf_a1, (int)tf->tf_a2, &retval);
@@ -207,16 +202,18 @@ syscall(struct trapframe *tf)
  *
  * Thus, you can trash it and do things another way if you prefer.
  */
-void enter_forked_process(void *data1, unsigned long data2) {
-	(void)data1;
-	(void)data2;
+void enter_forked_process(void *tf, unsigned long unused) {
+	(void)unused;
 	struct thread *t = curthread;
 	KASSERT(t);
-	struct trapframe *tf = t->t_tf;
 	KASSERT(tf != NULL);
 
+	// trapframe must be on currently running thread's stack, so we copy it over and rely on
+	// it not getting popped from the parent's stack.
 	struct trapframe tf_on_stack;
-	tf_on_stack = *tf;
+	//struct trapframe *tf_p = (struct trapframe *)tf;
+	tf_on_stack = *(struct trapframe*)tf;
+	//memcpy(&tf_on_stack, tf_p, sizeof(struct trapframe));
 
 	/*
 	 * Succeed and return 0.
@@ -229,7 +226,6 @@ void enter_forked_process(void *data1, unsigned long data2) {
 	 */
 	tf_on_stack.tf_epc += 4;
 
-	t->just_forked = false;
 	t->t_state = S_RUN;
 	mips_usermode(&tf_on_stack);
 }

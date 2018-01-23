@@ -287,6 +287,7 @@ sfs_blockio(struct sfs_vnode *sv, struct uio *uio)
 
 /*
  * Do I/O of a whole region of data, whether or not it's block-aligned.
+ * Returns number of bytes read
  */
 int
 sfs_io(struct sfs_vnode *sv, struct uio *uio)

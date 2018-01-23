@@ -36,12 +36,10 @@
 
 #include <lib.h>
 
-int
-sys_read(int fd, userptr_t buf, size_t count, int *retval)
-{
-  //kprintf("sys_read\n");
+int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des || !file_is_open(fd)) {
+    DEBUG(DB_SYSCALL, "sys_read for fd %d failed, file not open in process %d\n", fd, curproc->pid);
     *retval = -1;
     return EBADF;
   }
@@ -50,9 +48,13 @@ sys_read(int fd, userptr_t buf, size_t count, int *retval)
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_READ);
   int errcode = 0;
   int bytes_read = file_read(file_des, &myuio, &errcode);
-  if (bytes_read == -1) {
+  if (bytes_read < 0) {
+    DEBUG(DB_SYSCALL, "sys_read for fd %d failed with error: %d, %s\n", fd, errcode, strerror(errcode));
     *retval = -1;
     return errcode;
+  }
+  if (bytes_read == 0) {
+    DEBUG(DB_SYSCALL, "sys_read for fd %d read 0 bytes from file\n", fd);
   }
   *retval = bytes_read;
   return 0;

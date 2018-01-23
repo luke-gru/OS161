@@ -311,8 +311,7 @@ thread_destroy(struct thread *thread)
  *
  * The list of zombies is per-cpu.
  */
-static void exorcise(void)
-{
+void exorcise(void) {
 	struct thread *z;
 	struct proc *p;
 
@@ -590,7 +589,7 @@ thread_fork(const char *name,
 // If returns -1, then fork failed and *errcode is set.
 // Otherwise returns PID > 0 of child process. The child process is setup to run on
 // some next context switch, to return 0 from the caller's trapframe.
-int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode) {
+int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapframe *tf, int *errcode) {
 	int result;
 	struct thread *newthread;
 
@@ -644,12 +643,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode
 	KASSERT(is_valid_pid(parent_pid));
 	KASSERT(is_valid_pid(child_pid));
 
-	// NOTE: assumes parent thread got trapped in syscall (fork)
-	KASSERT(parent_th->t_tf != NULL);
-
-	newthread->just_forked = true;
-	switchframe_init(newthread, enter_forked_process, (void*)NULL, 0);
-	newthread->t_tf = trapframe_copy(parent_th->t_tf);
+	switchframe_init(newthread, enter_forked_process, tf, 0);
 	thread_make_runnable(newthread, false);
 	splx(spl);
 	return child_pid;
@@ -891,13 +885,11 @@ thread_startup(void (*entrypoint)(void *data1, unsigned long data2),
  * your kernel in leaking memory and cause some of the test161 checks to fail.
  *
  * Does not return.
- * TODO: destroy and remove process from process table when last thread in process
- * (which is always right now as there are no multi-threaded user-level processes).
  */
 void thread_exit(int status) {
 	struct thread *cur_th;
 	struct proc *cur_p = curproc;
-
+	DEBUG(DB_SYSCALL, "exiting from process %d, status: %d\n", cur_p->pid, status);
 
 	cur_th = curthread;
 	// NOTE: during boot, we have to deal with cpu_hatch calling thread_exit()

@@ -337,6 +337,7 @@ int pid_wait_sleep(pid_t childpid, int *status) {
 
 	/* Don't let a process wait for itself. */
 	if (childpid == curproc->pid) {
+		DEBUG(DB_SYSCALL, "pid_wait_sleep, can't wait for self: %d\n", (int)childpid);
 		return EINVAL;
 	}
 
@@ -368,8 +369,13 @@ int pid_wait_sleep(pid_t childpid, int *status) {
 		*status = child_info->pi_exitstatus;
 	}
 
+	struct proc *parent = proc_lookup(child_info->pi_ppid);
+	if (parent)
+		spinlock_acquire(&parent->p_lock);
 	child_info->pi_ppid = INVALID_PID;
 	pi_drop(child_info->pi_pid);
+	if (parent)
+		spinlock_release(&parent->p_lock);
 
 	lock_release(pidlock);
 	return 0;

@@ -104,29 +104,4 @@ __DEAD void mips_usermode(struct trapframe *tf);
 extern vaddr_t cpustacks[]; // used in exception-mips.S
 extern vaddr_t cputhreads[]; // used in exception-mips.S
 
-/*
- * This is used to convert a trapframe when fork() is called from userland
- * to a switchframe, because the currently trapped user process is requeued
- * so that we can call enter_forked_process() for the child.
- */
-// struct switchframe *trapframe_to_switchframe(struct trapframe *tf) {
-// 	//struct switchframe *sf = kmalloc(sizeof(*sf));
-// 	return NULL;
-// }
-inline void trapframe_free(struct trapframe *tf);
-inline void trapframe_free(struct trapframe *tf) {
-	(void)tf;
-	//KASSERT(tf != NULL);
-	//kfree(tf);
-}
-inline struct trapframe *trapframe_copy(struct trapframe *tf);
-inline struct trapframe *trapframe_copy(struct trapframe *tf) {
-	// KASSERT(tf != NULL);
-	// struct trapframe *new_tf = kmalloc(sizeof(*tf));
-	// memcpy(new_tf, tf, sizeof(*tf));
-	// return new_tf;
-	return tf;
-}
-
-
 #endif /* _MIPS_TRAPFRAME_H_ */

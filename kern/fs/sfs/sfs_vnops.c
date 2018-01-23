@@ -93,9 +93,7 @@ sfs_eachopendir(struct vnode *v, int openflags)
 /*
  * Read from a file
  */
-static
-int
-sfs_read(struct vnode *v, struct uio *uio)
+static int sfs_read(struct vnode *v, struct uio *uio)
 {
 	struct sfs_vnode *sv = v->vn_data;
 	int result;

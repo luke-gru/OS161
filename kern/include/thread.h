@@ -160,7 +160,7 @@ void thread_shutdown(void);
 int thread_fork(const char *name, struct proc *proc,
                 void (*func)(void *, unsigned long),
                 void *data1, unsigned long data2);
-int thread_fork_from_proc(struct thread *th, struct proc *pr, int *errcode);
+int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *tf, int *errcode);
 
 /*
  * Cause the current thread to exit.
@@ -179,6 +179,8 @@ void thread_yield(void);
  * Reshuffle the run queue. Called from the timer interrupt.
  */
 void schedule(void);
+
+void exorcise(void); // clean up zombie threads
 
 /*
  * Potentially migrate ready threads to other CPUs. Called from the

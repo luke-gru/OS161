@@ -34,6 +34,9 @@
 #include <thread.h>
 #include <current.h>
 #include <uio.h>
+#include <copyinout.h>
+#include <kern/wait.h>
+#include <spl.h>
 
 #include <lib.h>
 
@@ -46,12 +49,18 @@ void sys_exit(int status) {
   thread_exit(status);
 }
 
-int sys_fork(int *retval) {
+int sys_fork(struct trapframe *tf, int *retval) {
   int err = 0;
-  int pid = proc_fork(curproc, curthread, &err);
+  // disable interrupts so the trapframe that we use for the parent (current) process
+  // in the child doesn't point to invalid memory, which it would if the parent were to
+  // run before the child and pop its trapframe stack
+  int spl = splhigh();
+  int pid = proc_fork(curproc, curthread, tf, &err);
   if (pid < 0) {
+    DEBUG(DB_SYSCALL, "sys_fork failed: %d\n", err);
     *retval = -1;
     KASSERT(err != 0);
+    splx(spl);
     return err; // error
   }
   if (pid == 0) {
@@ -62,24 +71,23 @@ int sys_fork(int *retval) {
     KASSERT(is_valid_user_pid(pid));
     *retval = pid;
   }
+  splx(spl);
+  thread_yield(); // make sure child runs before us (FIXME)
   return 0;
 }
 
 int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *retval) {
   int err = 0; // should be set below
   (void)options;
-  int result = proc_waitpid_sleep(child_pid, &err); // FIXME: don't sleep kernel thread in interrupt handler!
+  int result = proc_waitpid_sleep(child_pid, &err);
   if (result == -1) {
     KASSERT(err > 0);
     DEBUG(DB_SYSCALL, "sys_waitpid failed with errno %d\n", err);
     *retval = -1;
     return err;
   }
-  // NOTE: `result` here is the exitstatus of the child process
-  struct uio myuio;
-  struct iovec iov;
-  uio_uinit(&iov, &myuio, exitstatus_buf, sizeof(result), 0, UIO_READ);
-  uiomove(&result, sizeof(result), &myuio);
+  int waitstatus = _MKWAIT_EXIT(result);
+  copyout((const void*)&waitstatus, exitstatus_buf, sizeof(int));
   *retval = 0;
   return 0;
 }
