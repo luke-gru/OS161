@@ -273,20 +273,20 @@ struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode) 
 
 int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
 	if (!filedes_is_device(file_des) && !filedes_is_readable(file_des)) {
-		panic("file not readable");
     *errcode = EBADF;
 		return -1;
   }
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);
+	// NOTE: this must be before VOP_READ, as it's modified by the operation
+	int count = io->uio_iov->iov_len;
 	int res = VOP_READ(file_des->node, io); // 0 on success
   if (res != 0) {
 		*errcode = EIO;
 		lock_release(file_des->lk);
     return -1;
   }
-  int count = io->uio_iov->iov_len;
-	int bytes_read = count - io->uio_resid;
+  int bytes_read = count - io->uio_resid;
 	if (bytes_read > 0)
  		file_des->offset = io->uio_offset; // update file offset
 

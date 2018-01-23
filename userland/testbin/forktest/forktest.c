@@ -42,6 +42,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <err.h>
+#include <errno.h>
 #include <test161/test161.h>
 
 #define FORKTEST_FILENAME_BASE "forktest"
@@ -55,18 +56,6 @@ static char filename[32];
 static volatile int mypid;
 
 /*
- * Helper function to do pow()
- */
-static
-int pow_int(int x, int y) {
-	int i;
-	int result = 1;
-	for(i = 0; i < y; i++)
-		result *= x;
-	return result;
-}
-
-/*
  * Helper function for fork that prints a warning on error.
  */
 static
@@ -75,8 +64,9 @@ dofork(void)
 {
 	int pid;
 	pid = fork();
+	printf("fork return val: %d\n", pid);
 	if (pid < 0) {
-		warn("fork");
+		warn("fork failed from userland");
 	}
 	return pid;
 }
@@ -100,9 +90,9 @@ check(void)
 		volatile int seenpid;
 		seenpid = mypid;
 		if (seenpid != getpid()) {
-			errx(1, "pid mismatch (%d, should be %d) "
+			errx(1, "pid mismatch iter %d (%d, should be %d) "
 			     "- your vm is broken!",
-			     seenpid, getpid());
+			     i, seenpid, getpid());
 		}
 	}
 }
@@ -120,7 +110,7 @@ static
 void
 dowait(int nowait, int pid)
 {
-	int x;
+	int x = 1001; // exit status not set
 
 	if (pid<0) {
 		/* fork in question failed; just return */
@@ -128,15 +118,17 @@ dowait(int nowait, int pid)
 	}
 	if (pid==0) {
 		/* in the fork in question we were the child; exit */
+		printf("exiting from fork\n");
 		exit(0);
 	}
-
+	printf("waiting on PID: %d\n", pid);
+	int wait_ret = 0;
 	if (!nowait) {
-		if (waitpid(pid, &x, 0)<0) {
-			errx(1, "waitpid");
+		if ((wait_ret = waitpid(pid, &x, 0)) < 0) {
+			errx(1, "waitpid failed with return value: %d, error: %s", wait_ret, strerror(errno));
 		}
 		else if (WIFSIGNALED(x)) {
-			errx(1, "pid %d: signal %d", pid, WTERMSIG(x));
+			errx(1, "pid %d: exitstatus: %d, signal %d", pid, x, WTERMSIG(x));
 		}
 		else if (WEXITSTATUS(x) != 0) {
 			errx(1, "pid %d: exit %d", pid, WEXITSTATUS(x));
@@ -183,6 +175,7 @@ test(int nowait)
 	 * So...
 	 */
 	snprintf(filename, 32, "%s-%d.bin", FORKTEST_FILENAME_BASE, getpid());
+	printf("printing to file: %s\n", filename);
 	int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC);
 	if(fd < 3) {
 		// 0, 1, 2 are stdin, stdout, stderr
@@ -240,43 +233,53 @@ test(int nowait)
 
 	// Check if file contents are correct
 	// lseek may not be implemented..so close and reopen
-	close(fd);
+	int close_res = close(fd);
+	if (close_res != 0) {
+		err(1, "Failed to close file %s\n", filename);
+	}
 	fd = open(filename, O_RDONLY);
 	if(fd < 3) {
 		err(1, "Failed to open file for verification\n");
 	}
 	nprintf(".");
 
-	char buffer[30];
+	char buffer[31];
 	int len;
-	int char_idx, i;
-	int observed, expected;
-	char character = 'A';
 
-	memset(buffer, 0, 30);
+	memset(buffer, 0, 31);
 	len = read(fd, buffer, 30);
 	printf("\n%s\n", buffer);
 	if(len != 30) {
-		err(1, "Did not get expected number of characters\n");
+		err(1, "Did not get expected number of characters from fd %d, got: %d, buffer: \n", fd, len, buffer);
 	}
 	nprintf(".");
-	// Check if number of instances of each character is correct
-	// 2As; 4Bs; 8Cs; 16Ds
-	for(char_idx = 0; char_idx < 4; char_idx++) {
-		nprintf(".");
-		observed = 0;
-		expected = pow_int(2, char_idx + 1);
-		for(i = 0; i < 30; i++) {
-			// In C, char can be directly converted to an ASCII index
-			// So, A is 65, B is 66, ...
-			if(buffer[i] == character + char_idx) {
-				observed++;
-			}
+
+	//Check if number of instances of each character is correct
+	//2As; 4Bs; 8Cs; 16Ds
+	int as, bs, cs, ds;
+	as = 0;
+	bs = 0;
+	cs = 0;
+	ds = 0;
+
+	for(int i = 0; i < 30; i++) {
+		// In C, char can be directly converted to an ASCII index
+		// So, A is 65, B is 66, ...
+		if(buffer[i] == 'A') {
+			as++;
+		} else if (buffer[i] == 'B') {
+			bs++;
+		} else if (buffer[i] == 'C') {
+			cs++;
+		} else if (buffer[i] == 'D') {
+			ds++;
+		} else {
+			err(1, "invalid char: %c", buffer[i]);
 		}
-		if(observed != expected) {
-			// Failed
-			err(1, "Failed! Expected %d%cs..observed: %d\n", expected, character + char_idx, observed);
-		}
+	}
+	if(as != 2 || bs != 4 || cs != 8 || ds != 16) {
+		// Failed
+		err(1, "Failed! Expected 2'A', 4'B', 8'C', 16'D', got: %s\n", buffer);
 	}
 	nprintf("\n");
 	success(TEST161_SUCCESS, SECRET, "/testbin/forktest");

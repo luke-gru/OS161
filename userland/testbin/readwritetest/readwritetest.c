@@ -85,9 +85,9 @@ main(int argc, char **argv)
 	char buf[32];
 	len = read(fd, buf, expected_len);
 	if(len != 31) {
-		err(1, "readtest expected to read %d bytes from readtest.dat."
+		err(1, "readtest expected to read %d bytes from %s."
 			" Only read %d bytes.\n",
-			expected_len, len);
+			expected_len, FILENAME, len);
 	}
 	nprintf(".");
 
