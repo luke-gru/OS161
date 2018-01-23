@@ -959,7 +959,7 @@ menu_execute(char *line, int isargs)
 void
 menu(char *args)
 {
-	dbflags = DB_LUKE;
+	dbflags = DB_NONE;
 	char buf[64];
 	menu_execute(args, 1);
 

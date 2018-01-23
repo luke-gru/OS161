@@ -93,43 +93,49 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	file_des->node = node;
 	file_des->flags = flags;
 	file_des->offset = 0;
+	file_des->refcount = 1;
+	file_des->lk = lock_create("file lock");
 	KASSERT(filetable_put(p, file_des, table_idx) != -1); // TODO: return error when too many files being opened
 	return file_des;
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	kfree(file_des->pathname);
-	vfs_close(file_des->node); // just decrements reference, doesn't necessarily close the file, if others have it open
+	vfs_close(file_des->node);
 	filetable_put(p, NULL, file_des->ft_idx);
+	file_des->refcount = 0;
 	kfree(file_des);
 }
 
-// close file descriptor for current process. When I implement sharing of file descsriptors for child
-// processes, this will decrement the refcount of the filedes instead of always destroying it.
+// close file descriptor for current process.
 void filedes_close(struct proc *p, struct filedes *file_des) {
 	KASSERT(file_des);
 	if (!p) p = curproc;
-	filedes_destroy(p, file_des);
+	file_des->refcount--;
+	if (file_des->refcount == 0) {
+		filedes_destroy(p, file_des);
+	}
 }
 // open file descriptor for current process. When I implement sharing of file descriptors for child
-// processes, this won't always create new filedes structs.
+// processes, this won't always create new filedes structs. FIXME: implement semantics for shared descriptors
+// with FORK(2)
 struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
 	if (!p) p = curproc;
 	return filedes_create(p, pathname, node, flags, table_idx);
 }
 
-struct filedes *filedes_dup(struct proc *p, struct filedes *file_des, int ft_idx) {
-	// TODO: actually just increase reference count and return same pointer for actual sharing
-	struct filedes *new_des = filedes_open(p, file_des->pathname, file_des->node, file_des->flags, ft_idx);
-	return new_des;
+static void filedes_inherit(struct proc *p, struct filedes *file_des, int idx) {
+	(void)p;
+	file_des->refcount++;
+	filetable_put(p, file_des, idx);
 }
 
 int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 	if (!p) p = curproc;
 	struct filedes **fd_tbl = p->file_table;
-	// add or clear an fd from the table, given an index
+	// add or clear a fd from the table, given an index
 	if (idx >= 0) {
 		if (fd_tbl[idx] != NULL && fd != NULL) {
-			panic("filetable_put can't overwrite an fd: %d", idx); // FIXME
+			panic("filetable_put can't overwrite a fd: %d", idx); // FIXME
 			return -1;
 		}
 		fd_tbl[idx] = fd; // NOTE: can be NULL
@@ -220,7 +226,6 @@ int file_close(int fd) {
 		return EBADF;
 	}
 	filedes_close(curproc, file_des);
-	KASSERT(filetable_get(curproc, fd) == NULL);
 	return 0;
 }
 
@@ -271,14 +276,17 @@ int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
     *errcode = EBADF;
 		return -1;
   }
+	lock_acquire(file_des->lk);
 	int res = VOP_READ(file_des->node, io);
   if (res != 0) {
 		*errcode = res;
+		lock_release(file_des->lk);
     return -1;
   }
 	int count = io->uio_iov->iov_len;
   int bytes_read = count - io->uio_resid;
   file_des->offset = io->uio_offset; // update file offset
+	lock_release(file_des->lk);
   return bytes_read;
 }
 
@@ -290,9 +298,11 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 		return -1;
 	}
   int res = 0;
+	lock_acquire(file_des->lk);
   res = VOP_WRITE(file_des->node, io);
   if (res != 0) {
 		*errcode = res;
+		lock_release(file_des->lk);
 		return -1;
   }
 	int count = io->uio_iov->iov_len;
@@ -301,9 +311,11 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 		panic("invalid write in file_write: %d", bytes_written); // FIXME
 	}
 	file_des->offset = io->uio_offset;
+	lock_release(file_des->lk);
 	return bytes_written;
 }
 
+// FIXME: lock appropriately
 // man 2 lseek for more info
 int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode) {
 	if (!file_des || !filedes_is_seekable(file_des)) {
@@ -605,7 +617,7 @@ int proc_inherit_filetable(struct proc *parent, struct proc *child) {
 	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
 		fd = filetable_get(parent, i);
 		if (fd) {
-			filedes_dup(child, fd, i);
+			filedes_inherit(child, fd, i);
 		}
 	}
 	return 0;

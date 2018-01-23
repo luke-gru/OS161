@@ -42,6 +42,7 @@
 #include <uio.h>
 #include <lib.h>
 #include <pid.h>
+#include <synch.h>
 
 struct addrspace;
 struct thread;
@@ -58,7 +59,8 @@ struct filedes {
 	int flags;
 	size_t offset;
 	int ft_idx; // index into file table of current process
-	//int refcount; // filedes may be shared by multiple processes
+	unsigned int refcount; // filedes is shared by child processes
+	struct lock *lk;
 };
 
 const char *special_filedes_name(int fd);
@@ -69,7 +71,6 @@ int filetable_put(struct proc *p, struct filedes *file_des, int idx);
 
 struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
 void filedes_close(struct proc *p, struct filedes *file_des);
-struct filedes *filedes_dup(struct proc *p, struct filedes *file_des, int ft_idx);
 
 off_t filedes_size(struct filedes *file_des, int *errcode);
 int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode);

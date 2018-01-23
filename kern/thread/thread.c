@@ -608,7 +608,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode
 		*errcode = ENOMEM;
 		return -1;
 	}
-	//int spl = splhigh(); // disable interrupts
+	int spl = splhigh(); // disable interrupts
 	thread_checkstack_init(newthread);
 
 	/* Thread subsystem fields */
@@ -623,7 +623,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode
 		thread_destroy(newthread);
 		pid_unalloc(p->pid);
 		*errcode = result;
-		//splx(spl);
+		splx(spl);
 		return -1;
 	}
 
@@ -651,7 +651,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode
 	switchframe_init(newthread, enter_forked_process, (void*)NULL, 0);
 	newthread->t_tf = trapframe_copy(parent_th->t_tf);
 	thread_make_runnable(newthread, false);
-	//splx(spl);
+	splx(spl);
 	return child_pid;
 }
 
@@ -982,6 +982,7 @@ schedule(void)
 void
 thread_consider_migration(void)
 {
+	return;
 	unsigned my_count, total_count, one_share, to_send;
 	unsigned i, numcpus;
 	struct cpu *c;
