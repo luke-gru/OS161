@@ -45,10 +45,6 @@ extern struct spinlock kprintf_spinlock;
 // NOTE: non-zero return value is an error
 int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   bool is_console = (fd == 1 || fd == 2);
-  bool dolock = curthread->t_in_interrupt == false
-		&& curthread->t_curspl == 0
-		&& curcpu->c_spinlocks == 0;
-
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
     DEBUG(DB_SYSCALL, "sys_write failed, fd %d not open in process %d\n", fd, curproc->pid);
@@ -58,8 +54,11 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   struct iovec iov;
   struct uio myuio;
   int errcode = 0;
-   // avoid extraneous context switches on lock acquisition when printing to console
-   // so we don't get interleaved output
+
+  bool dolock = curthread->t_in_interrupt == false &&
+    curthread->t_curspl == 0 && curcpu->c_spinlocks == 0;
+  // avoid extraneous context switches on lock acquisition when printing to console
+  // so we don't get interleaved output
   if (!is_console)
     lock_acquire(file_des->lk);
   // disable interrupts during writes to avoid race conditions writing to the same file
@@ -76,7 +75,6 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   int res = file_write(file_des, &myuio, &errcode); // releases filedes lock
   splx(spl);
   if (res == -1) {
-    DEBUG(DB_SYSCALL, "sys_write failed with error: %d\n", errcode);
     if (is_console) {
       if (dolock) {
         DEBUG_CONSOLE_UNLOCK();
@@ -85,6 +83,9 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
       }
     }
     *count_retval = -1;
+    // NOTE: call to DEBUG must be after release of console lock, in case of
+    // writes to console
+    DEBUG(DB_SYSCALL, "sys_write failed with error: %d\n", errcode);
     return errcode;
   }
   *count_retval = res; // num bytes written
@@ -94,6 +95,11 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     } else {
       spinlock_release(&kprintf_spinlock);
     }
+  }
+  if (res == 0) {
+    // NOTE: call to DEBUG must be after release of console lock, in case of
+    // writes to console
+    DEBUG(DB_SYSCALL, "sys_write reported writing 0 bytes to fd: %d\n", fd);
   }
   return 0;
 }

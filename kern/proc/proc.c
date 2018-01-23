@@ -304,13 +304,14 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
   int res = 0;
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);
+	// NOTE: this must be before VOP_WRITE, as it's modified by the operation
+	int count = io->uio_iov->iov_len;
   res = VOP_WRITE(file_des->node, io);
   if (res != 0) {
 		*errcode = res;
 		lock_release(file_des->lk);
 		return -1;
   }
-	int count = io->uio_iov->iov_len;
 	int bytes_written = count - io->uio_resid;
 	if (bytes_written != count) {
 		panic("invalid write in file_write: %d", bytes_written); // FIXME
