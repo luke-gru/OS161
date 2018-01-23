@@ -36,12 +36,21 @@
 
 #include <lib.h>
 
+#include <console_lock.h>
+#include <current.h>
+#include <cpu.h>
+extern struct spinlock kprintf_spinlock;
+
 // NOTE: non-zero return value is an error
 int
 sys_write(int fd, userptr_t buf, size_t count, int *count_retval)
 {
   //kprintf("sys_write\n");
-  struct filedes *file_des = curproc->file_table[fd];
+  bool dolock = curthread->t_in_interrupt == false
+		&& curthread->t_curspl == 0
+		&& curcpu->c_spinlocks == 0;
+
+  struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
     *count_retval = -1;
     return EBADF;
@@ -50,11 +59,27 @@ sys_write(int fd, userptr_t buf, size_t count, int *count_retval)
   struct uio myuio;
   int errcode = 0;
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
+  if (dolock) {
+    DEBUG_CONSOLE_LOCK(fd);
+  } else {
+    spinlock_acquire(&kprintf_spinlock);
+  }
+
   int res = file_write(file_des, &myuio, &errcode);
   if (res == -1) {
+    if (dolock) {
+      DEBUG_CONSOLE_UNLOCK();
+    } else {
+      spinlock_release(&kprintf_spinlock);
+    }
     *count_retval = -1;
     return errcode;
   }
   *count_retval = res; // num bytes written
+  if (dolock) {
+    DEBUG_CONSOLE_UNLOCK();
+  } else {
+    spinlock_release(&kprintf_spinlock);
+  }
   return 0;
 }

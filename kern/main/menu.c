@@ -52,6 +52,7 @@
 #include "opt-net.h"
 #include "opt-synchprobs.h"
 #include "opt-automationtest.h"
+#include <lib.h>
 
 /*
  * In-kernel menu and command dispatcher.
@@ -130,16 +131,28 @@ common_prog(int nargs, char **args)
 	// this memory access is invalid
 	child_pid = proc->pid;
 	if (child_pid > 0) {
-		KASSERT(proc_numprocs() <= 1);
-		result = proc_waitpid(child_pid);
-
-		if (result != 0) {
+		int waiterr;
+		result = proc_waitpid_sleep(child_pid, &waiterr);
+		if (result == -1) {
+			kprintf("waitpid error: %d\n", waiterr);
+		} else if (result != 0) {
 			kprintf("exitstatus: %d\n", result);
 		}
 	} else {
 		panic("invalid child pid: %d", (int)child_pid);
 	}
 
+	return 0;
+}
+
+static int cmd_forktest(int nargs, char **args) {
+	(void)nargs; (void)args;
+	int err = 0;
+	int res = proc_fork(curproc, curthread, &err);
+	kprintf("proc_fork result: %d\n", res);
+	if (res > 0) {
+		proc_waitpid_sleep(res, &err);
+	}
 	return 0;
 }
 
@@ -745,6 +758,7 @@ static struct {
 
 	/* operations */
 	{ "s",		cmd_shell },
+	{ "forktest", cmd_forktest},
 	{ "p",		cmd_prog },
 	{ "mount",	cmd_mount },
 	{ "unmount",	cmd_unmount },
@@ -957,8 +971,8 @@ menu_execute(char *line, int isargs)
 void
 menu(char *args)
 {
+	dbflags = DB_LUKE;
 	char buf[64];
-
 	menu_execute(args, 1);
 
 	while (1) {

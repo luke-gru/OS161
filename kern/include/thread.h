@@ -41,6 +41,7 @@
 #include <threadlist.h>
 
 struct cpu;
+struct trapframe;
 
 /* get machine-dependent defs */
 #include <machine/thread.h>
@@ -92,9 +93,11 @@ struct thread {
 	struct thread_machdep t_machdep; /* Any machine-dependent goo */
 	struct threadlistnode t_listnode; /* Link for run/sleep/zombie lists */
 	void *t_stack;			/* Kernel-level stack */
-	struct switchframe *t_context;	/* Saved register context (on stack) */
+	struct switchframe *t_context;	/* Saved register context from context switch (on stack) */
 	struct cpu *t_cpu;		/* CPU thread runs on */
 	struct proc *t_proc;		/* Process thread belongs to */
+	struct trapframe *t_tf; /* most recent trap frame for thread */
+	volatile bool just_forked;
 	pid_t t_pid; /* Same as t_proc->pid, but proc might be destroyed before thread is cleaned up, so we store it here too */
 	HANGMAN_ACTOR(t_hangman);	/* Deadlock detector hook */
 
@@ -157,12 +160,13 @@ void thread_shutdown(void);
 int thread_fork(const char *name, struct proc *proc,
                 void (*func)(void *, unsigned long),
                 void *data1, unsigned long data2);
+int thread_fork_from_proc(struct thread *th, struct proc *pr, int *errcode);
 
 /*
  * Cause the current thread to exit.
  * Interrupts need not be disabled.
  */
-__DEAD void thread_exit(int status);
+void thread_exit(int status);
 
 /*
  * Cause the current thread to yield to the next runnable thread, but

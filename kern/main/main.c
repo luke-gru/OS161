@@ -49,6 +49,7 @@
 #include <syscall.h>
 #include <test.h>
 #include <kern/test161.h>
+#include <console_lock.h>
 #include <version.h>
 #include "autoconf.h"  // for pseudoconfig
 
@@ -130,6 +131,7 @@ boot(void)
 	kprintf_bootstrap();
 	thread_start_cpus();
 	test161_bootstrap();
+  console_lock_bootstrap();
 
 	/* Default bootfs - but ignore failure, in case emu0 doesn't exist */
 	vfs_setbootfs("emu0");

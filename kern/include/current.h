@@ -64,6 +64,7 @@
  */
 
 #include <machine/current.h>
+#include <lib.h>
 
 #if defined(__NEED_CURTHREAD)
 
@@ -88,6 +89,7 @@
  */
 #include <proc.h>
 #define curproc ((struct proc *)curthread->t_proc)
+#define KASSERT_CAN_SLEEP() KASSERT(curthread->t_in_interrupt == false)
 
 
 #endif /* _CURRENT_H_ */

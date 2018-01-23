@@ -37,15 +37,50 @@
 
 #include <lib.h>
 
-void
-sys_exit(int status)
-{
+void sys_exit(int status) {
   // Detaches current thread from process, and turns it into zombie, then exits
   // from it to run other threads. Exorcise gets called once in a while (when starting
   // and switching threads, which destroys the parts of the thread that can't be destroyed
   // while it's running.
 
   thread_exit(status);
+}
+
+int sys_fork(int *retval) {
+  int err = 0;
+  int pid = proc_fork(curproc, curthread, &err);
+  if (pid < 0) {
+    *retval = -1;
+    KASSERT(err != 0);
+    return err; // error
+  }
+  if (pid == 0) {
+    // child process shouldn't get here, it should be scheduled off the interrupt to return
+    // to the trapframe with a return value of 0 and the same registers as the parent
+    panic("shouldn't get here!");
+  } else { // in parent
+    *retval = pid;
+  }
+  return 0;
+}
+
+int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *retval) {
+  int err = 0; // should be set below
+  (void)options;
+  int result = proc_waitpid_sleep(child_pid, &err); // FIXME: don't sleep kernel thread in interrupt handler!
+  if (result == -1) {
+    KASSERT(err > 0);
+    DEBUG(DB_SYSCALL, "sys_waitpid failed with errno %d\n", err);
+    *retval = -1;
+    return err;
+  }
+  // NOTE: `result` here is the exitstatus of the child process
+  struct uio myuio;
+  struct iovec iov;
+  uio_uinit(&iov, &myuio, exitstatus_buf, sizeof(result), 0, UIO_READ);
+  uiomove(&result, sizeof(result), &myuio);
+  *retval = 0;
+  return 0;
 }
 
 int sys_getpid(int *retval)

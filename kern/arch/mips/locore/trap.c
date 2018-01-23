@@ -218,8 +218,8 @@ mips_trap(struct trapframe *tf)
 		KASSERT(curthread->t_curspl == 0);
 		KASSERT(curthread->t_iplhigh_count == 0);
 
-		DEBUG(DB_SYSCALL, "syscall: #%d, args %x %x %x %x\n",
-		      tf->tf_v0, tf->tf_a0, tf->tf_a1, tf->tf_a2, tf->tf_a3);
+		// DEBUG(DB_SYSCALL, "syscall: #%d, args %x %x %x %x\n",
+		//       tf->tf_v0, tf->tf_a0, tf->tf_a1, tf->tf_a2, tf->tf_a3);
 
 		syscall(tf);
 		goto done;

@@ -51,6 +51,8 @@
 #include <addrspace.h>
 #include <mainbus.h>
 #include <vnode.h>
+#include <mips/trapframe.h>
+#include <syscall.h>
 
 
 /* Magic number used as a guard value on kernel thread stacks. */
@@ -91,6 +93,7 @@ thread_checkstack_init(struct thread *thread)
 	((uint32_t *)thread->t_stack)[1] = THREAD_STACK_MAGIC;
 	((uint32_t *)thread->t_stack)[2] = THREAD_STACK_MAGIC;
 	((uint32_t *)thread->t_stack)[3] = THREAD_STACK_MAGIC;
+	//bzero(thread->t_stack + 4, STACK_SIZE-4);
 }
 
 /*
@@ -146,7 +149,7 @@ thread_create(const char *name)
 	thread->t_context = NULL;
 	thread->t_cpu = NULL;
 	thread->t_proc = NULL;
-	thread->t_pid = INVALID_PID;
+
 	HANGMAN_ACTORINIT(&thread->t_hangman, thread->t_name);
 
 	/* Interrupt state fields */
@@ -155,6 +158,9 @@ thread_create(const char *name)
 	thread->t_iplhigh_count = 1; /* corresponding to t_curspl */
 
 	/* If you add to struct thread, be sure to initialize here */
+	thread->t_tf = NULL;
+	thread->t_pid = INVALID_PID;
+	thread->just_forked = false;
 
 	return thread;
 }
@@ -281,6 +287,14 @@ thread_destroy(struct thread *thread)
 	KASSERT(thread->t_proc == NULL);
 	if (thread->t_stack != NULL) {
 		kfree(thread->t_stack);
+		thread->t_stack = NULL;
+	}
+	if (thread->t_tf != NULL) {
+		//kfree(thread->t_tf); FIXME: was giving invalid page size alignment issues when freeing
+		//thread->t_tf = NULL;
+	}
+	if (thread->t_context != NULL) {
+		//kfree(thread->t_context); FIXME: was giving invalid page size alignment issues
 	}
 	threadlistnode_cleanup(&thread->t_listnode);
 	thread_machdep_cleanup(&thread->t_machdep);
@@ -297,9 +311,7 @@ thread_destroy(struct thread *thread)
  *
  * The list of zombies is per-cpu.
  */
-static
-void
-exorcise(void)
+static void exorcise(void)
 {
 	struct thread *z;
 	struct proc *p;
@@ -308,9 +320,14 @@ exorcise(void)
 		KASSERT(z != curthread);
 		KASSERT(z->t_state == S_ZOMBIE);
 		pid_t pid = z->t_pid;
+		DEBUG(DB_THREADS, "exorcise: destroying thread %s (pid %d) on CPU %d\n", z->t_name, pid, curcpu->c_number);
+		if (pid == INVALID_PID) {
+			thread_destroy(z);
+			continue;
+		}
 		thread_destroy(z);
 		p = proc_lookup(pid);
-		if (p) {
+		if (p && p != kproc) {
 			proc_destroy(p);
 		}
 
@@ -507,7 +524,7 @@ thread_make_runnable(struct thread *target, bool already_have_lock)
  * Create a new thread based on an existing one.
  *
  * The new thread has name NAME, and starts executing in function
- * ENTRYPOINT. DATA1 and DATA2 are passed to ENTRYPOINT.
+ * ENTRYPOINT. DATA1 and DATA2 are passed to ENTRYPOINT (see thread_startup).
  *
  * The new thread is created in the process P. If P is null, the
  * process is inherited from the caller. It will start on the same CPU
@@ -527,7 +544,6 @@ thread_fork(const char *name,
 		return ENOMEM;
 	}
 
-	/* Allocate a stack */
 	newthread->t_stack = kmalloc(STACK_SIZE);
 	if (newthread->t_stack == NULL) {
 		thread_destroy(newthread);
@@ -535,11 +551,6 @@ thread_fork(const char *name,
 	}
 	thread_checkstack_init(newthread);
 
-	/*
-	 * Now we clone various fields from the parent thread.
-	 */
-
-	/* Thread subsystem fields */
 	newthread->t_cpu = curthread->t_cpu;
 
 	/* Attach the new thread to the current process by default */
@@ -580,19 +591,85 @@ thread_fork(const char *name,
 	return 0;
 }
 
+// If returns -1, then fork failed and *errcode is set.
+// Otherwise returns PID > 0 of child process. The child process is setup to run on
+// some next context switch, to return 0 from the caller's trapframe.
+int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode) {
+	int result;
+	struct thread *newthread;
+
+	newthread = thread_create(parent_th->t_name);
+	if (newthread == NULL) {
+		*errcode = ENOMEM;
+		return -1;
+	}
+
+	/* Allocate a kernel stack */
+	newthread->t_stack = kmalloc(STACK_SIZE);
+
+	if (newthread->t_stack == NULL) {
+		thread_destroy(newthread);
+		*errcode = ENOMEM;
+		return -1;
+	}
+	int spl = splhigh();
+	thread_checkstack_init(newthread);
+
+	/* Thread subsystem fields */
+	newthread->t_cpu = parent_th->t_cpu;
+	KASSERT(!is_valid_pid(p->pid));
+	KASSERT(proc_init_pid(p) == 0); // TODO: check error code
+	KASSERT(is_valid_pid(p->pid));
+
+	result = proc_addthread(p, newthread);
+	if (result != 0) {
+		/* thread_destroy will clean up the stack */
+		thread_destroy(newthread);
+		pid_unalloc(p->pid);
+		*errcode = result;
+		splx(spl);
+		return -1;
+	}
+
+	/*
+	 * Because new threads come out holding the cpu runqueue lock
+	 * (see notes at bottom of thread_switch), we need to account
+	 * for the spllower() that will be done releasing it.
+	 */
+	newthread->t_iplhigh_count++;
+
+	spinlock_acquire(&thread_count_lock);
+	++thread_count;
+	wchan_wakeall(thread_count_wchan, &thread_count_lock);
+	spinlock_release(&thread_count_lock);
+
+	pid_t parent_pid = parent_th->t_pid;
+	pid_t child_pid = newthread->t_pid;
+	KASSERT(is_valid_pid(parent_pid));
+	KASSERT(is_valid_pid(child_pid));
+
+	// NOTE: assumes parent thread got trapped in syscall (fork)
+	KASSERT(parent_th->t_tf != NULL);
+
+	newthread->just_forked = true;
+	switchframe_init(newthread, enter_forked_process, (void*)NULL, 0);
+	newthread->t_tf = trapframe_copy(parent_th->t_tf);
+	thread_make_runnable(newthread, false);
+	splx(spl);
+	return child_pid;
+}
+
 /*
  * High level, machine-independent context switch code.
  *
- * The current thread is queued appropriately in the runqueue and its state is changed
- * to NEWSTATE; another thread to run is selected and switched to.
+ * The current thread is stopped and queued appropriately in the runqueue and its
+ * state is changed to NEWSTATE; a READY thread to run is selected and switched to.
  *
- * If NEWSTATE is S_SLEEP, the thread is queued on the wait channel
+ * If NEWSTATE is S_SLEEP, the old thread is queued on the wait channel
  * WC, protected by the spinlock LK. Otherwise WC and LK should be
  * NULL.
  */
-static
-void
-thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
+static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 {
 	struct thread *cur, *next;
 	int spl;
@@ -627,7 +704,7 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 		return;
 	}
 	if (newstate == cur->t_state) {
-		kprintf("CPU %d: context switch for thread %s from %s to %s\n",
+		DEBUG(DB_THREADS, "CPU %d: context switch for thread %s from %s to %s\n",
 			cur->t_cpu->c_number,
 			cur->t_name,
 			threadstate_name(cur->t_state),
@@ -638,8 +715,7 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 		return;
 	}
 
-
-	/* Put the thread in the right place. */
+	/* Put the old (current) thread in the right place. */
 	switch (newstate) {
 		case S_RUN:
 			panic("Illegal S_RUN in thread_switch\n");
@@ -647,6 +723,7 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 			thread_make_runnable(cur, true /*have lock*/);
 			break;
 	  case S_SLEEP:
+			KASSERT(wc != NULL);
 			cur->t_wchan_name = wc->wc_name;
 		/*
 		 * Add the thread to the list in the wait channel, and
@@ -685,7 +762,6 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 	 * lock to look at it, this should not be visible or matter.
 	 */
 
-	/* The current cpu is now considered idle. */
 	curcpu->c_isidle = true;
 	do {
 		next = threadlist_remhead(&curcpu->c_runqueue);
@@ -757,20 +833,11 @@ thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
 	 */
 
 
-	/* Clear the wait channel and set the thread state. */
 	cur->t_wchan_name = NULL;
 	cur->t_state = S_RUN;
-
-	/* Unlock the run queue. */
 	spinlock_release(&curcpu->c_runqueue_lock);
-
-	/* Activate our address space in the MMU. */
 	as_activate();
-
-	/* Clean up dead threads. */
 	exorcise();
-
-	/* Turn interrupts back on. */
 	splx(spl);
 }
 
@@ -831,27 +898,32 @@ thread_startup(void (*entrypoint)(void *data1, unsigned long data2),
  * TODO: destroy and remove process from process table when last thread in process
  * (which is always right now as there are no multi-threaded user-level processes).
  */
-void
-thread_exit(int status)
-{
-	struct thread *cur;
-	struct proc *curp = curproc;
+void thread_exit(int status) {
+	struct thread *cur_th;
+	struct proc *cur_p = curproc;
 
-	cur = curthread;
-	if (curp && curp->pid != INVALID_PID) {
-		pid_setexitstatus(status); // notifies parent that could be waiting on us
+
+	cur_th = curthread;
+	// NOTE: during boot, we have to deal with cpu_hatch calling thread_exit()
+	// when curproc is the kernel process itself
+	if (cur_p != kproc && !is_valid_pid(cur_p->pid)) {
+		panic("invalid PID in thread_exit: %d", cur_p->pid);
+	}
+	if (cur_p && cur_p->pid != INVALID_PID && proc_ppid(cur_p) > 0) {
+		 // notifies any parents that could be waiting on us, and sets our exit status
+		pid_setexitstatus(cur_p->pid, status);
 	}
 	/*
 	 * Detach from our process. You might need to move this action
 	 * around, depending on how your wait/exit works.
 	 */
-	proc_remthread(cur);
+	proc_remthread(cur_th);
 
 	/* Make sure we *are* detached (move this only if you're sure!) */
-	KASSERT(cur->t_proc == NULL);
+	KASSERT(cur_th->t_proc == NULL);
 
 	/* Check the stack guard band. */
-	thread_checkstack(cur);
+	thread_checkstack(cur_th);
 
 	// Decrement the thread count and notify anyone interested.
 	if (thread_count) {
@@ -863,7 +935,7 @@ thread_exit(int status)
 
 	/* Interrupts off on this processor */
 	splhigh();
-	thread_switch(S_ZOMBIE, NULL, NULL); // run new thread
+	thread_switch(S_ZOMBIE, NULL, NULL); // run new thread, current one gets destroyed during exorcise
 	panic("braaaaaaaiiiiiiiiiiinssssss\n");
 }
 
@@ -1249,7 +1321,7 @@ interprocessor_interrupt(void)
 		spinlock_release(&curcpu->c_ipi_lock);
 		spinlock_acquire(&curcpu->c_runqueue_lock);
 		if (!curcpu->c_isidle) {
-			kprintf("cpu%d: offline: warning: not idle\n",
+			DEBUG(DB_INTERRUPT, "cpu%d: offline: warning: not idle\n",
 				curcpu->c_number);
 		}
 		spinlock_release(&curcpu->c_runqueue_lock);

@@ -206,7 +206,7 @@ sfs_dir_unlink(struct sfs_vnode *sv, int slot)
 
 /*
  * Look for a name in a directory and hand back a vnode for the
- * file, if there is one.
+ * file or directory named `name`, if there is one.
  */
 int
 sfs_lookonce(struct sfs_vnode *sv, const char *name,

@@ -54,6 +54,7 @@
 #include <stat.h>
 #include <kern/seek.h>
 #include <uio.h>
+#include <syscall.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -116,6 +117,12 @@ struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node,
 	return filedes_create(p, pathname, node, flags, table_idx);
 }
 
+struct filedes *filedes_dup(struct proc *p, struct filedes *file_des, int ft_idx) {
+	// TODO: actually just increase reference count and return same pointer for actual sharing
+	struct filedes *new_des = filedes_open(p, file_des->pathname, file_des->node, file_des->flags, ft_idx);
+	return new_des;
+}
+
 int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 	if (!p) p = curproc;
 	struct filedes **fd_tbl = p->file_table;
@@ -144,7 +151,6 @@ int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 }
 
 struct filedes *filetable_get(struct proc *p, int fd) {
-	KASSERT(fd >= 0);
 	if (fd < 0 || fd >= FILE_TABLE_LIMIT) {
 		return NULL;
 	}
@@ -214,7 +220,7 @@ int file_close(int fd) {
 		return EBADF;
 	}
 	filedes_close(curproc, file_des);
-	KASSERT(curproc->file_table[fd] == NULL);
+	KASSERT(filetable_get(curproc, fd) == NULL);
 	return 0;
 }
 
@@ -339,7 +345,7 @@ int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode) 
 }
 
 /*
- * Create a proc structure.
+ * Create a proc structure with empty address space and file table.
  */
 static
 struct proc *
@@ -477,6 +483,47 @@ proc_destroy(struct proc *proc)
 	kfree(proc);
 }
 
+int proc_fork(struct proc *parent_pr, struct thread *parent_th, int *err) {
+	KASSERT(parent_pr != kproc);
+	struct proc *child_pr = NULL;
+	child_pr = proc_create(parent_pr->p_name);
+	if (!child_pr) {
+		*err = ENOMEM;
+		return -1;
+	}
+	child_pr->p_parent = parent_pr;
+	child_pr->p_addrspace = NULL;
+	int res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
+	if (res != 0) {
+		*err = res;
+		return -1;
+	}
+	KASSERT(child_pr->p_addrspace != NULL);
+	res = proc_inherit_filetable(parent_pr, child_pr);
+	if (res != 0) {
+		*err = res;
+		return -1;
+	}
+	if (parent_pr->p_cwd != NULL) {
+		VOP_INCREF(parent_pr->p_cwd);
+		child_pr->p_cwd = parent_pr->p_cwd;
+	}
+	int fork_errcode = 0;
+	res = thread_fork_from_proc(
+		parent_th,
+		child_pr,
+		&fork_errcode
+	);
+	if (res < 0) {
+		*err = fork_errcode;
+		proc_destroy(child_pr);
+		return -1;
+	} else {
+		KASSERT(child_pr->pid > 0);
+		return child_pr->pid;
+	}
+}
+
 // TODO: lock userprocs access
 unsigned proc_numprocs(void) {
 	unsigned num = 0;
@@ -510,35 +557,58 @@ proc_bootstrap(void)
  * Initialize process file table to hold only STDIN, STDOUT, STDERR
  */
 int proc_init_filetable(struct proc *p) {
-	struct vnode *console = NULL;
+	struct vnode *console_in = NULL;
+	struct vnode *console_out = NULL;
+	struct vnode *console_err = NULL;
 	int console_result = 0;
 	const char *console_name = "con:";
-	console_result = vfs_lookup(kstrdup(console_name), &console);
+	console_result = vfs_open(kstrdup(console_name), O_RDONLY, 0, &console_in);
 	if (console_result != 0) {
-		panic("couldn't grab console vnode! Result: %d", console_result); // FIXME
+		panic("couldn't open console_in. Result: %d", console_result); // FIXME
 	}
-	KASSERT(console != NULL);
+	console_result = vfs_open(kstrdup(console_name), O_WRONLY, 0, &console_out);
+	if (console_result != 0) {
+		panic("couldn't open console_out. Result: %d", console_result); // FIXME
+	}
+	console_result = vfs_open(kstrdup(console_name), O_WRONLY, 0, &console_err);
+	if (console_result != 0) {
+		panic("couldn't open console_err. Result: %d", console_result); // FIXME
+	}
+	KASSERT(console_in != NULL);
+	KASSERT(console_out != NULL);
+	KASSERT(console_err != NULL);
 	filedes_open(
 		p,
 		(char*)special_filedes_name(0),
-		console,
+		console_in,
 		special_filedes_flags(0),
 		0
 	);
 	filedes_open(
 		p,
 		(char*)special_filedes_name(1),
-		console,
+		console_out,
 		special_filedes_flags(1),
 		1
 	);
 	filedes_open(
 		p,
 		(char*)special_filedes_name(2),
-		console,
+		console_err,
 		special_filedes_flags(2),
 		2
 	);
+	return 0;
+}
+
+int proc_inherit_filetable(struct proc *parent, struct proc *child) {
+	struct filedes *fd = NULL;
+	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
+		fd = filetable_get(parent, i);
+		if (fd) {
+			filedes_dup(child, fd, i);
+		}
+	}
 	return 0;
 }
 
@@ -582,6 +652,7 @@ struct proc *proc_lookup(pid_t pid) {
 struct proc *
 proc_create_runprogram(const char *name)
 {
+	int res = 0;
 	struct proc *newproc;
 	struct proc *parent_proc = NULL;
 	if (curproc != kproc) {
@@ -599,7 +670,11 @@ proc_create_runprogram(const char *name)
 	newproc->p_addrspace = NULL;
 
 	/* VFS fields */
-	KASSERT(proc_init_filetable(newproc) == 0);
+	res = proc_init_filetable(newproc);
+	if (res != 0) {
+		proc_destroy(newproc);
+		return NULL;
+	}
 
 	// the pid is generated in thread_fork if thread_fork is passed a userspace process
 	newproc->pid = 0;
@@ -673,7 +748,6 @@ proc_remthread(struct thread *t)
 
 	spl = splhigh();
 	t->t_proc = NULL;
-	t->t_pid = INVALID_PID;
 	splx(spl);
 }
 
@@ -722,15 +796,17 @@ proc_setas(struct addrspace *newas)
 }
 
 int
-proc_waitpid(pid_t child_pid) {
-	int status;
-	kprintf("waiting on process %d\n", (int)child_pid);
-	int res = pid_wait(child_pid, &status);
-	kprintf("done waiting on process %d\n", (int)child_pid);
+proc_waitpid_sleep(pid_t child_pid, int *errcode) {
+	KASSERT_CAN_SLEEP();
+	int status = -1001; // should be set below
+	DEBUG(DB_SYSCALL, "waiting on process %d\n", (int)child_pid);
+	int res = pid_wait_sleep(child_pid, &status);
 	if (res != 0) {
-		return res;
+		*errcode = res;
+		return -1;
 	}
+	DEBUG(DB_SYSCALL, "done waiting on process %d, exitstatus %d\n", (int)child_pid, status);
 	struct proc *child = proc_lookup(child_pid);
-	if (child) proc_destroy(child);
-	return status;
+	if (child) proc_destroy(child); // NOTE: process could already have exited, which is fine
+	return status; // exitstatus
 }

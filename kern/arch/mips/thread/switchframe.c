@@ -37,7 +37,6 @@
 /* in threadstart.S */
 extern void mips_threadstart(/* arguments are in unusual registers */);
 
-
 /*
  * Function to initialize the switchframe of a new thread, which is
  * *not* the one that is currently running.
@@ -64,7 +63,7 @@ switchframe_init(struct thread *thread,
 	* get the other end of it. Then set up a switchframe on the
 	* top of the stack.
 	*/
-	stacktop = ((vaddr_t)thread->t_stack) + STACK_SIZE;
+	stacktop = ((vaddr_t)thread->t_stack) + STACK_SIZE; // very top of stack
 	sf = ((struct switchframe *) stacktop) - 1;
 
 	/* Zero out the switchframe. */

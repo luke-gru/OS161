@@ -39,6 +39,8 @@
 #include <sfs.h>
 #include "sfsprivate.h"
 
+static bool is_valid_ftype(struct sfs_dinode *, bool);
+
 
 /*
  * Write an on-disk inode structure back out to disk.
@@ -163,9 +165,9 @@ sfs_loadvnode(struct sfs_fs *sfs, uint32_t ino, int forcetype,
 	for (i=0; i<num; i++) {
 		v = vnodearray_get(sfs->sfs_vnodes, i);
 		sv = v->vn_data;
-
-		/* Every inode in memory must be in an allocated block */
-		if (!sfs_bused(sfs, sv->sv_ino)) {
+		KASSERT(is_valid_ftype(&sv->sv_i, false));
+		/* Every file inode in memory must be in an allocated block */
+		if (sv->sv_i.sfi_type != SFS_TYPE_DIR && !sfs_bused(sfs, sv->sv_ino)) {
 			panic("sfs: %s: Found inode %u in unallocated block\n",
 			      sfs->sfs_sb.sb_volname, sv->sv_ino);
 		}
@@ -173,7 +175,7 @@ sfs_loadvnode(struct sfs_fs *sfs, uint32_t ino, int forcetype,
 		if (sv->sv_ino==ino) {
 			/* Found */
 
-			/* forcetype is only allowed when creating objects */
+			/* forcetype is only allowed when "creating" objects */
 			KASSERT(forcetype==SFS_TYPE_INVAL);
 
 			VOP_INCREF(&sv->sv_absvn);
@@ -188,8 +190,9 @@ sfs_loadvnode(struct sfs_fs *sfs, uint32_t ino, int forcetype,
 	if (sv==NULL) {
 		return ENOMEM;
 	}
+	bzero(sv, sizeof(*sv));
 
-	/* Must be in an allocated block */
+	/* File must be in an allocated block */
 	if (!sfs_bused(sfs, ino)) {
 		panic("sfs: %s: Tried to load inode %u from "
 		      "unallocated block\n", sfs->sfs_sb.sb_volname, ino);
@@ -317,4 +320,17 @@ sfs_getroot(struct fs *fs, struct vnode **ret)
 
 	*ret = &sv->sv_absvn;
 	return 0;
+}
+
+static bool is_valid_ftype(struct sfs_dinode *dinode, bool inval_type_valid) {
+	KASSERT(dinode);
+	switch(dinode->sfi_type) {
+		case SFS_TYPE_FILE:
+		case SFS_TYPE_DIR:
+			return true;
+		case SFS_TYPE_INVAL:
+			return inval_type_valid;
+		default:
+			return false;
+	}
 }

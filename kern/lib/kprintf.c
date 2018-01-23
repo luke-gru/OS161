@@ -41,6 +41,7 @@
 #include <lamebus/ltrace.h> // for ltrace_stop()
 #include <kern/secret.h>
 #include <test.h>
+#include <console_lock.h>
 
 
 /* Flags word for DEBUG() macro. */
@@ -50,7 +51,7 @@ uint32_t dbflags = 0;
 static struct lock *kprintf_lock;
 
 /* Lock for polled kprintfs */
-static struct spinlock kprintf_spinlock;
+struct spinlock kprintf_spinlock;
 
 
 /*
@@ -109,6 +110,7 @@ __kprintf(const char *fmt, va_list ap)
 
 	if (dolock) {
 		lock_acquire(kprintf_lock);
+		DEBUG_CONSOLE_LOCK(1);
 	}
 	else {
 		spinlock_acquire(&kprintf_spinlock);
@@ -118,6 +120,7 @@ __kprintf(const char *fmt, va_list ap)
 
 	if (dolock) {
 		lock_release(kprintf_lock);
+		DEBUG_CONSOLE_UNLOCK();
 	}
 	else {
 		spinlock_release(&kprintf_spinlock);

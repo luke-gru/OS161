@@ -33,6 +33,7 @@
 
 #include <cdefs.h> /* for __DEAD */
 struct trapframe; /* from <machine/trapframe.h> */
+struct thread;
 
 /*
  * The system call dispatcher.
@@ -45,7 +46,7 @@ void syscall(struct trapframe *tf);
  */
 
 /* Helper for fork(). You write this. */
-void enter_forked_process(struct trapframe *tf);
+void enter_forked_process(void *data1, unsigned long data2);
 
 /* Enter user mode. Does not return. */
 __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
@@ -68,6 +69,8 @@ int sys_mkdir(userptr_t pathname, mode_t mode, int *retval);
 int sys_rmdir(userptr_t pathname, int *retval);
 int sys_getdirentry(int fd, userptr_t fname_buf, size_t buf_count, int *retval);
 
+int sys_fork(int *retval);
+int sys_waitpid(pid_t child_pid, userptr_t status, int options, int *retval);
 void sys_exit(int status);
 int sys_chdir(userptr_t dir, int *retval);
 int sys_getpid(int *retval);

@@ -32,11 +32,13 @@
 #include <kern/syscall.h>
 #include <lib.h>
 #include <mips/trapframe.h>
+#include <mips/specialreg.h>
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
 #include <proc.h>
-
+#include <cpu.h>
+#include <addrspace.h>
 
 /*
  * System call dispatcher.
@@ -147,6 +149,17 @@ syscall(struct trapframe *tf)
 		case SYS___getcwd:
 			err = sys_getcwd((userptr_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);
 			break;
+		case SYS_fork:
+			if (curthread->t_tf) {
+			 	//trapframe_free(curthread->t_tf);
+			 	//curthread->t_tf = NULL;
+			}
+			curthread->t_tf = trapframe_copy(tf);
+			err = sys_fork(&retval);
+			break;
+		case SYS_waitpid:
+			err = sys_waitpid((pid_t)tf->tf_a0, (userptr_t)tf->tf_a1, (int)tf->tf_a2, &retval);
+			break;
 		case SYS__exit:
 			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread
 			panic("shouldn't return from exit");
@@ -194,19 +207,29 @@ syscall(struct trapframe *tf)
  *
  * Thus, you can trash it and do things another way if you prefer.
  */
-void
-enter_forked_process(struct trapframe *tf)
-{
-		/*
+void enter_forked_process(void *data1, unsigned long data2) {
+	(void)data1;
+	(void)data2;
+	struct thread *t = curthread;
+	KASSERT(t);
+	struct trapframe *tf = t->t_tf;
+	KASSERT(tf != NULL);
+
+	struct trapframe tf_on_stack;
+	tf_on_stack = *tf;
+
+	/*
 	 * Succeed and return 0.
 	 */
-	tf->tf_v0 = 0;
-	tf->tf_a3 = 0;
+	tf_on_stack.tf_v0 = 0;
+	tf_on_stack.tf_a3 = 0;
 
 	/*
 	 * Advance the PC.
 	 */
-	tf->tf_epc += 4;
+	tf_on_stack.tf_epc += 4;
 
-	mips_usermode(tf);
+	t->just_forked = false;
+	t->t_state = S_RUN;
+	mips_usermode(&tf_on_stack);
 }

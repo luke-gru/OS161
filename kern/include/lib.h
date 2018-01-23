@@ -66,7 +66,7 @@
 	((expr) ? (void)0 : badassert(#expr, __FILE__, __LINE__, __func__))
 #endif
 
-#if 1 /* no debug asserts */
+#if 0 /* no debug asserts */
 #define DEBUGASSERT(expr) ((void)(expr))
 #else
 #define DEBUGASSERT(expr) \
@@ -89,8 +89,10 @@
 #define DB_NET         0x0400
 #define DB_NETFS       0x0800
 #define DB_KMALLOC     0x1000
+#define DB_ALL DB_LOCORE|DB_SYSCALL|DB_INTERRUPT|DB_DEVICE|DB_THREADS|DB_VM|DB_EXEC|DB_VFS|DB_SEMFS|DB_SFS|DB_NET|DB_NETFS|DB_KMALLOC
+#define DB_LUKE DB_THREADS|DB_SYSCALL
 
-extern uint32_t dbflags;
+extern uint32_t dbflags; // to be set by debugger, normally
 
 /*
  * DEBUG() is for conditionally printing debug messages to the console.

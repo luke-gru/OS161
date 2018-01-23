@@ -41,6 +41,7 @@
 #include <vfs.h>
 #include <uio.h>
 #include <lib.h>
+#include <pid.h>
 
 struct addrspace;
 struct thread;
@@ -68,6 +69,7 @@ int filetable_put(struct proc *p, struct filedes *file_des, int idx);
 
 struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
 void filedes_close(struct proc *p, struct filedes *file_des);
+struct filedes *filedes_dup(struct proc *p, struct filedes *file_des, int ft_idx);
 
 off_t filedes_size(struct filedes *file_des, int *errcode);
 int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode);
@@ -137,6 +139,16 @@ void proc_bootstrap(void);
 int proc_init_pid(struct proc *);
 struct proc *proc_lookup(pid_t pid);
 int proc_init_filetable(struct proc *);
+int proc_inherit_filetable(struct proc *parent, struct proc *child);
+inline pid_t proc_ppid(struct proc *p);
+inline pid_t proc_ppid(struct proc *p) {
+	if (p->p_parent != NULL) {
+		return p->p_parent->pid;
+	} else {
+		return INVALID_PID;
+	}
+}
+
 unsigned proc_numprocs(void); // number of user processes
 
 /* Create a fresh process for use by runprogram(). */
@@ -152,7 +164,13 @@ int proc_addthread(struct proc *proc, struct thread *t);
 void proc_remthread(struct thread *t);
 
 // wait on child process to finish, collect its exitstatus and clean it up
-int proc_waitpid(pid_t pid);
+// (NOTE: blocks, for use internally in kernel process
+int proc_waitpid_sleep(pid_t pid, int *errcode);
+// Marks current process as sleeping, queues it on CPU and gets it to wait for child to exit.
+// When child exits, process continues in non-interrupt context and returns status to userlevel
+// status buffer.
+int proc_waitpid_nosleep(pid_t child_pid, userptr_t status_buf, int *errcode);
+int proc_fork(struct proc *parent, struct thread *th, int *errcode);
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

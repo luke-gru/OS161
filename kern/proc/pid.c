@@ -37,7 +37,7 @@ struct pidinfo {
  * use that pid.
  */
 static struct lock *pidlock;		// lock for global exit data
-static struct pidinfo *pidinfo[MAX_USERPROCS]; // actual pid info
+static struct pidinfo *pidinfo_ary[MAX_USERPROCS]; // actual pid info
 static pid_t nextpid;			// next candidate pid
 static int nprocs;			// number of allocated pids
 
@@ -101,11 +101,11 @@ pid_bootstrap(void)
 
 	/* not really necessary - should start zeroed */
 	for (i=0; i<MAX_USERPROCS; i++) {
-		pidinfo[i] = NULL;
+		pidinfo_ary[i] = NULL;
 	}
 
-	pidinfo[BOOTUP_PID] = pidinfo_create(BOOTUP_PID, INVALID_PID);
-	if (pidinfo[BOOTUP_PID] == NULL) {
+	pidinfo_ary[BOOTUP_PID] = pidinfo_create(BOOTUP_PID, INVALID_PID);
+	if (pidinfo_ary[BOOTUP_PID] == NULL) {
 		panic("Out of memory creating bootup pid (init) data\n");
 	}
 
@@ -123,10 +123,10 @@ pi_get(pid_t pid)
 	struct pidinfo *pi;
 
 	KASSERT(pid>=0);
-	KASSERT(pid != INVALID_PID);
+	if (pid == INVALID_PID) return NULL;
 	KASSERT(lock_do_i_hold(pidlock));
 
-	pi = pidinfo[pid % MAX_USERPROCS];
+	pi = pidinfo_ary[pid % MAX_USERPROCS];
 	if (pi==NULL) {
 		return NULL;
 	}
@@ -148,8 +148,8 @@ pi_put(pid_t pid, struct pidinfo *pi)
 
 	KASSERT(pid != INVALID_PID);
 
-	KASSERT(pidinfo[pid % MAX_USERPROCS] == NULL);
-	pidinfo[pid % MAX_USERPROCS] = pi;
+	KASSERT(pidinfo_ary[pid % MAX_USERPROCS] == NULL);
+	pidinfo_ary[pid % MAX_USERPROCS] = pi;
 	nprocs++;
 }
 
@@ -166,12 +166,12 @@ pi_drop(pid_t pid)
 
 	KASSERT(lock_do_i_hold(pidlock));
 
-	pi = pidinfo[pid % MAX_USERPROCS];
+	pi = pidinfo_ary[pid % MAX_USERPROCS];
 	KASSERT(pi != NULL);
 	KASSERT(pi->pi_pid == pid);
 
 	pidinfo_destroy(pi);
-	pidinfo[pid % MAX_USERPROCS] = NULL;
+	pidinfo_ary[pid % MAX_USERPROCS] = NULL;
 	nprocs--;
 }
 
@@ -216,7 +216,7 @@ pid_alloc(pid_t *retval)
 	 * forever.
 	 */
 	count = 0;
-	while (pidinfo[nextpid % MAX_USERPROCS] != NULL) {
+	while (pidinfo_ary[nextpid % MAX_USERPROCS] != NULL) {
 
 		/* avoid various boundary cases by allowing extra loops */
 		KASSERT(count < MAX_USERPROCS*2+5);
@@ -297,44 +297,47 @@ pid_disown(pid_t theirpid)
 }
 
 /*
- * pid_setexitstatus: Sets the exit status of this user thread. Must only
+ * pid_setexitstatus: Sets the exit status of the just exited thread with id PID. Must only
  * be called if the thread actually had a pid assigned. Wakes up any
- * waiters and disposes of the piddata if nobody else is still using it.
+ * parent thread waiters and disposes of the piddata if nobody else is still using it.
  */
-void
-pid_setexitstatus(int status)
-{
-	struct pidinfo *us;
-	int i;
-
-	KASSERT(curproc->pid != INVALID_PID);
+void pid_setexitstatus(pid_t pid, int status) {
+	struct pidinfo *pid_i;
+	struct pidinfo *ppid_i;
 
 	lock_acquire(pidlock);
 
 	/* First, disown all children */
-	for (i=0; i<MAX_USERPROCS; i++) {
-		if (pidinfo[i] == NULL) {
+	for (int i=0; i<MAX_USERPROCS; i++) {
+		if (pidinfo_ary[i] == NULL) {
 			continue;
 		}
-		if (curproc != kproc && pidinfo[i]->pi_ppid == curproc->pid) {
-			pidinfo[i]->pi_ppid = INVALID_PID;
-			if (pidinfo[i]->pi_exited) {
-				pi_drop(pidinfo[i]->pi_pid);
+		if (pidinfo_ary[i]->pi_ppid == pid) { // parent exited, disown children
+			pidinfo_ary[i]->pi_ppid = INVALID_PID;
+			if (pidinfo_ary[i]->pi_exited) { // child also exited, clean up pid info
+				pi_drop(pidinfo_ary[i]->pi_pid);
 			}
 		}
 	}
 
-	/* Now, wake up our parent */
-	us = pi_get(curproc->pid);
-	KASSERT(us != NULL);
 
-	us->pi_exitstatus = status;
-	us->pi_exited = 1;
-  cv_broadcast(us->pi_cv, pidlock);
+	pid_i = pi_get(pid);
+	if (pid_i == NULL) {
+		 return;
+	}
+	ppid_i = pi_get(pid_i->pi_ppid);
+	if (!ppid_i) {
+		return;
+	}
 
-	if (us->pi_ppid == INVALID_PID) {
+	pid_i->pi_exitstatus = status;
+	pid_i->pi_exited = 1;
+	/* wake up our parent, if they're waiting on us */
+  cv_broadcast(pid_i->pi_cv, pidlock);
+
+	if (pid_i->pi_ppid == INVALID_PID) {
 		/* no parent user process, drop the pidinfo */
-		//pi_drop(curproc->pid);
+		pi_drop(pid);
 	}
 
 	lock_release(pidlock);
@@ -347,13 +350,12 @@ pid_setexitstatus(int status)
  *
  * status may be null, in which case the status is thrown away.
  */
-int
-pid_wait(pid_t theirpid, int *status)
-{
-	struct pidinfo *them;
+int pid_wait_sleep(pid_t childpid, int *status) {
+	KASSERT_CAN_SLEEP();
+	struct pidinfo *child_info;
 
 	/* Don't let a process wait for itself. */
-	if (theirpid == curproc->pid) {
+	if (childpid == curproc->pid) {
 		return EINVAL;
 	}
 
@@ -362,39 +364,45 @@ pid_wait(pid_t theirpid, int *status)
 	 * (0 is INVALID_PID) and other code may break on them, so
 	 * check now.
 	 */
-	if (theirpid == INVALID_PID || theirpid < 0) {
+	if (childpid == INVALID_PID || childpid < 0) {
 		return EINVAL;
 	}
 
 	lock_acquire(pidlock);
 
-	them = pi_get(theirpid);
-	if (them == NULL) {
+	child_info = pi_get(childpid);
+	if (child_info == NULL) {
 		lock_release(pidlock);
+		DEBUG(DB_SYSCALL, "pid_wait_sleep invalid child PID given: %d\n", (int)childpid);
 		return ESRCH;
 	}
 
-	KASSERT(them->pi_pid == theirpid);
+	KASSERT(child_info->pi_pid == childpid);
 
 	/* Only allow waiting for own children. */
-	if (them->pi_ppid != curproc->pid) {
+	if (child_info->pi_ppid != curproc->pid) {
 		lock_release(pidlock);
+		DEBUG(DB_SYSCALL, "waitpid called with non-child PID (parent: %d, child: %d)\n", curproc->pid, child_info->pi_pid);
 		return EPERM;
 	}
 
-	if (them->pi_exited == 0) {
-		/* don't need to loop on this */
-		cv_wait(them->pi_cv, pidlock); // blocks until the process exits
-		KASSERT(them->pi_exited == 1);
+	/* NOTE: don't need to loop on this */
+	if (child_info->pi_exited == 0) {
+		cv_wait(child_info->pi_cv, pidlock); // blocks this thread (rescheduled) until the process exits
+		KASSERT(child_info->pi_exited == 1);
 	}
 
 	if (status != NULL) {
-		*status = them->pi_exitstatus;
+		*status = child_info->pi_exitstatus;
 	}
 
-	them->pi_ppid = 0;
-	pi_drop(them->pi_pid);
+	child_info->pi_ppid = 0;
+	pi_drop(child_info->pi_pid);
 
 	lock_release(pidlock);
 	return 0;
+}
+
+bool is_valid_pid(pid_t pid) {
+	return pid >= PID_MIN && pid <= PID_MAX;
 }

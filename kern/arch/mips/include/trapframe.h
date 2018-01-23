@@ -31,8 +31,8 @@
 #define _MIPS_TRAPFRAME_H_
 
 /*
- * Structure describing what is saved on the stack during entry to
- * the exception handler.
+ * Structure describing what is saved on the kernel stack for the thread
+ * during entry to the exception handler.
  *
  * This must agree with the code in exception-*.S.
  */
@@ -70,7 +70,7 @@ struct trapframe {
 	uint32_t tf_t8;
 	uint32_t tf_t9;
 	uint32_t tf_gp;
-	uint32_t tf_sp;
+	uint32_t tf_sp; // userspace stack pointer
 	uint32_t tf_s8;
 	uint32_t tf_epc;	/* coprocessor 0 epc register */
 };
@@ -94,15 +94,39 @@ struct trapframe {
 
 /*
  * Function to enter user mode. Does not return. The trapframe must
- * be on the thread's own stack or bad things will happen.
+ * be on the thread's kernel stack or bad things will happen.
  */
 __DEAD void mips_usermode(struct trapframe *tf);
 
 /*
  * Arrays used to load the kernel stack and curthread on trap entry.
  */
-extern vaddr_t cpustacks[];
-extern vaddr_t cputhreads[];
+extern vaddr_t cpustacks[]; // used in exception-mips.S
+extern vaddr_t cputhreads[]; // used in exception-mips.S
+
+/*
+ * This is used to convert a trapframe when fork() is called from userland
+ * to a switchframe, because the currently trapped user process is requeued
+ * so that we can call enter_forked_process() for the child.
+ */
+// struct switchframe *trapframe_to_switchframe(struct trapframe *tf) {
+// 	//struct switchframe *sf = kmalloc(sizeof(*sf));
+// 	return NULL;
+// }
+inline void trapframe_free(struct trapframe *tf);
+inline void trapframe_free(struct trapframe *tf) {
+	(void)tf;
+	//KASSERT(tf != NULL);
+	//kfree(tf);
+}
+inline struct trapframe *trapframe_copy(struct trapframe *tf);
+inline struct trapframe *trapframe_copy(struct trapframe *tf) {
+	// KASSERT(tf != NULL);
+	// struct trapframe *new_tf = kmalloc(sizeof(*tf));
+	// memcpy(new_tf, tf, sizeof(*tf));
+	// return new_tf;
+	return tf;
+}
 
 
 #endif /* _MIPS_TRAPFRAME_H_ */

@@ -132,8 +132,8 @@ vfs_close(struct vnode *vn)
 	 *        where reporting the error is impossible and
 	 *        meaningful recovery is entirely impractical.
 	 */
-
-	VOP_DECREF(vn);
+	 (void)vn;
+	//VOP_DECREF(vn);
 }
 
 /* Does most of the work for remove(). */

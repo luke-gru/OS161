@@ -30,15 +30,17 @@ void pid_unalloc(pid_t targetpid);
 void pid_disown(pid_t targetpid);
 
 /*
- * Set the exit status of the current process to status.  Wakes up any threads
- * waiting to read this status, and decrefs the current thread's pid.
+ * Set the exit status of the given PID's process to `status`.  Wakes up any threads
+ * waiting to read this status.
  */
-void pid_setexitstatus(int status);
+void pid_setexitstatus(pid_t pid, int status);
 
 /*
  * Causes the current thread to wait for the process with pid `targetpid` to
  * exit, returning the exit status when it does.
  */
-int pid_wait(pid_t targetpid, int *status);
+int pid_wait_sleep(pid_t targetpid, int *status);
+
+bool is_valid_pid(pid_t pid);
 
 #endif /* _PID_H_ */

@@ -36,8 +36,8 @@
  * This must agree with the code in switch.S.
  */
 
-struct switchframe {
-        uint32_t sf_s0;
+struct switchframe { // saved registers, sp and ra
+        uint32_t sf_s0; // stack pointer
         uint32_t sf_s1;
         uint32_t sf_s2;
         uint32_t sf_s3;

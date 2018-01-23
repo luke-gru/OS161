@@ -68,8 +68,10 @@ void thread_machdep_cleanup(struct thread_machdep *tm);
 
 /* Assembler-level context switch. */
 void switchframe_switch(struct switchframe **prev, struct switchframe **next);
+/* assembler level context save */
+void switchframe_save(struct switchframe **frame); // TODO: remove
 
-/* Thread initialization */
+/* Thread initialization to call a function */
 void switchframe_init(struct thread *,
 		      void (*entrypoint)(void *data1, unsigned long data2),
 		      void *data1, unsigned long data2);

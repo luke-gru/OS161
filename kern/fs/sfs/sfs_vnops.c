@@ -291,11 +291,11 @@ static
 int
 sfs_namefile(struct vnode *vv, struct uio *uio)
 {
-	struct sfs_vnode *sv = vv->vn_data;
-	KASSERT(sv->sv_ino == SFS_ROOTDIR_INO);
+	//struct sfs_vnode *sv = vv->vn_data;
+	//KASSERT(sv->sv_ino == SFS_ROOTDIR_INO);
 
 	/* send back the empty string - just return */
-
+	(void)vv;
 	(void)uio;
 
 	return 0;
