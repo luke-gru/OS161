@@ -56,9 +56,10 @@ int sys_fork(int *retval) {
   }
   if (pid == 0) {
     // child process shouldn't get here, it should be scheduled off the interrupt to return
-    // to the trapframe with a return value of 0 and the same registers as the parent
+    // to the syscall trapframe with a return value of 0 and the same CPU registers as the parent
     panic("shouldn't get here!");
   } else { // in parent
+    KASSERT(is_valid_user_pid(pid));
     *retval = pid;
   }
   return 0;

@@ -484,7 +484,7 @@ proc_destroy(struct proc *proc)
 }
 
 int proc_fork(struct proc *parent_pr, struct thread *parent_th, int *err) {
-	KASSERT(parent_pr != kproc);
+	KASSERT(is_current_userspace_proc(parent_pr));
 	struct proc *child_pr = NULL;
 	child_pr = proc_create(parent_pr->p_name);
 	if (!child_pr) {
@@ -540,10 +540,9 @@ unsigned proc_numprocs(void) {
 /*
  * Create the process structure for the kernel.
  */
-void
-proc_bootstrap(void)
-{
+void proc_bootstrap(void) {
 	kproc = proc_create("[kernel]");
+	kproc->pid = BOOTUP_PID;
 	if (kproc == NULL) {
 		panic("proc_create for kproc failed\n");
 	}
@@ -677,7 +676,7 @@ proc_create_runprogram(const char *name)
 	}
 
 	// the pid is generated in thread_fork if thread_fork is passed a userspace process
-	newproc->pid = 0;
+	newproc->pid = INVALID_PID;
 
 	/*
 	 * Lock the current process to copy its current directory.
@@ -809,4 +808,8 @@ proc_waitpid_sleep(pid_t child_pid, int *errcode) {
 	struct proc *child = proc_lookup(child_pid);
 	if (child) proc_destroy(child); // NOTE: process could already have exited, which is fine
 	return status; // exitstatus
+}
+
+bool is_current_userspace_proc(struct proc *p) {
+	return is_valid_user_pid(p->pid);
 }

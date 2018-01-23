@@ -5,8 +5,9 @@
 #ifndef _PID_H_
 #define _PID_H_
 
-#define INVALID_PID	0	/* nothing has this pid */
-#define BOOTUP_PID	1	/* first thread has this pid */
+#define INVALID_PID	-1	/* nothing has this pid, or any negative value pid */
+#define UNSET_PID    0  /* nothing has this pid */
+#define BOOTUP_PID	 1	/* first kernel thread and process have this pid */
 
 /*
  * Initialize pid management.
@@ -41,6 +42,7 @@ void pid_setexitstatus(pid_t pid, int status);
  */
 int pid_wait_sleep(pid_t targetpid, int *status);
 
-bool is_valid_pid(pid_t pid);
+bool is_valid_pid(pid_t pid); // NOTE: the kernel boot pid (1) is considered valid
+bool is_valid_user_pid(pid_t pid); // NOTE: the kernel boot pid (1) is considered invalid here
 
 #endif /* _PID_H_ */

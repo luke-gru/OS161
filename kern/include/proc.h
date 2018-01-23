@@ -178,5 +178,7 @@ struct addrspace *proc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *proc_setas(struct addrspace *);
 
+bool is_current_userspace_proc(struct proc *p);
+
 
 #endif /* _PROC_H_ */

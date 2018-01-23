@@ -294,7 +294,7 @@ thread_destroy(struct thread *thread)
 		//thread->t_tf = NULL;
 	}
 	if (thread->t_context != NULL) {
-		//kfree(thread->t_context); FIXME: was giving invalid page size alignment issues
+		thread->t_context = NULL; // switchframe points into stack, so is already freed above
 	}
 	threadlistnode_cleanup(&thread->t_listnode);
 	thread_machdep_cleanup(&thread->t_machdep);
@@ -321,10 +321,6 @@ static void exorcise(void)
 		KASSERT(z->t_state == S_ZOMBIE);
 		pid_t pid = z->t_pid;
 		DEBUG(DB_THREADS, "exorcise: destroying thread %s (pid %d) on CPU %d\n", z->t_name, pid, curcpu->c_number);
-		if (pid == INVALID_PID) {
-			thread_destroy(z);
-			continue;
-		}
 		thread_destroy(z);
 		p = proc_lookup(pid);
 		if (p && p != kproc) {
@@ -612,7 +608,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode
 		*errcode = ENOMEM;
 		return -1;
 	}
-	int spl = splhigh();
+	//int spl = splhigh(); // disable interrupts
 	thread_checkstack_init(newthread);
 
 	/* Thread subsystem fields */
@@ -627,7 +623,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode
 		thread_destroy(newthread);
 		pid_unalloc(p->pid);
 		*errcode = result;
-		splx(spl);
+		//splx(spl);
 		return -1;
 	}
 
@@ -655,7 +651,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, int *errcode
 	switchframe_init(newthread, enter_forked_process, (void*)NULL, 0);
 	newthread->t_tf = trapframe_copy(parent_th->t_tf);
 	thread_make_runnable(newthread, false);
-	splx(spl);
+	//splx(spl);
 	return child_pid;
 }
 
@@ -909,7 +905,7 @@ void thread_exit(int status) {
 	if (cur_p != kproc && !is_valid_pid(cur_p->pid)) {
 		panic("invalid PID in thread_exit: %d", cur_p->pid);
 	}
-	if (cur_p && cur_p->pid != INVALID_PID && proc_ppid(cur_p) > 0) {
+	if (cur_p && is_valid_user_pid(cur_p->pid)) {
 		 // notifies any parents that could be waiting on us, and sets our exit status
 		pid_setexitstatus(cur_p->pid, status);
 	}

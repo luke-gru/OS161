@@ -145,17 +145,6 @@ common_prog(int nargs, char **args)
 	return 0;
 }
 
-static int cmd_forktest(int nargs, char **args) {
-	(void)nargs; (void)args;
-	int err = 0;
-	int res = proc_fork(curproc, curthread, &err);
-	kprintf("proc_fork result: %d\n", res);
-	if (res > 0) {
-		proc_waitpid_sleep(res, &err);
-	}
-	return 0;
-}
-
 /*
  * Command for running an arbitrary userlevel program.
  */
@@ -758,7 +747,6 @@ static struct {
 
 	/* operations */
 	{ "s",		cmd_shell },
-	{ "forktest", cmd_forktest},
 	{ "p",		cmd_prog },
 	{ "mount",	cmd_mount },
 	{ "unmount",	cmd_unmount },
