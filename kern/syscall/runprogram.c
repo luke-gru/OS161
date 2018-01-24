@@ -383,7 +383,7 @@ int	runprogram_uspace(char *progname, userptr_t argv, int old_spl) {
 	/* Load the executable, setting fields of curproc->p_addrspace. */
 	result = load_elf(v, &entrypoint);
 	if (result != 0) {
-		/* p_addrspace will go away when curproc is destroyed */
+		as_destroy(as);
 		vfs_close(v);
 		return result;
 	}
@@ -394,7 +394,7 @@ int	runprogram_uspace(char *progname, userptr_t argv, int old_spl) {
 	/* Define the user stack in the address space */
 	result = as_define_stack(as, &stackptr);
 	if (result != 0) {
-		/* p_addrspace will go away when curproc is destroyed */
+		as_destroy(as);
 		return result;
 	}
 
@@ -406,6 +406,7 @@ int	runprogram_uspace(char *progname, userptr_t argv, int old_spl) {
 	userptr_t userspace_argv_ary;
 	if (copyout_args(&argdata, &userspace_argv_ary, &stackptr) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
+		as_destroy(as);
 		return -1;
 	}
 	int nargs = argdata.nargs;
