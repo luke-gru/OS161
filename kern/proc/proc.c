@@ -228,10 +228,29 @@ int file_close(int fd) {
 	return 0;
 }
 
+/*
+	Returns 0 on success, otherwise returns error code.
+	Removes the named file from the current process's filetable. TODO: If child
+	processes have it open, then it doesn't remove it right away, but does so
+	when it's subsequently closed for the last time (filedes->refcount == 0).
+*/
+int file_unlink(char *path) {
+	if (!file_exists(path)) {
+		return EBADF;
+	}
+	int res = vfs_remove(path);
+	return res;
+}
+
 // Does the file exist on the mounted filesystem?
 bool file_exists(char *path) {
-	(void)path;
-	return true; // TODO
+	struct vnode *fnode;
+	int res = vfs_lookup(path, &fnode);
+	if (res != 0) {
+		return false;
+	}
+	VOP_DECREF(fnode);
+	return true;
 }
 
 bool file_is_dir(int fd) {
@@ -561,6 +580,7 @@ int proc_pre_exec(struct proc *p, char *progname) {
 	p->p_name = kstrdup(progname);
 	p->p_numthreads = 1;
 	spinlock_release(&p->p_lock);
+	proc_close_filetable(p, false);
 	return 0;
 }
 
@@ -649,6 +669,18 @@ int proc_inherit_filetable(struct proc *parent, struct proc *child) {
 		}
 	}
 	return 0;
+}
+
+void proc_close_filetable(struct proc *p, bool include_std_streams) {
+	struct filedes *fd = NULL;
+	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
+		fd = filetable_get(p, i);
+		if (fd) {
+			if ((i < 3 && include_std_streams) || i >= 3) {
+				filedes_close(p, fd);
+			}
+		}
+	}
 }
 
 /*

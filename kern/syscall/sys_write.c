@@ -96,7 +96,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
       spinlock_release(&kprintf_spinlock);
     }
   }
-  if (res == 0) {
+  if (res == 0 && !is_console) {
     // NOTE: call to DEBUG must be after release of console lock, in case of
     // writes to console
     DEBUG(DB_SYSCALL, "sys_write reported writing 0 bytes to fd: %d\n", fd);

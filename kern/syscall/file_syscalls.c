@@ -40,9 +40,7 @@
 #include <current.h>
 #include <vnode.h>
 
-int
-sys_chdir(userptr_t dirbuf, int *retval)
-{
+int sys_chdir(userptr_t dirbuf, int *retval) {
   char fname[PATH_MAX];
   int copy_res = copyinstr(dirbuf, fname, sizeof(fname), NULL);
   if (copy_res != 0) {
@@ -56,7 +54,7 @@ sys_chdir(userptr_t dirbuf, int *retval)
   }
   *retval = vfs_chdir(fname); // sets curproc->p_pwd
   if (*retval != 0) {
-    DEBUG(DB_SYSCALL, "Error in sys_chdir: process %d: code=%d (%s))\n",
+    DEBUG(DB_SYSCALL, "Error in sys_chdir: process %d: code=%d (%s)\n",
       curproc->pid, *retval, strerror(*retval));
   }
   return *retval; // 0 on success
@@ -66,7 +64,7 @@ int sys_close(int fd, int *retval) {
   (void)fd;
   int res = file_close(fd);
   if (res != 0) {
-    DEBUG(DB_SYSCALL, "Error in sys_close: fd %d for process %d: code=%d (%s))\n",
+    DEBUG(DB_SYSCALL, "Error in sys_close: fd %d for process %d: code=%d (%s)\n",
       fd, curproc->pid, res, strerror(res));
   }
   *retval = res;
@@ -85,7 +83,7 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   struct stat st;
   int res = filedes_stat(file_des, &st, &errcode);
   if (res != 0) {
-    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: code=%d (%s))\n",
+    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: code=%d (%s)\n",
       fd, curproc->pid, errcode, strerror(errcode));
     *retval = -1;
     return errcode;
@@ -112,6 +110,24 @@ int sys_lseek(int fd, off_t offset, int whence, int *retval) {
     return errcode;
   }
   *retval = (int)file_des->offset;
+  return 0;
+}
+
+int sys_remove(userptr_t filename, int *retval) {
+  char path[PATH_MAX];
+  copyinstr(filename, (void*)&path, sizeof(path), NULL);
+  if (strlen(path) == 0) {
+    *retval = -1;
+    return EBADF;
+  }
+  int res = file_unlink(path);
+  if (res != 0) {
+    DEBUG(DB_SYSCALL, "Error in sys_remove: path: \"%s\" for process %d, code=%d, err=%s\n",
+      path, curproc->pid, res, strerror(res));
+      *retval = -1;
+      return res;
+  }
+  *retval = 0;
   return 0;
 }
 

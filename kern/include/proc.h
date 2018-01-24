@@ -88,6 +88,7 @@ bool file_is_open(int fd);
 bool file_is_readable(char *path);
 bool file_is_writable(char *path);
 int  file_close(int fd);
+int  file_unlink(char *path);
 bool file_exists(char *path);
 bool file_is_dir(int fd);
 struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode);
@@ -144,6 +145,7 @@ int proc_init_pid(struct proc *);
 struct proc *proc_lookup(pid_t pid);
 int proc_init_filetable(struct proc *);
 int proc_inherit_filetable(struct proc *parent, struct proc *child);
+void proc_close_filetable(struct proc *p, bool include_std_streams);
 inline pid_t proc_ppid(struct proc *p);
 inline pid_t proc_ppid(struct proc *p) {
 	if (p->p_parent != NULL) {

@@ -47,11 +47,9 @@
 /*CALLBEGIN*/
 
 //                              -- Process-related --
-// TODO
 #define SYS_fork         0
 // TODO
 #define SYS_vfork        1
-// TODO
 #define SYS_execv        2
 #define SYS__exit        3
 #define SYS_waitpid      4

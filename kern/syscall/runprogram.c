@@ -343,6 +343,13 @@ int runprogram(char *progname, char **args, int nargs) {
 	return EINVAL;
 }
 
+/*
+Like runprogram, but loads argv from current process's address space for use
+with the execv system call.
+TODO: I think we're leaking kernel thread stack space each time we do an execv, because
+curthread->t_stack isn't freed and then reallocated. If we do this, we need interrupts
+* to be disabled so we aren't pre-empted and return to an invalid stack.
+*/
 int	runprogram_uspace(char *progname, userptr_t argv, int old_spl) {
 	struct addrspace *as;
 	struct vnode *v;
