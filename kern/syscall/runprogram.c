@@ -70,6 +70,10 @@ static void argvdata_bootstrap(void) {
 	if (argdata.lock == NULL) {
 		panic("Cannot create argv data lock");
 	}
+	argdata.buffer = NULL;
+	argdata.offsets = NULL;
+	argdata.nargs = 0;
+	argdata.bufend = NULL;
 }
 
 // static
@@ -81,10 +85,14 @@ static void argvdata_bootstrap(void) {
 
 static void argvdata_clear() {
 	KASSERT(lock_do_i_hold(argdata.lock));
-	if (argdata.buffer) kfree(argdata.buffer);
+	if (argdata.buffer) {
+		kfree(argdata.buffer);
+	}
 	argdata.bufend = NULL;
 	argdata.buffer = NULL;
-	if (argdata.offsets) kfree(argdata.offsets);
+	if (argdata.offsets) {
+		kfree(argdata.offsets);
+	}
 	argdata.offsets = NULL;
 	argdata.nargs = 0;
 }
@@ -99,13 +107,14 @@ static void argvdata_debug(const char *msg, char *progname) {
 		DEBUG(DB_SYSCALL, "  argdata is corrupted!\n");
 		return;
 	}
+	argdata.offsets[0] = 0;
 	for (int i = 0; i < argdata.nargs; i++) {
 		char *arg = argdata.buffer + argdata.offsets[i];
 		if (arg == NULL) {
 			DEBUG(DB_SYSCALL, "  argdata has invalid arg #%d, is NULL!\n", i);
 			continue;
 		}
-		DEBUG(DB_SYSCALL, "  arg%d: %s\n", i, arg);
+		DEBUG(DB_SYSCALL, "  arg%d: \"%s\"\n", i, arg);
 	}
 }
 
@@ -113,6 +122,7 @@ static void argvdata_debug(const char *msg, char *progname) {
 static int argvdata_fill(char *progname, char **args, int argc) {
 	argvdata_clear();
 	argdata.offsets = kmalloc(sizeof(size_t) * argc);
+	argdata.offsets[0] = 0;
 	size_t buflen = 0;
 	for (int i = 0; i < argc; i++) {
 		if (!args[i]) break;
@@ -123,6 +133,7 @@ static int argvdata_fill(char *progname, char **args, int argc) {
 
 		buflen += strlen(args[i]) + 1; // add 1 for NULL character
 	}
+	buflen+=1; // NULL byte to end args array
 	argdata.buffer = kmalloc(buflen);
 	char *bufp = argdata.buffer;
 	// copy args into buffer
@@ -130,8 +141,10 @@ static int argvdata_fill(char *progname, char **args, int argc) {
 		size_t arg_sz = strlen(args[i]) + 1; // with terminating NULL
 		memcpy(bufp, (const void *)args[i], arg_sz);
 		KASSERT(strcmp(bufp, args[i]) == 0);
-		argdata.offsets[i] = bufp - argdata.buffer;
-		KASSERT(argdata.buffer + argdata.offsets[i] == bufp);
+		if (i > 0) {
+			argdata.offsets[i] = bufp - argdata.buffer;
+		}
+		KASSERT((argdata.buffer + argdata.offsets[i]) == bufp);
 		bufp += arg_sz + 1;
 	}
 	argdata.bufend = argdata.buffer + buflen + 1;
@@ -165,14 +178,17 @@ static int argvdata_fill_from_uspace(char *progname, userptr_t argv) {
 	argdata.buffer = kmalloc(buflen);
 	bzero(argdata.buffer, buflen);
 	argdata.offsets = kmalloc(sizeof(size_t) * nargs_given);
+	argdata.offsets[0] = 0;
 	char *bufp = argdata.buffer;
 	// move arg strings into buffer
 	for (int i = 0; i < nargs_given; i++) {
 		size_t arg_sz = strlen(args[i]) + 1; // with terminating NULL
 		memcpy(bufp, (const void *)args[i], arg_sz);
 		KASSERT(strcmp(bufp, args[i]) == 0);
-		argdata.offsets[i] = bufp - argdata.buffer;
-		KASSERT(argdata.buffer + argdata.offsets[i] == bufp);
+		if (i > 0) {
+			argdata.offsets[i] = bufp - argdata.buffer;
+		}
+		KASSERT((argdata.buffer + argdata.offsets[i]) == bufp);
 		bufp += arg_sz + 1;
 	}
 	argdata.bufend = argdata.buffer + buflen + 1;
@@ -225,6 +241,7 @@ static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
 	stack -= (ad->nargs + 1)*sizeof(userptr_t);
 	userargv = (userptr_t)stack;
 
+	KASSERT(ad->offsets[0] == 0);
 	for (i = 0; i < ad->nargs; i++) {
 		arg = argbase + ad->offsets[i];
 		result = copyout(&arg, userargv, sizeof(userptr_t));
@@ -306,7 +323,10 @@ int runprogram(char *progname, char **args, int nargs) {
 	argvdata_fill(progname, args, nargs);
 	argvdata_debug("runprogram", progname);
 	userptr_t userspace_argv_ary;
-	copyout_args(&argdata, &userspace_argv_ary, &stackptr);
+	if (copyout_args(&argdata, &userspace_argv_ary, &stackptr) != 0) {
+		DEBUG(DB_SYSCALL, "Error copying args into user process\n");
+		return -1;
+	}
 	lock_release(argdata.lock);
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
@@ -377,7 +397,10 @@ int	runprogram_uspace(char *progname, userptr_t argv, int old_spl) {
 	argvdata_fill_from_uspace(progname, argv);
 	argvdata_debug("exec", progname);
 	userptr_t userspace_argv_ary;
-	copyout_args(&argdata, &userspace_argv_ary, &stackptr);
+	if (copyout_args(&argdata, &userspace_argv_ary, &stackptr) != 0) {
+		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
+		return -1;
+	}
 	int nargs = argdata.nargs;
 	lock_release(argdata.lock);
 
