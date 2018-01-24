@@ -57,7 +57,7 @@ int sys_fork(struct trapframe *tf, int *retval) {
   int spl = splhigh();
   int pid = proc_fork(curproc, curthread, tf, &err);
   if (pid < 0) {
-    DEBUG(DB_SYSCALL, "sys_fork failed: %d\n", err);
+    DEBUG(DB_SYSCALL, "sys_fork failed: %d (%s)\n", err, strerror(err));
     *retval = -1;
     KASSERT(err != 0);
     splx(spl);
@@ -82,7 +82,7 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
   int result = proc_waitpid_sleep(child_pid, &err);
   if (result == -1) {
     KASSERT(err > 0);
-    DEBUG(DB_SYSCALL, "sys_waitpid failed with errno %d\n", err);
+    DEBUG(DB_SYSCALL, "sys_waitpid failed with errno %d (%s)\n", err, strerror(err));
     *retval = -1;
     return err;
   }

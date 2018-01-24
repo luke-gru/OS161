@@ -43,6 +43,7 @@
 #include <lib.h>
 #include <pid.h>
 #include <synch.h>
+#include <limits.h>
 
 struct addrspace;
 struct thread;

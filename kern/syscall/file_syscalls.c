@@ -56,7 +56,7 @@ sys_chdir(userptr_t dirbuf, int *retval)
   }
   *retval = vfs_chdir(fname); // sets curproc->p_pwd
   if (*retval != 0) {
-    DEBUG(DB_SYSCALL, "Error in sys_chdir: process %d: code=%d (%s))",
+    DEBUG(DB_SYSCALL, "Error in sys_chdir: process %d: code=%d (%s))\n",
       curproc->pid, *retval, strerror(*retval));
   }
   return *retval; // 0 on success
@@ -66,7 +66,7 @@ int sys_close(int fd, int *retval) {
   (void)fd;
   int res = file_close(fd);
   if (res != 0) {
-    DEBUG(DB_SYSCALL, "Error in sys_close: fd %d for process %d: code=%d (%s))",
+    DEBUG(DB_SYSCALL, "Error in sys_close: fd %d for process %d: code=%d (%s))\n",
       fd, curproc->pid, res, strerror(res));
   }
   *retval = res;
@@ -76,7 +76,7 @@ int sys_close(int fd, int *retval) {
 int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
-    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: file not open)",
+    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: file not open)\n",
       fd, curproc->pid);
     *retval = -1;
     return EBADF;
@@ -85,7 +85,7 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   struct stat st;
   int res = filedes_stat(file_des, &st, &errcode);
   if (res != 0) {
-    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: code=%d (%s))",
+    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: code=%d (%s))\n",
       fd, curproc->pid, errcode, strerror(errcode));
     *retval = -1;
     return errcode;
@@ -98,7 +98,7 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
 int sys_lseek(int fd, off_t offset, int whence, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
-    DEBUG(DB_SYSCALL, "Error in sys_lseek: fd %d for process %d, file not open",
+    DEBUG(DB_SYSCALL, "Error in sys_lseek: fd %d for process %d, file not open\n",
       fd, curproc->pid);
     *retval = -1;
     return EBADF;
@@ -106,7 +106,7 @@ int sys_lseek(int fd, off_t offset, int whence, int *retval) {
   int errcode = 0;
   int res = file_seek(file_des, offset, whence, &errcode);
   if (res != 0) {
-    DEBUG(DB_SYSCALL, "Error in sys_lseek: fd %d for process %d, code=%d, err=%s",
+    DEBUG(DB_SYSCALL, "Error in sys_lseek: fd %d for process %d, code=%d, err=%s\n",
       fd, curproc->pid, errcode, strerror(errcode));
     *retval = -1;
     return errcode;

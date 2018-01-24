@@ -335,13 +335,17 @@ int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode) 
 		new_offset = offset;
 		break;
 	case SEEK_END:
+		/* $ man 2 lseek
+		TODO:
+		The lseek() function allows the file offset to be set beyond the end of
+		the file (but this does not change the size of the file).  If  data  is
+		later written at this point, subsequent reads of the data in the gap (a
+		"hole") return null bytes ('\0') until data is  actually  written  into
+		 the gap.
+		*/
 		cur_size = filedes_size(file_des, errcode);
 		if (cur_size == -1) {
-			return -1; // errcode set
-		}
-		if (offset > 0) { // offset should be negative in this case, as in seek backwards from the end of the file
-			*errcode = EINVAL;
-			return -1;
+			return -1; // errcode set above
 		}
 	  new_offset = cur_size + offset;
 		break;
@@ -353,7 +357,7 @@ int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode) 
 		return -1;
 	}
 
-	if (new_offset < 0 || new_offset > filedes_size(file_des, errcode)) {
+	if (new_offset < 0) {
 		*errcode = EINVAL;
 		return -1;
 	}

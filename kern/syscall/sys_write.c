@@ -85,7 +85,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     *count_retval = -1;
     // NOTE: call to DEBUG must be after release of console lock, in case of
     // writes to console
-    DEBUG(DB_SYSCALL, "sys_write failed with error: %d\n", errcode);
+    DEBUG(DB_SYSCALL, "sys_write failed with error: %d (%s)\n", errcode, strerror(errcode));
     return errcode;
   }
   *count_retval = res; // num bytes written
