@@ -167,14 +167,10 @@ int proc_addthread(struct proc *proc, struct thread *t);
 /* Detach a thread from its process. */
 void proc_remthread(struct thread *t);
 
-// wait on child process to finish, collect its exitstatus and clean it up
-// (NOTE: blocks, for use internally in kernel process
+// Wait on child process to finish, collect its exitstatus and clean it up
 int proc_waitpid_sleep(pid_t pid, int *errcode);
-// Marks current process as sleeping, queues it on CPU and gets it to wait for child to exit.
-// When child exits, process continues, returning the exitstatus to userlevel
-// status buffer.
-int proc_waitpid_nosleep(pid_t child_pid, userptr_t status_buf, int *errcode);
 int proc_fork(struct proc *parent, struct thread *th, struct trapframe *tf, int *errcode);
+int proc_pre_exec(struct proc *p, char *progname);
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

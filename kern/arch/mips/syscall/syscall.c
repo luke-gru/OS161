@@ -152,6 +152,12 @@ syscall(struct trapframe *tf)
 		case SYS_fork:
 			err = sys_fork(tf, &retval);
 			break;
+		case SYS_execv:
+			err = sys_execv((userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1, (userptr_t)tf->tf_a2, &retval);
+			if (err == 0) {
+				panic("should have started new process!");
+			}
+			break;
 		case SYS_waitpid:
 			err = sys_waitpid((pid_t)tf->tf_a0, (userptr_t)tf->tf_a1, (int)tf->tf_a2, &retval);
 			break;

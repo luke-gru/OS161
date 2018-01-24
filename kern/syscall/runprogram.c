@@ -47,6 +47,7 @@
 #include <thread.h>
 #include <synch.h>
 #include <copyinout.h>
+#include <spl.h>
 /*
  * argvdata struct
  * temporary storage for argv, global and synchronized.  this is because
@@ -64,10 +65,7 @@ struct argvdata {
 
 static struct argvdata argdata;
 
-static
-void
-argvdata_bootstrap(void)
-{
+static void argvdata_bootstrap(void) {
 	argdata.lock = lock_create("argvlock");
 	if (argdata.lock == NULL) {
 		panic("Cannot create argv data lock");
@@ -81,8 +79,7 @@ argvdata_bootstrap(void)
 // 	lock_destroy(argdata.lock);
 // }
 
-static
-void argvdata_clear() {
+static void argvdata_clear() {
 	KASSERT(lock_do_i_hold(argdata.lock));
 	if (argdata.buffer) kfree(argdata.buffer);
 	argdata.bufend = NULL;
@@ -92,9 +89,28 @@ void argvdata_clear() {
 	argdata.nargs = 0;
 }
 
+static void argvdata_debug(const char *msg, char *progname) {
+	DEBUG(DB_SYSCALL, "%s (%s) argv data:\n", msg, progname);
+	if (argdata.nargs == 0) {
+		DEBUG(DB_SYSCALL, "  argdata is empty!\n");
+		return;
+	}
+	if (!argdata.buffer || !argdata.offsets || !argdata.bufend) {
+		DEBUG(DB_SYSCALL, "  argdata is corrupted!\n");
+		return;
+	}
+	for (int i = 0; i < argdata.nargs; i++) {
+		char *arg = argdata.buffer + argdata.offsets[i];
+		if (arg == NULL) {
+			DEBUG(DB_SYSCALL, "  argdata has invalid arg #%d, is NULL!\n", i);
+			continue;
+		}
+		DEBUG(DB_SYSCALL, "  arg%d: %s\n", i, arg);
+	}
+}
+
 // NOTE: must hold argdata.lock
-static
-int argvdata_fill(char *progname, char **args, int argc) {
+static int argvdata_fill(char *progname, char **args, int argc) {
 	argvdata_clear();
 	argdata.offsets = kmalloc(sizeof(size_t) * argc);
 	size_t buflen = 0;
@@ -123,15 +139,53 @@ int argvdata_fill(char *progname, char **args, int argc) {
 	return 0;
 }
 
+// NOTE: must hold argdata.lock
+static int argvdata_fill_from_uspace(char *progname, userptr_t argv) {
+	argvdata_clear();
+	char **argv_p;
+	int nargs_given = 1;
+	size_t arg_single_max = 100;
+	int nargs_max = 100;
+	size_t buflen = strlen(progname)+1;
+	char *args[nargs_max];
+	bzero(args, nargs_max);
+	args[0] = kstrdup(progname);
+	for (argv_p = (char**)argv; argv_p != NULL; argv_p++) {
+			if (*argv_p == NULL) break;
+			size_t arglen_got = 0;
+			int copy_res = copyinstr((const_userptr_t)argv_p, args[nargs_given], arg_single_max, &arglen_got);
+			if (copy_res != 0) {
+				panic("invalid copy for arg #: %d (%s)", nargs_given, *argv_p); // FIXME:
+			}
+			nargs_given++;
+			buflen += arglen_got; // includes NULL byte
+
+	}
+	buflen+=1; // NULL byte to end args array
+	argdata.buffer = kmalloc(buflen);
+	bzero(argdata.buffer, buflen);
+	argdata.offsets = kmalloc(sizeof(size_t) * nargs_given);
+	char *bufp = argdata.buffer;
+	// move arg strings into buffer
+	for (int i = 0; i < nargs_given; i++) {
+		size_t arg_sz = strlen(args[i]) + 1; // with terminating NULL
+		memcpy(bufp, (const void *)args[i], arg_sz);
+		KASSERT(strcmp(bufp, args[i]) == 0);
+		argdata.offsets[i] = bufp - argdata.buffer;
+		KASSERT(argdata.buffer + argdata.offsets[i] == bufp);
+		bufp += arg_sz + 1;
+	}
+	argdata.bufend = argdata.buffer + buflen + 1;
+	argdata.nargs = nargs_given;
+	return 0;
+}
+
 /*
  * copyout_args
  * copies the argv out of the kernel space argvdata into the userspace.
  * read through the comments to see how it works.
  */
-static
-int
-copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
-{
+static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr) {
 	userptr_t argbase, userargv, arg;
 	vaddr_t stack;
 	size_t buflen;
@@ -192,19 +246,22 @@ copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
 	return 0;
 }
 
+
 /*
  * Load program "progname" and start running it in usermode.
  * Does not return except on error.
  *
  * Calls vfs_open on progname and thus may destroy it.
  */
-int
-runprogram(char *progname, char **args, int nargs)
-{
+int runprogram(char *progname, char **args, int nargs) {
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
 	int result;
+
+	if (curproc == kproc) {
+		panic("Can't run runprogram on the kernel itself!");
+	}
 
 	/* Open the file. */
 	result = vfs_open(progname, O_RDONLY, 0, &v);
@@ -247,14 +304,93 @@ runprogram(char *progname, char **args, int nargs)
 	if (!argdata.lock) argvdata_bootstrap(); // TODO: move to bootstrap code
 	lock_acquire(argdata.lock);
 	argvdata_fill(progname, args, nargs);
+	argvdata_debug("runprogram", progname);
 	userptr_t userspace_argv_ary;
 	copyout_args(&argdata, &userspace_argv_ary, &stackptr);
 	lock_release(argdata.lock);
+	int pre_exec_res;
+	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
+		return pre_exec_res;
+	}
 
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
 			  NULL /*userspace addr of environment*/,
 			  stackptr, entrypoint);
+
+	/* enter_new_process does not return. */
+	panic("enter_new_process returned\n");
+	return EINVAL;
+}
+
+int	runprogram_uspace(char *progname, userptr_t argv, int old_spl) {
+	struct addrspace *as;
+	struct vnode *v;
+	vaddr_t entrypoint, stackptr;
+	int result;
+
+	if (curproc == kproc) {
+		panic("Can't run runprogram_uspace (execv) on the kernel itself!");
+	}
+
+	/* Open the file. */
+	result = vfs_open(progname, O_RDONLY, 0, &v);
+	if (result != 0) {
+		return result;
+	}
+
+	/* We should be a new process or one that we just wiped */
+	KASSERT(proc_getas() == NULL);
+
+	/* Create a new address space. */
+	as = as_create();
+	if (as == NULL) {
+		vfs_close(v);
+		return ENOMEM;
+	}
+
+	/* Switch to it and activate it. */
+	proc_setas(as);
+	as_activate();
+
+	/* Load the executable, setting fields of curproc->p_addrspace. */
+	result = load_elf(v, &entrypoint);
+	if (result != 0) {
+		/* p_addrspace will go away when curproc is destroyed */
+		vfs_close(v);
+		return result;
+	}
+
+	/* Done with the file now. */
+	vfs_close(v);
+
+	/* Define the user stack in the address space */
+	result = as_define_stack(as, &stackptr);
+	if (result != 0) {
+		/* p_addrspace will go away when curproc is destroyed */
+		return result;
+	}
+
+	if (!argdata.lock) argvdata_bootstrap(); // TODO: move to bootstrap code
+
+	lock_acquire(argdata.lock);
+	argvdata_fill_from_uspace(progname, argv);
+	argvdata_debug("exec", progname);
+	userptr_t userspace_argv_ary;
+	copyout_args(&argdata, &userspace_argv_ary, &stackptr);
+	int nargs = argdata.nargs;
+	lock_release(argdata.lock);
+
+	int pre_exec_res;
+	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
+		return pre_exec_res;
+	}
+	splx(old_spl);
+
+	/* Warp to user mode. */
+	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
+				NULL /*userspace addr of environment*/,
+				stackptr, entrypoint);
 
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");

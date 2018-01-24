@@ -37,6 +37,7 @@
 #include <copyinout.h>
 #include <kern/wait.h>
 #include <spl.h>
+#include <addrspace.h>
 
 #include <lib.h>
 
@@ -90,6 +91,31 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
   copyout((const void*)&waitstatus, exitstatus_buf, sizeof(int));
   *retval = 0;
   return 0;
+}
+
+int sys_execv(userptr_t filename_ubuf, userptr_t argv, userptr_t env, int *retval) {
+  (void)env; // TODO
+  char fname[PATH_MAX+1];
+  memset(fname, 0, PATH_MAX+1);
+  int copy_res = copyinstr(filename_ubuf, fname, PATH_MAX+1, NULL);
+  if (copy_res != 0) {
+    DEBUG(DB_SYSCALL, "sys_execv failed to copy filename, %d (%s)\n", copy_res, strerror(copy_res));
+    *retval = -1;
+    return copy_res;
+  }
+  int spl = splhigh(); // disable interrupts
+  struct addrspace *as_old = proc_setas(NULL); // to reset in case of error
+  DEBUG(DB_SYSCALL, "sys_execv running for process %d\n", curproc->pid);
+  int res = runprogram_uspace(fname, argv, spl);
+  if (res == 0) {
+    panic("shouldn't get here on success");
+  }
+  DEBUG(DB_SYSCALL, "sys_execv failed to exec: %d (%s)\n", res, strerror(res));
+  proc_setas(as_old);
+  as_activate();
+  splx(spl);
+  *retval = -1;
+  return res;
 }
 
 int sys_getpid(int *retval)

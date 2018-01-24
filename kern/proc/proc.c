@@ -554,6 +554,16 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 	}
 }
 
+int proc_pre_exec(struct proc *p, char *progname) {
+	spinlock_acquire(&p->p_lock);
+	if (p->p_name)
+		kfree(p->p_name);
+	p->p_name = kstrdup(progname);
+	p->p_numthreads = 1;
+	spinlock_release(&p->p_lock);
+	return 0;
+}
+
 // TODO: lock userprocs access
 unsigned proc_numprocs(void) {
 	unsigned num = 0;
