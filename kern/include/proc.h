@@ -59,7 +59,7 @@ struct filedes {
 	char *pathname;
 	struct vnode *node;
 	int flags;
-	size_t offset;
+	int32_t offset;
 	// filedes is shared by child processes, and different fd integers
 	// (descriptors) in the same process can refer to the same description
 	// (filedes). See dup and dup2 for more info.

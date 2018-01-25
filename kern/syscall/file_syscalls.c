@@ -94,7 +94,7 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   return 0;
 }
 
-int sys_lseek(int fd, uint32_t offset, int whence, int *retval) {
+int sys_lseek(int fd, int32_t offset, int whence, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
     DEBUG(DB_SYSCALL, "Error in sys_lseek: fd %d for process %d, file not open\n",
@@ -111,8 +111,7 @@ int sys_lseek(int fd, uint32_t offset, int whence, int *retval) {
     return errcode;
   }
   DEBUGASSERT(file_des->offset == offset);
-  DEBUG(DB_SYSCALL, "file offset set to: %d\n", file_des->offset);
-  *retval = (int)file_des->offset;
+  *retval = file_des->offset;
   return 0;
 }
 
@@ -193,7 +192,7 @@ int sys_dup2(int oldfd, int newfd, int *retval) {
       return EMFILE;
   }
   file_des->refcount++;
-  *retval = 0;
+  *retval = newfd;
   lock_release(file_des->lk);
   splx(spl);
   return 0;

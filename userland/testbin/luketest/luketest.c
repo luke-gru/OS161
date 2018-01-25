@@ -95,10 +95,26 @@ int main(int argc, char *argv[]) {
   longerbuf[readsize] = '\0';
   printf("read %d chars after write: \"%s\"\n", readsize, longerbuf);
 
+  int dup2_fd = dup2(newfd, 99);
+  if (dup2_fd != 99) {
+    errx(1, "dup2 should have given proper FD back, got: %d", dup2_fd);
+  }
   res = close(newfd);
   if (res != 0) {
     errx(1, "close failed");
   }
+
+  res = read(dup2_fd, buf, 1);
+  if (res != 0) {
+    errx(1, "reading should have failed due to being at EOF, got: %d", res);
+  }
+  res = lseek(dup2_fd, 0, SEEK_SET);
+  memset(longerbuf, '\0', 101);
+  readsize = read(dup2_fd, longerbuf, 100);
+  if (readsize <= 0) {
+    errx(1, "error reading file from dup2'd fd, got: %d", readsize);
+  }
+  printf("full buf: %s\n", longerbuf);
 
   exit(0);
 }
