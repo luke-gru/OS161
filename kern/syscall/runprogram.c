@@ -152,26 +152,30 @@ static int argvdata_fill(char *progname, char **args, int argc) {
 	return 0;
 }
 
+#define NARGS_MAX 100
+#define ARG_SINGLE_MAX 100
 // NOTE: must hold argdata.lock
 static int argvdata_fill_from_uspace(char *progname, userptr_t argv) {
 	argvdata_clear();
-	char **argv_p;
-	int nargs_given = 1;
-	size_t arg_single_max = 100;
-	int nargs_max = 100;
-	size_t buflen = strlen(progname)+1;
-	char *args[nargs_max];
-	bzero(args, nargs_max);
-	args[0] = kstrdup(progname);
-	for (argv_p = (char**)argv; argv_p != NULL; argv_p++) {
-			if (*argv_p == NULL) break;
+	char **argv_p = (char**)argv;
+	int nargs_given = 0;
+	size_t buflen = 0;
+	char *args[NARGS_MAX];
+	char argbuf[ARG_SINGLE_MAX+1];
+	bzero(args, NARGS_MAX);
+	bzero(argbuf, ARG_SINGLE_MAX+1);
+	args[0] = progname; // default
+	for (int i = 0; argv_p[i] != NULL && i < NARGS_MAX; i++) {
 			size_t arglen_got = 0;
-			int copy_res = copyinstr((const_userptr_t)argv_p, args[nargs_given], arg_single_max, &arglen_got);
+			int copy_res = copyinstr((const_userptr_t)argv_p[i], argbuf, ARG_SINGLE_MAX, &arglen_got);
 			if (copy_res != 0) {
-				panic("invalid copy for arg #: %d (%s)", nargs_given, *argv_p); // FIXME:
+				panic("invalid copy for arg #%d: (%s)", i, argv_p[i]); // FIXME:
 			}
+			args[i] = (char*)kmalloc(arglen_got); // includes NULL byte
+			memcpy(args[i], argv_p[i], arglen_got);
+			bzero(argbuf, ARG_SINGLE_MAX+1);
 			nargs_given++;
-			buflen += arglen_got; // includes NULL byte
+			buflen += arglen_got;
 
 	}
 	buflen+=1; // NULL byte to end args array
@@ -376,41 +380,45 @@ int	runprogram_uspace(char *progname, userptr_t argv, int old_spl) {
 		return ENOMEM;
 	}
 
-	/* Switch to it and activate it. */
+	if (!argdata.lock) argvdata_bootstrap(); // TODO: move to bootstrap code
+
+	lock_acquire(argdata.lock);
+	// NOTE: this must be called before we switch to the new address space, so the current one
+	// isn't zeroed out!
+	argvdata_fill_from_uspace(progname, argv);
+	argvdata_debug("exec", progname);
+	userptr_t userspace_argv_ary;
 	proc_setas(as);
 	as_activate();
-
 	/* Load the executable, setting fields of curproc->p_addrspace. */
 	result = load_elf(v, &entrypoint);
 	if (result != 0) {
 		as_destroy(as);
 		vfs_close(v);
+		lock_release(argdata.lock);
 		return result;
 	}
-
-	/* Done with the file now. */
-	vfs_close(v);
-
 	/* Define the user stack in the address space */
 	result = as_define_stack(as, &stackptr);
 	if (result != 0) {
 		as_destroy(as);
+		lock_release(argdata.lock);
 		return result;
 	}
-
-	if (!argdata.lock) argvdata_bootstrap(); // TODO: move to bootstrap code
-
-	lock_acquire(argdata.lock);
-	argvdata_fill_from_uspace(progname, argv);
-	argvdata_debug("exec", progname);
-	userptr_t userspace_argv_ary;
-	if (copyout_args(&argdata, &userspace_argv_ary, &stackptr) != 0) {
+	int copyout_res = copyout_args(&argdata, &userspace_argv_ary, &stackptr);
+	if (copyout_res != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
+		if (copyout_res)
+			panic("debug");
 		as_destroy(as);
-		return -1;
+		lock_release(argdata.lock);
+		return copyout_res;
 	}
 	int nargs = argdata.nargs;
 	lock_release(argdata.lock);
+
+	/* Done with the file now. */
+	vfs_close(v);
 
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {

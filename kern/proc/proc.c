@@ -850,19 +850,17 @@ proc_getas(void)
  * Change the address space of (the current) process. Return the old
  * one for later restoration or disposal.
  */
-struct addrspace *
-proc_setas(struct addrspace *newas)
-{
+struct addrspace *proc_setas(struct addrspace *newas) {
 	struct addrspace *oldas;
-	struct proc *proc = curproc;
+	struct proc *p = curproc;
 
-	KASSERT(proc != NULL);
-	KASSERT(proc != kproc);
+	KASSERT(p != NULL);
+	KASSERT(p != kproc);
 
-	spinlock_acquire(&proc->p_lock);
-	oldas = proc->p_addrspace;
-	proc->p_addrspace = newas;
-	spinlock_release(&proc->p_lock);
+	spinlock_acquire(&p->p_lock);
+	oldas = p->p_addrspace;
+	p->p_addrspace = newas;
+	spinlock_release(&p->p_lock);
 	return oldas;
 }
 

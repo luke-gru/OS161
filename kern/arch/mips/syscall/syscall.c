@@ -156,7 +156,7 @@ syscall(struct trapframe *tf)
 			err = sys_fork(tf, &retval);
 			break;
 		case SYS_execv:
-			err = sys_execv((userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1, (userptr_t)tf->tf_a2, &retval);
+			err = sys_execv((userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1, &retval);
 			if (err == 0) {
 				panic("should have started new process!");
 			}

@@ -93,8 +93,7 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
   return 0;
 }
 
-int sys_execv(userptr_t filename_ubuf, userptr_t argv, userptr_t env, int *retval) {
-  (void)env; // TODO
+int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
   char fname[PATH_MAX+1];
   memset(fname, 0, PATH_MAX+1);
   int copy_res = copyinstr(filename_ubuf, fname, PATH_MAX+1, NULL);

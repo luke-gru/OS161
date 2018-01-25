@@ -21,7 +21,7 @@ PLATFORM='sys161'
 MACHINE='mips'
 
 # Default optimize/debug flag: optimize.
-DEBUG='-O2'
+DEBUG='-O0'
 
 # Default location of the root of the installed system.
 # Note that we quote it such that the reference to the home directory
