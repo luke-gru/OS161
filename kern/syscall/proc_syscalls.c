@@ -109,7 +109,7 @@ int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
   if (res == 0) {
     panic("shouldn't get here on success");
   }
-  DEBUG(DB_SYSCALL, "sys_execv failed to exec: %d (%s)\n", res, strerror(res));
+  DEBUG(DB_SYSCALL, "sys_execv failed to exec %s: %d (%s)\n", fname, res, strerror(res));
   proc_setas(as_old);
   as_activate();
   splx(spl);

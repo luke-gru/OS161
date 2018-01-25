@@ -94,7 +94,7 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   return 0;
 }
 
-int sys_lseek(int fd, off_t offset, int whence, int *retval) {
+int sys_lseek(int fd, uint32_t offset, int whence, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
     DEBUG(DB_SYSCALL, "Error in sys_lseek: fd %d for process %d, file not open\n",
@@ -104,12 +104,14 @@ int sys_lseek(int fd, off_t offset, int whence, int *retval) {
   }
   int errcode = 0;
   int res = file_seek(file_des, offset, whence, &errcode);
-  if (res != 0) {
+  if (res != 0 || errcode != 0) {
     DEBUG(DB_SYSCALL, "Error in sys_lseek: fd %d for process %d, code=%d, err=%s\n",
       fd, curproc->pid, errcode, strerror(errcode));
     *retval = -1;
     return errcode;
   }
+  DEBUGASSERT(file_des->offset == offset);
+  DEBUG(DB_SYSCALL, "file offset set to: %d\n", file_des->offset);
   *retval = (int)file_des->offset;
   return 0;
 }
@@ -160,9 +162,40 @@ int sys_dup(int fd, int *retval) {
 }
 
 int sys_dup2(int oldfd, int newfd, int *retval) {
-  (void)oldfd;
-  (void)newfd;
-  (void)retval;
+  int spl = splhigh();
+  struct filedes *file_des = filetable_get(curproc, oldfd);
+  if (!file_des) {
+    DEBUG(DB_SYSCALL, "Error in sys_dup2: oldfd %d for process %d: file not open\n",
+      oldfd, curproc->pid);
+    *retval = -1;
+    splx(spl);
+    return EBADF;
+  }
+  if (newfd < 0 || newfd >= FILE_TABLE_LIMIT || oldfd == newfd) {
+    DEBUG(DB_SYSCALL, "Error in sys_dup2: newfd invalid: %d\n", newfd);
+    *retval = -1;
+    splx(spl);
+    return EBADF;
+  }
+  lock_acquire(file_des->lk);
+  struct filedes *replaced = filetable_get(curproc, newfd);
+  if (replaced) {
+    replaced->refcount = 0;
+    filedes_close(curproc, replaced);
+  }
+  int newfd_res = filetable_put(curproc, file_des, newfd);
+  if (newfd_res < 0) {
+    DEBUG(DB_SYSCALL, "Error in sys_dup2: replacement failed: (old: %d, new: %d)\n",
+      oldfd, newfd);
+      *retval = -1;
+      lock_release(file_des->lk);
+      splx(spl);
+      return EMFILE;
+  }
+  file_des->refcount++;
+  *retval = 0;
+  lock_release(file_des->lk);
+  splx(spl);
   return 0;
 }
 

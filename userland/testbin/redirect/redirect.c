@@ -59,7 +59,7 @@ doopen(const char *path, int openflags)
 
 	fd = open(path, openflags, 0664);
 	if (fd < 0) {
-		err(1, "%s", path);
+		err(1, "open %s", path);
 	}
 	return fd;
 }

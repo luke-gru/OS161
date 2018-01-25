@@ -96,7 +96,11 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	file_des->offset = 0;
 	file_des->refcount = 1;
 	file_des->lk = lock_create("file lock");
-	KASSERT(filetable_put(p, file_des, table_idx) != -1); // TODO: return error when too many files being opened
+	file_des->latest_fd = -1;
+	int fd = filetable_put(p, file_des, table_idx);
+	// TODO: return error when too many files being opened
+	KASSERT(fd != -1);
+	file_des->latest_fd = fd;
 	return file_des;
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
@@ -115,14 +119,15 @@ static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 void filedes_close(struct proc *p, struct filedes *file_des) {
 	KASSERT(file_des);
 	if (!p) p = curproc;
-	file_des->refcount--;
-	if (file_des->refcount == 0) {
+	DEBUGASSERT(file_des->refcount > 0);
+	if (file_des->refcount > 0) {
+		file_des->refcount--;
+	}
+	if (file_des->refcount <= 0) {
 		filedes_destroy(p, file_des);
 	}
 }
-// open file descriptor for current process. When I implement sharing of file descriptors for child
-// processes, this won't always create new filedes structs. FIXME: implement semantics for shared descriptors
-// with FORK(2)
+
 struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
 	if (!p) p = curproc;
 	return filedes_create(p, pathname, node, flags, table_idx);
@@ -140,7 +145,7 @@ int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 	// add or clear a fd from the table, given an index
 	if (idx >= 0) {
 		if (fd_tbl[idx] != NULL && fd != NULL) {
-			panic("filetable_put can't overwrite a fd: %d", idx); // FIXME
+			panic("filetable_put can't overwrite a fd: %d", idx); // FIXME: return error
 			return -1;
 		}
 		fd_tbl[idx] = fd; // NOTE: can be NULL
@@ -153,7 +158,6 @@ int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 			}
 		}
 	}
-	panic("too many open files"); // FIXME
 	return -1;
 }
 
@@ -252,6 +256,10 @@ int file_close(int fd) {
 		return EBADF;
 	}
 	filedes_close(curproc, file_des);
+	int put_res = filetable_put(curproc, NULL, fd);
+	if (put_res < 0) {
+		return -1;
+	}
 	return 0;
 }
 
@@ -298,7 +306,7 @@ int file_open(char *path, int openflags, mode_t mode, int *errcode) {
 	struct vnode *node;
 	int result = vfs_open(path, openflags, mode, &node);
 	if (result != 0) {
-		panic("FILE ALREADY OPEN");
+		panic("FILE ALREADY OPEN"); // FIXME
 		*errcode = result;
 		return -1;
 	}
@@ -311,10 +319,12 @@ int file_open(char *path, int openflags, mode_t mode, int *errcode) {
 		result = file_seek(new_filedes, 0, SEEK_END, errcode);
 		if (result != 0) {
 			filedes_close(curproc, new_filedes); // can't seek to end, so close file
+			// errcode set in file_seek
 			return -1;
 		}
 	}
-	return -1;
+	// TODO: implement O_TRUNC when file is writable
+	return new_filedes->latest_fd;
 }
 
 int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
@@ -369,13 +379,13 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 
 // FIXME: lock appropriately
 // man 2 lseek for more info
-int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode) {
+int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode) {
 	if (!file_des || !filedes_is_seekable(file_des)) {
 		*errcode = EBADF;
 		return -1;
 	}
-	off_t new_offset = offset;
-	off_t cur_size;
+	int32_t new_offset = offset;
+	int32_t cur_size;
 	switch(whence) {
   case SEEK_SET:
 		new_offset = offset;
@@ -407,18 +417,15 @@ int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode) 
 		*errcode = EINVAL;
 		return -1;
 	}
-	KASSERT(new_offset >= 0);
-	file_des->offset = (size_t)new_offset;
+	DEBUGASSERT(file_des->offset >= 0);
+	file_des->offset = new_offset;
 	return 0;
 }
 
 /*
  * Create a proc structure with empty address space and file table.
  */
-static
-struct proc *
-proc_create(const char *name)
-{
+static struct proc *proc_create(const char *name) {
 	struct proc *proc;
 
 	proc = kmalloc(sizeof(*proc));
@@ -443,7 +450,7 @@ proc_create(const char *name)
 	proc->p_cwd = NULL;
 
 	proc->pid = INVALID_PID;
-	bzero((void *)proc->file_table, FILE_TABLE_LIMIT);
+	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
 	proc->p_mutex = lock_create("proc mutex");
 
 	return proc;
@@ -455,9 +462,7 @@ proc_create(const char *name)
  * Note: You can't destroy the currently running process, this is only callable
  * from other processes.
  */
-void
-proc_destroy(struct proc *proc)
-{
+void proc_destroy(struct proc *proc) {
 	/*
 	 * You probably want to destroy and null out much of the
 	 * process (particularly the address space) at exit time if
@@ -550,6 +555,7 @@ proc_destroy(struct proc *proc)
 
 	kfree(proc->p_name);
 	lock_destroy(proc->p_mutex);
+	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
 	kfree(proc);
 }
 
@@ -607,7 +613,6 @@ int proc_pre_exec(struct proc *p, char *progname) {
 	p->p_name = kstrdup(progname);
 	p->p_numthreads = 1;
 	spinlock_release(&p->p_lock);
-	proc_close_filetable(p, false);
 	return 0;
 }
 
@@ -747,9 +752,7 @@ struct proc *proc_lookup(pid_t pid) {
  * It will have no address space and will inherit the current
  * process's (that is, the kernel menu's) current directory.
  */
-struct proc *
-proc_create_runprogram(const char *name)
-{
+struct proc *proc_create_runprogram(const char *name) {
 	int res = 0;
 	struct proc *newproc;
 	struct proc *parent_proc = NULL;

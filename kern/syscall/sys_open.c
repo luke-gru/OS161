@@ -37,9 +37,7 @@
 
 #include <lib.h>
 
-int
-sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval)
-{
+int sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval) {
   char fname[FPATH_MAX];
   int copy_res = copyinstr(filename, fname, sizeof(fname), NULL);
   if (copy_res != 0) {
@@ -55,11 +53,9 @@ sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval)
     return err;
   }
   struct filedes *desc = filetable_get(curproc, fd);
-  file_seek(desc, 0, SEEK_SET, &err);
-  if (err != 0) {
-    DEBUG(DB_SYSCALL, "sys_open seek 0 failed with error: %d (%s)\n", err, strerror(err));
-  }
-  desc->offset = 0;
+  DEBUGASSERT(desc != NULL);
+  DEBUGASSERT(desc->offset == 0);
+  DEBUGASSERT(desc->refcount == 1);
 	*fd_retval = fd;
   return 0;
 }

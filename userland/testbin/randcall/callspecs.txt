@@ -5,9 +5,9 @@
 2 write		int	ptr	size
 2 close		int
 5 ioctl		int	int	ptr
-2 lseek		int	off	int
+2 lseek		int	int	int
 4 fsync		int
-4 ftruncate	int	off
+4 ftruncate	int	int
 4 fstat		int	ptr
 4 remove	ptr
 4 rename	ptr	ptr

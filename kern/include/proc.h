@@ -64,6 +64,7 @@ struct filedes {
 	// (descriptors) in the same process can refer to the same description
 	// (filedes). See dup and dup2 for more info.
 	unsigned int refcount;
+	int latest_fd;
 	struct lock *lk;
 };
 
@@ -99,7 +100,7 @@ bool file_is_dir(int fd);
 int file_open(char *path, int openflags, mode_t mode, int *errcode);
 int file_write(struct filedes *file_des, struct uio *io, int *errcode);
 int file_read(struct filedes *file_des, struct uio *io, int *errcode);
-int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode);
+int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode);
 
 /*
  * Process structure.
@@ -119,7 +120,7 @@ int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode);
  * without sleeping.
  */
 #define FILE_TABLE_LIMIT 1024
-#define MAX_USERPROCS 64
+#define MAX_USERPROCS (PID_MAX-1)
 struct proc *userprocs[MAX_USERPROCS]; // current userspace processes
 
 struct proc {
