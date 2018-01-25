@@ -48,17 +48,18 @@ sys_open(userptr_t filename, int openflags, mode_t mode, int *fd_retval)
     return ENOMEM;
   }
   int err = 0;
-  struct filedes *fd = file_open(fname, openflags, mode, &err);
-  if (fd == NULL || err != 0) {
+  int fd = file_open(fname, openflags, mode, &err);
+  if (fd == -1 || err != 0) {
     DEBUG(DB_SYSCALL, "sys_open failed with error: %d (%s)\n", err, strerror(err));
     *fd_retval = -1;
     return err;
   }
-  file_seek(fd, 0, SEEK_SET, &err);
+  struct filedes *desc = filetable_get(curproc, fd);
+  file_seek(desc, 0, SEEK_SET, &err);
   if (err != 0) {
     DEBUG(DB_SYSCALL, "sys_open seek 0 failed with error: %d (%s)\n", err, strerror(err));
   }
-  fd->offset = 0;
-	*fd_retval = fd->ft_idx; // file descriptor int
+  desc->offset = 0;
+	*fd_retval = fd;
   return 0;
 }

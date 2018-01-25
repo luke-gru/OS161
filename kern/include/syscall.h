@@ -70,6 +70,8 @@ int sys_remove(userptr_t filename, int *retval);
 int sys_mkdir(userptr_t pathname, mode_t mode, int *retval);
 int sys_rmdir(userptr_t pathname, int *retval);
 int sys_getdirentry(int fd, userptr_t fname_buf, size_t buf_count, int *retval);
+int sys_dup(int fd, int *retval);
+int sys_dup2(int oldfd, int newfd, int *retval);
 
 int sys_fork(struct trapframe *tf, int *retval);
 int sys_waitpid(pid_t child_pid, userptr_t status, int options, int *retval);

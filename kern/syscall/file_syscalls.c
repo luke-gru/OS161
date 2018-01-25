@@ -39,6 +39,7 @@
 #include <kern/stat.h>
 #include <current.h>
 #include <vnode.h>
+#include <spl.h>
 
 int sys_chdir(userptr_t dirbuf, int *retval) {
   char fname[PATH_MAX];
@@ -74,7 +75,7 @@ int sys_close(int fd, int *retval) {
 int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
-    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: file not open)\n",
+    DEBUG(DB_SYSCALL, "Error in sys_fstat: fd %d for process %d: file not open\n",
       fd, curproc->pid);
     *retval = -1;
     return EBADF;
@@ -128,6 +129,40 @@ int sys_remove(userptr_t filename, int *retval) {
       return res;
   }
   *retval = 0;
+  return 0;
+}
+
+int sys_dup(int fd, int *retval) {
+  int spl = splhigh();
+  struct filedes *file_des = filetable_get(curproc, fd);
+  if (!file_des) {
+    DEBUG(DB_SYSCALL, "Error in sys_dup: fd %d for process %d: file not open\n",
+      fd, curproc->pid);
+    *retval = -1;
+    splx(spl);
+    return EBADF;
+  }
+  lock_acquire(file_des->lk);
+  int newfd = filetable_put(curproc, file_des, -1);
+  if (newfd < 0) {
+    DEBUG(DB_SYSCALL, "Error in sys_dup: fd %d for process %d: too many open files\n",
+      fd, curproc->pid);
+      *retval = -1;
+      lock_release(file_des->lk);
+      splx(spl);
+      return EMFILE;
+  }
+  file_des->refcount++;
+  *retval = newfd;
+  lock_release(file_des->lk);
+  splx(spl);
+  return 0;
+}
+
+int sys_dup2(int oldfd, int newfd, int *retval) {
+  (void)oldfd;
+  (void)newfd;
+  (void)retval;
   return 0;
 }
 

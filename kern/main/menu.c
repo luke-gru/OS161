@@ -260,11 +260,12 @@ static int cmd_append_line_to_file(int nargs, char **args) {
 	//kprintf("line: '%s', len: %d\n", line, (int)strlen(line));
 
 	int errcode = 0;
-	struct filedes *file_des = file_open(fname, O_WRONLY|O_APPEND, 0644, &errcode);
-	if (!file_des) {
+	int fd = file_open(fname, O_WRONLY|O_APPEND, 0644, &errcode);
+	if (fd < 0) {
 		kprintf("file_open failed (%s) [code: %d]\n", strerror(errcode), errcode);
 		return errcode;
 	}
+	struct filedes *file_des = filetable_get(curproc, fd);
 
 	struct iovec iov;
 	struct uio myuio;

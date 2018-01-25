@@ -135,7 +135,6 @@
 
 //                              -- Pathname-related --
 #define SYS_link         67
-// TODO
 #define SYS_remove       68
 #define SYS_mkdir        69
 #define SYS_rmdir        70

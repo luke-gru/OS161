@@ -60,8 +60,10 @@ struct filedes {
 	struct vnode *node;
 	int flags;
 	size_t offset;
-	int ft_idx; // index into file table of current process
-	unsigned int refcount; // filedes is shared by child processes
+	// filedes is shared by child processes, and different fd integers
+	// (descriptors) in the same process can refer to the same description
+	// (filedes). See dup and dup2 for more info.
+	unsigned int refcount;
 	struct lock *lk;
 };
 
@@ -69,7 +71,10 @@ const char *special_filedes_name(int fd);
 int special_filedes_flags(int fd);
 
 struct filedes *filetable_get(struct proc *p, int fd);
+int filetable_find_first_fd(struct proc *p, struct filedes *des);
 int filetable_put(struct proc *p, struct filedes *file_des, int idx);
+// NULLS all fds in the filetable that refers to this description
+int filetable_nullout(struct proc *p, struct filedes *file_des);
 
 struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
 void filedes_close(struct proc *p, struct filedes *file_des);
@@ -91,7 +96,7 @@ int  file_close(int fd);
 int  file_unlink(char *path);
 bool file_exists(char *path);
 bool file_is_dir(int fd);
-struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode);
+int file_open(char *path, int openflags, mode_t mode, int *errcode);
 int file_write(struct filedes *file_des, struct uio *io, int *errcode);
 int file_read(struct filedes *file_des, struct uio *io, int *errcode);
 int file_seek(struct filedes *file_des, off_t offset, int whence, int *errcode);

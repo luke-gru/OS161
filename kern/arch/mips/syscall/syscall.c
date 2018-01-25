@@ -134,6 +134,12 @@ syscall(struct trapframe *tf)
 		case SYS_remove: /* called unlink in other unix-likes */
 			err = sys_remove((userptr_t)tf->tf_a0, &retval);
 			break;
+		case SYS_dup:
+			err = sys_dup((int)tf->tf_a0, &retval);
+			break;
+		case SYS_dup2:
+			err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
+			break;
 		case SYS_mkdir:
 			err = sys_mkdir((userptr_t)tf->tf_a0, (mode_t)tf->tf_a1, &retval);
 			break;

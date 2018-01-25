@@ -100,9 +100,13 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	return file_des;
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
-	kfree(file_des->pathname);
-	vfs_close(file_des->node);
-	filetable_put(p, NULL, file_des->ft_idx);
+	kfree(file_des->pathname); file_des->pathname = NULL;
+	file_des->flags = 0; file_des->offset = 0;
+	KASSERT(!lock_do_i_hold(file_des->lk));
+	lock_destroy(file_des->lk);
+	vfs_close(file_des->node); // check success?
+	file_des->node = NULL;
+	filetable_nullout(p, file_des);
 	file_des->refcount = 0;
 	kfree(file_des);
 }
@@ -125,9 +129,9 @@ struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node,
 }
 
 static void filedes_inherit(struct proc *p, struct filedes *file_des, int idx) {
-	(void)p;
 	file_des->refcount++;
-	filetable_put(p, file_des, idx);
+	int put_res = filetable_put(p, file_des, idx);
+	DEBUGASSERT(put_res != -1);
 }
 
 int filetable_put(struct proc *p, struct filedes *fd, int idx) {
@@ -140,15 +144,11 @@ int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 			return -1;
 		}
 		fd_tbl[idx] = fd; // NOTE: can be NULL
-		if (fd) {
-			fd->ft_idx = idx;
-		}
 		return idx;
 	} else { // find first non-NULL index and add the fd there
 		for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
 			if (fd_tbl[i] == NULL) {
 				fd_tbl[i] = fd;
-				fd->ft_idx = i;
 				return i;
 			}
 		}
@@ -165,8 +165,35 @@ struct filedes *filetable_get(struct proc *p, int fd) {
 	return p->file_table[fd];
 }
 
+int filetable_nullout(struct proc *p, struct filedes *des) {
+	if (!p) p = curproc;
+	struct filedes **fd_tbl = p->file_table;
+	int num_nulled = 0;
+	if (!des) return -1;
+	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
+		if (fd_tbl[i] == des) {
+			fd_tbl[i] = NULL;
+			num_nulled++;
+		}
+	}
+	return num_nulled;
+}
+
+int filetable_find_first_fd(struct proc *p, struct filedes *des) {
+	if (!p) p = curproc;
+	struct filedes **fd_tbl = p->file_table;
+	if (!des) return -1;
+
+	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
+		if (fd_tbl[i] == des) {
+			return i;
+		}
+	}
+	return -1;
+}
+
 bool filedes_is_open(struct filedes *file_des) {
-	return filetable_get(curproc, file_des->ft_idx) != NULL;
+	return filetable_find_first_fd(curproc, file_des) != -1;
 }
 bool filedes_is_readable(struct filedes *file_des) {
 	KASSERT(file_des);
@@ -267,27 +294,27 @@ bool file_is_dir(int fd) {
 
 // Try opening or creating the file, returning non-NULL on success. On error, *retval is set
 // to a non-zero error code. On success, adds filedes to current process's file table.
-struct filedes *file_open(char *path, int openflags, mode_t mode, int *errcode) {
+int file_open(char *path, int openflags, mode_t mode, int *errcode) {
 	struct vnode *node;
 	int result = vfs_open(path, openflags, mode, &node);
 	if (result != 0) {
 		panic("FILE ALREADY OPEN");
 		*errcode = result;
-		return NULL;
+		return -1;
 	}
 	struct filedes *new_filedes = filedes_open(curproc, path, node, openflags, -1);
 	if (!new_filedes) {
 		*errcode = EMFILE; // too many file descriptors for process
-		return NULL;
+		return -1;
 	}
 	if (filedes_is_writable(new_filedes) && ((openflags & O_APPEND) != 0)) {
 		result = file_seek(new_filedes, 0, SEEK_END, errcode);
 		if (result != 0) {
 			filedes_close(curproc, new_filedes); // can't seek to end, so close file
-			return NULL;
+			return -1;
 		}
 	}
-	return new_filedes;
+	return -1;
 }
 
 int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
