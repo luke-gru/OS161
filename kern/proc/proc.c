@@ -134,6 +134,7 @@ struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node,
 }
 
 static void filedes_inherit(struct proc *p, struct filedes *file_des, int idx) {
+	DEBUGASSERT(idx >= 0);
 	file_des->refcount++;
 	int put_res = filetable_put(p, file_des, idx);
 	DEBUGASSERT(put_res != -1);

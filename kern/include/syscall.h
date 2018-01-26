@@ -34,6 +34,7 @@
 #include <cdefs.h> /* for __DEAD */
 struct trapframe; /* from <machine/trapframe.h> */
 struct thread;
+struct argvdata;
 
 /*
  * The system call dispatcher.
@@ -52,8 +53,7 @@ void enter_forked_process(void *data1, unsigned long data2);
 __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
 		       vaddr_t stackptr, vaddr_t entrypoint);
 
-int runprogram_uspace(char *progname, userptr_t argv);
-void argvdata_bootstrap(void);
+int runprogram_uspace(char *progname, struct argvdata *argdata);
 
 /*
  * Prototypes for IN-KERNEL entry points for system call implementations.

@@ -38,13 +38,14 @@
 #include <kern/wait.h>
 #include <spl.h>
 #include <addrspace.h>
+#include <argvdata.h>
 
 #include <lib.h>
 
 void sys_exit(int status) {
   // Detaches current thread from process, and turns it into zombie, then exits
   // from it to run other threads. Exorcise gets called once in a while (when starting
-  // and switching threads, which destroys the parts of the thread that can't be destroyed
+  // and switching threads), which destroys the parts of the thread that can't be destroyed
   // while it's running.
 
   thread_exit(status);
@@ -114,9 +115,13 @@ int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
     splx(spl);
     return copy_res;
   }
+  struct argvdata *argdata = argvdata_create();
+  argvdata_fill_from_uspace(argdata, fname, argv);
+  argvdata_debug(argdata, "exec", fname);
+
   struct addrspace *as_old = proc_setas(NULL); // to reset in case of error
-  // DEBUG(DB_SYSCALL, "sys_execv running for process %d\n", curproc->pid);
-  int res = runprogram_uspace(fname, argv);
+  //DEBUG(DB_SYSCALL, "sys_execv running for process %d\n", curproc->pid);
+  int res = runprogram_uspace(fname, argdata);
   if (res == 0) {
     panic("shouldn't get here on success");
   }
@@ -124,6 +129,7 @@ int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
   DEBUG(DB_SYSCALL, "sys_execv failed to exec %s: %d (%s)\n", fname, res, strerror(res));
   proc_setas(as_old);
   as_activate();
+  argvdata_destroy(argdata);
   splx(spl);
   *retval = -1;
   return res;

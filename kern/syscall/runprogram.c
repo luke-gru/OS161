@@ -124,9 +124,8 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 	bzero(args, NARGS_MAX * sizeof(char*));
 	bzero(argbuf, ARG_SINGLE_MAX+1);
 	args[0] = kstrdup(progname); // default
-	for (int i = 0; argv_p[i] != NULL && i < NARGS_MAX; i++) {
+	for (int i = 0; argv_p[i] != 0 && i < NARGS_MAX; i++) {
 			size_t arglen_got = 0;
-			if (*(char**)argv_p[i] == 0) { break; }
 			int copy_res = copyinstr((const_userptr_t)argv_p[i], argbuf, ARG_SINGLE_MAX, &arglen_got);
 			if (copy_res != 0) {
 				panic("invalid copy for arg #%d: (%s)", i, argv_p[i]); // FIXME:
@@ -136,7 +135,6 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 			bzero(argbuf, ARG_SINGLE_MAX+1);
 			nargs_given++;
 			buflen += arglen_got;
-
 	}
 	buflen+=1; // NULL byte to end args array
 	argdata->buffer = kmalloc(buflen);
@@ -311,15 +309,11 @@ TODO: I think we're leaking kernel thread stack space each time we do an execv, 
 curthread->t_stack isn't freed and then reallocated. If we do this, we need interrupts
 * to be disabled so we aren't pre-empted and return to an invalid stack.
 */
-int	runprogram_uspace(char *progname, userptr_t argv) {
+int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
 	int result;
-
-	struct argvdata *argdata = argvdata_create();
-	argvdata_fill_from_uspace(argdata, progname, argv);
-	argvdata_debug(argdata, "exec", progname);
 
 	if (curproc == kproc) {
 		panic("Can't run runprogram_uspace (execv) on the kernel itself!");
@@ -338,7 +332,6 @@ int	runprogram_uspace(char *progname, userptr_t argv) {
 	as = as_create();
 	if (as == NULL) {
 		vfs_close(v);
-		argvdata_destroy(argdata);
 		return ENOMEM;
 	}
 
@@ -350,14 +343,12 @@ int	runprogram_uspace(char *progname, userptr_t argv) {
 	if (result != 0) {
 		as_destroy(as);
 		vfs_close(v);
-		argvdata_destroy(argdata);
 		return result;
 	}
 	/* Define the user stack in the address space */
 	result = as_define_stack(as, &stackptr);
 	if (result != 0) {
 		as_destroy(as);
-		argvdata_destroy(argdata);
 		return result;
 	}
 	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &stackptr);
@@ -366,7 +357,6 @@ int	runprogram_uspace(char *progname, userptr_t argv) {
 		if (copyout_res)
 			panic("debug"); // FIXME:remove
 		as_destroy(as);
-		argvdata_destroy(argdata);
 		return copyout_res;
 	}
 	int nargs = argdata->nargs;
@@ -377,7 +367,6 @@ int	runprogram_uspace(char *progname, userptr_t argv) {
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
 		as_destroy(as);
-		argvdata_destroy(argdata);
 		return pre_exec_res;
 	}
 
