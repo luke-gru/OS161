@@ -1,7 +1,7 @@
 #ifndef _CONSOLE_LOCK_H_
 #define _CONSOLE_LOCK_H_
 static inline void console_lock_bootstrap(void);
-#if 1
+#if 0
 
 #include <synch.h>
 struct lock *console_lock;

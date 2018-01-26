@@ -44,13 +44,14 @@ extern struct spinlock kprintf_spinlock;
 
 // NOTE: non-zero return value is an error
 int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
-  bool is_console = (fd == 1 || fd == 2);
+
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {
     DEBUG(DB_SYSCALL, "sys_write failed, fd %d not open in process %d\n", fd, curproc->pid);
     *count_retval = -1;
     return EBADF;
   }
+  bool is_console = filedes_is_console(file_des);
   struct iovec iov;
   struct uio myuio;
   int errcode = 0;
@@ -59,10 +60,17 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     curthread->t_curspl == 0 && curcpu->c_spinlocks == 0;
   // avoid extraneous context switches on lock acquisition when printing to console
   // so we don't get interleaved output
-  if (!is_console)
+  if (!is_console) {
     lock_acquire(file_des->lk);
+  }
+  if (file_des->node == (void*)0xdeadbeef || file_des->refcount == 0) {
+    DEBUG(DB_SYSCALL, "sys_write failed, fd destroyed from under us!\n");
+    *count_retval = -1;
+    return EBADF;
+  }
   // disable interrupts during writes to avoid race conditions writing to the same file
   int spl = splhigh();
+
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
   if (is_console) {
     if (dolock) {

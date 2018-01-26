@@ -211,11 +211,6 @@ syscall(struct trapframe *tf)
 
 /*
  * Enter user mode for a newly forked process.
- *
- * This function is provided as a reminder. You need to write
- * both it and the code that calls it.
- *
- * Thus, you can trash it and do things another way if you prefer.
  */
 void enter_forked_process(void *tf, unsigned long unused) {
 	(void)unused;
@@ -224,9 +219,10 @@ void enter_forked_process(void *tf, unsigned long unused) {
 	KASSERT(tf != NULL);
 
 	// trapframe must be on currently running thread's stack, so we copy it over and rely on
-	// it not getting popped from the parent's stack.
+	// it not getting popped from the parent's stack before this runs.
 	struct trapframe tf_on_stack;
 	//struct trapframe *tf_p = (struct trapframe *)tf;
+	// FIXME: possible reference to invalid memory if parent pops its trapframe
 	tf_on_stack = *(struct trapframe*)tf;
 	//memcpy(&tf_on_stack, tf_p, sizeof(struct trapframe));
 

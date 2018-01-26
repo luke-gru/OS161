@@ -52,7 +52,8 @@ void enter_forked_process(void *data1, unsigned long data2);
 __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
 		       vaddr_t stackptr, vaddr_t entrypoint);
 
-int runprogram_uspace(char *progname, userptr_t argv, int old_spl);
+int runprogram_uspace(char *progname, userptr_t argv);
+void argvdata_bootstrap(void);
 
 /*
  * Prototypes for IN-KERNEL entry points for system call implementations.

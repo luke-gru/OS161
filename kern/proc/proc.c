@@ -104,12 +104,12 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	return file_des;
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
-	kfree(file_des->pathname); file_des->pathname = NULL;
+	kfree(file_des->pathname);
 	file_des->flags = 0; file_des->offset = 0;
 	KASSERT(!lock_do_i_hold(file_des->lk));
 	lock_destroy(file_des->lk);
 	vfs_close(file_des->node); // check success?
-	file_des->node = NULL;
+	file_des->node = (void*)0xdeadbeef;
 	filetable_nullout(p, file_des);
 	file_des->refcount = 0;
 	kfree(file_des);
@@ -144,19 +144,17 @@ int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 	struct filedes **fd_tbl = p->file_table;
 	// add or clear a fd from the table, given an index
 	if (idx >= 0) {
-		if (fd_tbl[idx] != NULL && fd != NULL) {
-			panic("filetable_put can't overwrite a fd: %d", idx); // FIXME: return error
-			return -1;
-		}
 		fd_tbl[idx] = fd; // NOTE: can be NULL
 		return idx;
-	} else { // find first non-NULL index and add the fd there
+	} else if (idx == -1) { // find first non-NULL index and add the fd there
 		for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
 			if (fd_tbl[i] == NULL) {
 				fd_tbl[i] = fd;
 				return i;
 			}
 		}
+	} else {
+		panic("wrong value to filetable_put");
 	}
 	return -1;
 }
@@ -214,6 +212,9 @@ bool filedes_is_device(struct filedes *file_des) {
 bool filedes_is_seekable(struct filedes *file_des) {
 	KASSERT(file_des);
 	return VOP_ISSEEKABLE(file_des->node);
+}
+bool filedes_is_console(struct filedes *file_des) {
+	return filedes_is_device(file_des);
 }
 
 off_t filedes_size(struct filedes *file_des, int *errcode) {

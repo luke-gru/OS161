@@ -62,7 +62,6 @@ int sys_chdir(userptr_t dirbuf, int *retval) {
 }
 
 int sys_close(int fd, int *retval) {
-  (void)fd;
   int res = file_close(fd);
   if (res != 0) {
     DEBUG(DB_SYSCALL, "Error in sys_close: fd %d for process %d: code=%d (%s)\n",
@@ -179,7 +178,6 @@ int sys_dup2(int oldfd, int newfd, int *retval) {
   lock_acquire(file_des->lk);
   struct filedes *replaced = filetable_get(curproc, newfd);
   if (replaced) {
-    replaced->refcount = 0;
     filedes_close(curproc, replaced);
   }
   int newfd_res = filetable_put(curproc, file_des, newfd);
@@ -195,6 +193,7 @@ int sys_dup2(int oldfd, int newfd, int *retval) {
   *retval = newfd;
   lock_release(file_des->lk);
   splx(spl);
+  DEBUG(DB_SYSCALL, "dup2: proc %d, %d => %d\n", curproc->pid, oldfd, newfd);
   return 0;
 }
 

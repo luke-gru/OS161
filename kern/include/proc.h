@@ -88,6 +88,7 @@ bool filedes_is_writable(struct filedes *file_des);
 bool filedes_is_device(struct filedes *file_des);
 bool filedes_is_readable(struct filedes *file_des);
 bool filedes_is_seekable(struct filedes *file_des);
+bool filedes_is_console(struct filedes *file_des);
 
 // NOTE: takes a fd int because a file can be open more than once in a process, returning different file descriptors to the underlying file
 bool file_is_open(int fd);

@@ -56,6 +56,8 @@ int sys_fork(struct trapframe *tf, int *retval) {
   // in the child doesn't point to invalid memory, which it would if the parent were to
   // run before the child and pop its trapframe stack
   int spl = splhigh();
+
+  DEBUG(DB_SYSCALL, "process %d forking\n", curproc->pid);
   int pid = proc_fork(curproc, curthread, tf, &err);
   if (pid < 0) {
     DEBUG(DB_SYSCALL, "sys_fork failed: %d (%s)\n", err, strerror(err));
@@ -69,6 +71,7 @@ int sys_fork(struct trapframe *tf, int *retval) {
     // to the syscall trapframe with a return value of 0 and the same CPU registers as the parent
     panic("shouldn't get here!");
   } else { // in parent
+    DEBUG(DB_SYSCALL, "process %d forked, new pid: %d\n", curproc->pid, pid);
     KASSERT(is_valid_user_pid(pid));
     *retval = pid;
   }
@@ -80,6 +83,7 @@ int sys_fork(struct trapframe *tf, int *retval) {
 int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *retval) {
   int err = 0; // should be set below
   (void)options;
+  DEBUG(DB_SYSCALL, "Pprocess %d waiting for %d\n", (int)curproc->pid, (int)child_pid);
   int result = proc_waitpid_sleep(child_pid, &err);
   if (result == -1) {
     KASSERT(err > 0);
@@ -88,27 +92,35 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
     return err;
   }
   int waitstatus = _MKWAIT_EXIT(result);
+  DEBUG(DB_SYSCALL, "process %d finished waiting for %d, status: %d\n",
+    (int)curproc->pid,
+    (int)child_pid,
+    waitstatus
+  );
+
   copyout((const void*)&waitstatus, exitstatus_buf, sizeof(int));
   *retval = 0;
   return 0;
 }
 
 int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
+  int spl = splhigh();
   char fname[PATH_MAX+1];
   memset(fname, 0, PATH_MAX+1);
   int copy_res = copyinstr(filename_ubuf, fname, PATH_MAX+1, NULL);
   if (copy_res != 0) {
     DEBUG(DB_SYSCALL, "sys_execv failed to copy filename, %d (%s)\n", copy_res, strerror(copy_res));
     *retval = -1;
+    splx(spl);
     return copy_res;
   }
-  int spl = splhigh(); // disable interrupts
   struct addrspace *as_old = proc_setas(NULL); // to reset in case of error
-  DEBUG(DB_SYSCALL, "sys_execv running for process %d\n", curproc->pid);
-  int res = runprogram_uspace(fname, argv, spl);
+  // DEBUG(DB_SYSCALL, "sys_execv running for process %d\n", curproc->pid);
+  int res = runprogram_uspace(fname, argv);
   if (res == 0) {
     panic("shouldn't get here on success");
   }
+  // failure
   DEBUG(DB_SYSCALL, "sys_execv failed to exec %s: %d (%s)\n", fname, res, strerror(res));
   proc_setas(as_old);
   as_activate();

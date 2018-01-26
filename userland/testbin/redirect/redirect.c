@@ -140,7 +140,6 @@ cat(void)
 {
 	pid_t pid;
 	int rfd, wfd, result, status;
-	const char *args[2];
 
 	rfd = doopen(INFILE, O_RDONLY);
 	wfd = doopen(OUTFILE, O_WRONLY|O_CREAT|O_TRUNC);
@@ -156,18 +155,19 @@ cat(void)
 		dodup2(wfd, STDOUT_FILENO, OUTFILE);
 		doclose(rfd, INFILE);
 		doclose(wfd, OUTFILE);
-		args[0] = "cat";
+		char *args[2];
+		args[0] = (char*)"cat";
 		args[1] = NULL;
-		execv(PATH_CAT, (char **)args);
+
+		execv(PATH_CAT, (char**)args);
 		warn("%s: execv", PATH_CAT);
 		_exit(1);
 	}
 
+	result = waitpid(pid, &status, 0);
 	/* parent */
 	doclose(rfd, INFILE);
 	doclose(wfd, OUTFILE);
-
-	result = waitpid(pid, &status, 0);
 	if (result == -1) {
 		err(1, "waitpid");
 	}
