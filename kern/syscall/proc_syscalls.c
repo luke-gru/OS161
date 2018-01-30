@@ -135,6 +135,23 @@ int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
   return res;
 }
 
+int sys_sbrk(uint32_t increment, int *retval) {
+  struct addrspace *as = curproc->p_addrspace;
+  vaddr_t old_heapend = as_heapend(as);
+  if (increment == 0) {
+    *retval = (int)old_heapend;
+    return 0;
+  } else {
+    int grow_res = as_growheap(as, increment);
+    if (grow_res != 0) {
+      *retval = -1;
+      return grow_res;
+    }
+    *retval = (int)old_heapend;
+    return 0;
+  }
+}
+
 int sys_getpid(int *retval)
 {
   *retval = (int)curproc->pid;

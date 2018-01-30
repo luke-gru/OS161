@@ -107,7 +107,7 @@
 
 void ram_bootstrap(void);
 paddr_t ram_stealmem(unsigned long npages);
-paddr_t ram_getsize(void);
+void ram_getsize(paddr_t *first, paddr_t *last);
 paddr_t ram_getfirstfree(void);
 
 /*

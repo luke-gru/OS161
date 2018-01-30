@@ -142,6 +142,7 @@ common_prog(int nargs, char **args)
 		panic("invalid child pid: %d", (int)child_pid);
 	}
 
+	DEBUG(DB_VM, "free core entries: %lu\n", corefree());
 	return 0;
 }
 
@@ -960,7 +961,7 @@ menu_execute(char *line, int isargs)
 void
 menu(char *args)
 {
-	dbflags = DB_SYSCALL;
+	dbflags = DB_VM;
 	char buf[64];
 	menu_execute(args, 1);
 

@@ -250,7 +250,7 @@ int runprogram(char *progname, char **args, int nargs) {
 	KASSERT(proc_getas() == NULL);
 
 	/* Create a new address space. */
-	as = as_create();
+	as = as_create(progname);
 	if (as == NULL) {
 		vfs_close(v);
 		return ENOMEM;
@@ -329,7 +329,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	KASSERT(proc_getas() == NULL);
 
 	/* Create a new address space. */
-	as = as_create();
+	as = as_create(progname);
 	if (as == NULL) {
 		vfs_close(v);
 		return ENOMEM;

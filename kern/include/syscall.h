@@ -79,6 +79,8 @@ int sys_waitpid(pid_t child_pid, userptr_t status, int options, int *retval);
 void sys_exit(int status);
 int sys_execv(userptr_t filename, userptr_t argv, int *retval);
 
+int sys_sbrk(size_t increment, int *retval);
+
 int sys_chdir(userptr_t dir, int *retval);
 int sys_getpid(int *retval);
 int sys_getcwd(userptr_t ubuf, size_t ubuf_len, int *retval);

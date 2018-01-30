@@ -302,13 +302,13 @@ bool file_is_dir(int fd) {
 	return S_ISDIR(st.st_mode);
 }
 
-// Try opening or creating the file, returning non-NULL on success. On error, *retval is set
+// Try opening or creating the file, returning fd > 0 on success. On error, *retval is set
 // to a non-zero error code. On success, adds filedes to current process's file table.
 int file_open(char *path, int openflags, mode_t mode, int *errcode) {
 	struct vnode *node;
 	int result = vfs_open(path, openflags, mode, &node);
 	if (result != 0) {
-		panic("FILE ALREADY OPEN"); // FIXME
+		//panic("FILE ALREADY OPEN"); // FIXME
 		*errcode = result;
 		return -1;
 	}
@@ -862,9 +862,7 @@ proc_remthread(struct thread *t)
  * some other method to make this safe. Otherwise the returned address
  * space might disappear under you.
  */
-struct addrspace *
-proc_getas(void)
-{
+struct addrspace *proc_getas(void) {
 	struct addrspace *as;
 	struct proc *proc = curproc;
 

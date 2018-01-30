@@ -37,8 +37,40 @@
 
 #include <vm.h>
 #include "opt-dumbvm.h"
+#include <synch.h>
 
 struct vnode;
+struct page;
+
+enum page_entry_type {
+  PAGE_ENTRY_TYPE_EXEC = 1, // page for memory loaded from executable
+  PAGE_ENTRY_TYPE_STACK = 2, // page for user stack
+  PAGE_ENTRY_TYPE_HEAP = 3, // page for user heap
+};
+
+struct page_table_entry {
+	vaddr_t vaddr;
+	paddr_t paddr;
+	int permissions;
+  enum page_entry_type page_entry_type;
+  bool is_swapped;
+  // Dirty means the contents of the page are different from the saved contents on disk
+  bool is_dirty;
+  int32_t last_fault_access; // timestamp
+  off_t swap_offset;
+  unsigned long num_swaps; // number of times swapped out
+
+	struct page_table_entry *next;
+	struct page_table_entry *last;
+};
+
+struct regionlist {
+  vaddr_t vbase;
+  size_t npages;
+  int permissions;
+  struct regionlist *next;
+  struct regionlist *last;
+};
 
 
 /*
@@ -50,6 +82,7 @@ struct vnode;
 
 struct addrspace {
 #if OPT_DUMBVM
+        char *name;
         vaddr_t as_vbase1;
         paddr_t as_pbase1;
         size_t as_npages1;
@@ -58,7 +91,17 @@ struct addrspace {
         size_t as_npages2;
         paddr_t as_stackpbase;
 #else
-        /* Put stuff here for your VM system */
+        char *name; // used for debugging purposes
+        struct page_table_entry *pages; // all pages in address space (including stack, heap and data and executable)
+        struct page_table_entry *heap; // beginning of heap (bottom address, heap grows up)
+        struct page_table_entry *stack; // top of stack (bottom address, stack grows down)
+        struct regionlist *regions;
+        vaddr_t heap_start;
+        vaddr_t heap_end;
+        struct spinlock spinlock;
+        time_t last_activation;
+        bool destroying;
+        bool is_active;
 #endif
 };
 
@@ -103,7 +146,7 @@ struct addrspace {
  * functions are found in dumbvm.c.
  */
 
-struct addrspace *as_create(void);
+struct addrspace *as_create(char *name);
 int               as_copy(struct addrspace *src, struct addrspace **ret);
 void              as_activate(void);
 void              as_deactivate(void);
@@ -117,6 +160,13 @@ int               as_define_region(struct addrspace *as,
 int               as_prepare_load(struct addrspace *as);
 int               as_complete_load(struct addrspace *as);
 int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
+
+vaddr_t           as_heapend(struct addrspace *as);
+int               as_growheap(struct addrspace *as, size_t bytes);
+bool              pte_can_handle_fault_type(struct page_table_entry *pte, int faulttype);
+void              as_touch_pte(struct page_table_entry *pte);
+int               pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fill_mem);
+int               pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page **into_page);
 
 
 /*

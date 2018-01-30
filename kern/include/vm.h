@@ -36,34 +36,66 @@
  * You'll probably want to add stuff here.
  */
 
+struct addrspace;
 
 #include <machine/vm.h>
+#include <cpu.h>
 
 /* Fault-type arguments to vm_fault() */
 #define VM_FAULT_READ        0    /* A read was attempted */
 #define VM_FAULT_WRITE       1    /* A write was attempted */
 #define VM_FAULT_READONLY    2    /* A write to a readonly page was attempted*/
 
+#define VM_STACKPAGES    12
+
+enum page_t {
+  PAGETYPE_KERN = 1,
+  PAGETYPE_USER
+};
+
+enum pagestate_t {
+  PAGESTATE_FREE = 0,
+  PAGESTATE_INUSE
+};
 
 /* Initialization function */
 void vm_bootstrap(void);
+paddr_t getppages(unsigned long npages, enum page_t pagetype);
+// returns number of free physical memory pages
+unsigned long corefree(void);
+// returns total number of physical memory pages
+unsigned long coretotal(void);
+/*
+ * Return amount of memory (in bytes) used by allocated coremap pages. If
+ * there are ongoing allocations, this value could change after it is returned
+ * to the caller. But it should have been correct at some point in time.
+ */
+unsigned long coremap_used_bytes(void);
+
+struct page {
+    vaddr_t va;
+    paddr_t pa;
+    int partofpage; // is used for de-allocation of blocks of pages
+    bool contained;
+    enum pagestate_t state;
+    bool is_kern_page;
+};
 
 /* Fault handling function called by trap code */
 int vm_fault(int faulttype, vaddr_t faultaddress);
 
 /* Allocate/free kernel heap pages (called by kmalloc/kfree) */
-vaddr_t alloc_kpages(unsigned npages);
+vaddr_t alloc_kpages(int npages);
+vaddr_t alloc_upages(int npages);
 void free_kpages(vaddr_t addr);
+void free_upages(vaddr_t addr);
 
-/*
- * Return amount of memory (in bytes) used by allocated coremap pages.  If
- * there are ongoing allocations, this value could change after it is returned
- * to the caller. But it should have been correct at some point in time.
- */
-unsigned int coremap_used_bytes(void);
+
 
 /* TLB shootdown handling called from interprocessor_interrupt */
 void vm_tlbshootdown(const struct tlbshootdown *);
+void vm_tlbshootdown_all(void);
+bool vm_can_sleep(void);
 
 
 #endif /* _VM_H_ */

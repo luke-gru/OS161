@@ -124,10 +124,11 @@ ram_stealmem(unsigned long npages)
  * initialize the VM system, after which the VM system should take
  * charge of knowing what memory exists.
  */
-paddr_t
-ram_getsize(void)
+void
+ram_getsize(paddr_t *first_addr, paddr_t *last_addr)
 {
-	return lastpaddr;
+	*first_addr = firstpaddr;
+	*last_addr = lastpaddr;
 }
 
 /*
