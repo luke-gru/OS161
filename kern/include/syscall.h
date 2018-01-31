@@ -87,4 +87,6 @@ int sys_getcwd(userptr_t ubuf, size_t ubuf_len, int *retval);
 
 int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 
+int sys_sleep(int seconds, int *retval);
+
 #endif /* _SYSCALL_H_ */

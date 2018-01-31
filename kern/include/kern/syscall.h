@@ -106,9 +106,7 @@
 #define SYS_open         45
 // TODO
 #define SYS_pipe         46
-// TODO
 #define SYS_dup          47
-// TODO
 #define SYS_dup2         48
 #define SYS_close        49
 #define SYS_read         50
@@ -155,7 +153,6 @@
 
 
 //                              -- Any-file-related --
-// TODO
 #define SYS_stat         81
 #define SYS_fstat        82
 // TODO
@@ -199,7 +196,7 @@
 //                              -- Time-related --
 #define SYS___time       113
 #define SYS___settime    114
-#define SYS_nanosleep    115
+#define SYS_sleep        115
 //#define SYS_getitimer  116
 //#define SYS_setitimer  117
 

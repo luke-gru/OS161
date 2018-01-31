@@ -177,6 +177,9 @@ syscall(struct trapframe *tf)
 			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread
 			panic("shouldn't return from exit");
 			break;
+		case SYS_sleep:
+			sys_sleep((int)tf->tf_a0, &retval);
+			break;
 	  default:
 			kprintf("Unknown syscall %d\n", callno);
 			err = ENOSYS;

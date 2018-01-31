@@ -263,7 +263,7 @@ void as_destroy(struct addrspace *as) {
 			struct page *core = &coremap[pte->coremap_idx];
 			//DEBUGASSERT(core->entry == pte);
 			free_upages(pte->paddr, false);
-			DEBUGASSERT(pte->coremap_idx == 0);
+			//DEBUGASSERT(pte->coremap_idx == 0);
 			DEBUGASSERT(core->entry == NULL);
 		}
 		pagetemp = pte;

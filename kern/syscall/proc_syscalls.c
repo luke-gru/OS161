@@ -39,6 +39,7 @@
 #include <spl.h>
 #include <addrspace.h>
 #include <argvdata.h>
+#include <clock.h>
 
 #include <lib.h>
 
@@ -175,5 +176,15 @@ int sys_getcwd(userptr_t buf, size_t buflen, int *retval)
 
   *retval = buflen - useruio.uio_resid;
 
+  return 0;
+}
+
+int sys_sleep(int seconds, int *retval) {
+  if (seconds <= 0) {
+    *retval = 0;
+    return 0;
+  }
+  clocksleep(seconds);
+  *retval = 0;
   return 0;
 }
