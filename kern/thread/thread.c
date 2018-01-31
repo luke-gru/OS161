@@ -736,7 +736,10 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 			panic("invalid thread state: %d", (int)newstate);
 	}
 	cur->t_state = newstate;
-	cur->t_proc->p_addrspace->running_cpu_idx = -1;
+	// NOTE: the kernel has no userlevel address space
+	if (cur->t_proc && cur->t_proc->p_addrspace) {
+		cur->t_proc->p_addrspace->running_cpu_idx = -1;
+	}
 
 	/*
 	 * Get the next thread. While there isn't one, call cpu_idle().

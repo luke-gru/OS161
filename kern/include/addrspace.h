@@ -52,23 +52,27 @@ enum page_entry_type {
 
 struct page_table_entry {
   struct addrspace *as;
-  char *debug_name;
+  char *debug_name; // same name as addrspace and process
 	vaddr_t vaddr;
 	paddr_t paddr;
-	int permissions;
+	int permissions; // read/write/execute memory permissions
   enum page_entry_type page_entry_type;
-  bool is_swapped;
+  bool is_swapped; // is this entry swapped to disk and not resident in physical memory
   // Dirty means the contents of the page are different from the saved contents on disk
   // TODO: in vm_fault, set all TLB entries to read-only initially, then a write gets a
   // fault and we mark it as dirty and continue.
   bool is_dirty;
   int32_t last_fault_access; // timestamp
-  off_t swap_offset; // byte offset into swap file
+  off_t swap_offset; // byte offset into swap file, if num_swaps > 0
   unsigned long num_swaps; // number of times this page entry was swapped out
+  // index into coremap. 0 means the page isn't resident in physical memory, We can
+  // treat 0 as an invalid index because the first few pages in the coremap are for the
+  // coremap itself, and they contain no page table entries
   long coremap_idx;
   unsigned short page_age; // 0-VM_PAGE_AGE_MAX, age is incremented every kswapd loop
-  short tlb_idx;
-  short cpu_idx; // CPU tlb index
+  short tlb_idx; // TLB index if it's resident in memory and hit the TLB, -1 if not. Invalidated every
+  // activation of the thread (quantum)
+  short cpu_idx; // CPU index for TLB entry (0-3)
 
 	struct page_table_entry *next;
 	struct page_table_entry *last;
@@ -86,8 +90,6 @@ struct regionlist {
 /*
  * Address space - data structure associated with the virtual memory
  * space of a process.
- *
- * You write this.
  */
 
 struct addrspace {
@@ -103,7 +105,7 @@ struct addrspace {
 #else
         char *name; // used for debugging purposes
         unsigned long id; // address space ID
-        pid_t pid;        // process ID of address space
+        pid_t pid;        // process ID of address space (same as process)
         struct page_table_entry *pages; // all pages in address space (including stack, heap and data and executable)
         struct page_table_entry *heap; // beginning of heap (bottom address, heap grows up)
         struct page_table_entry *stack; // top of stack (bottom address, stack grows down)
@@ -113,8 +115,8 @@ struct addrspace {
         struct spinlock spinlock;
         time_t last_activation; // last time that this address space began its time slice
         bool destroying;
-        bool is_active; // Doesn't mean it's currently running, just that it ran at least one time slice
-        short running_cpu_idx; // If the address space is currently running, this is the cpu idx (0-3) of the CPU
+        bool is_active; // Doesn't mean it's currently running, just that it ran at least one time slice and hasn't exited
+        short running_cpu_idx; // If the address space's process is currently running, this is the cpu idx (0-3) of the CPU
 #endif
 };
 

@@ -39,6 +39,7 @@
 #include <vm.h>
 #include <mainbus.h>
 #include <syscall.h>
+#include <addrspace.h>
 
 
 /* in exception-*.S */
@@ -338,8 +339,10 @@ mips_trap(struct trapframe *tf)
 	}
 
 	cputhreads[curcpu->c_number] = (vaddr_t)curthread;
-	curproc->p_addrspace->running_cpu_idx = curcpu->c_number;
 	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE;
+	if (curproc && curproc->p_addrspace) {
+		curproc->p_addrspace->running_cpu_idx = curcpu->c_number;
+	}
 
 	/*
 	 * This assertion will fail if either
@@ -384,8 +387,10 @@ mips_usermode(struct trapframe *tf)
 	cpu_irqoff();
 
 	cputhreads[curcpu->c_number] = (vaddr_t)curthread;
-	curproc->p_addrspace->running_cpu_idx = curcpu->c_number;
 	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE; // top of stack (highest addr)
+	if (curproc && curproc->p_addrspace) {
+		curproc->p_addrspace->running_cpu_idx = curcpu->c_number;
+	}
 
 	/*
 	 * This assertion will fail if either

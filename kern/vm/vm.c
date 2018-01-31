@@ -152,7 +152,7 @@ static void kswapd_swapout_pages() {
       DEBUG(DB_VM, "\nswapping out pages for %s\n", name);
       KASSERT(pte_swapout(pte->as, pte, false) == 0);
       // NOTE: only invalidate the TLB if the address space is currently running
-      if (as->running_cpu_idx > 0) {
+      if (pte->as->running_cpu_idx > 0) {
         if (pte->tlb_idx >= 0 && pte->tlb_idx < NUM_TLB) {
           if (pte->cpu_idx == (short)curcpu->c_number) {
             DEBUG(DB_VM, "Invalidating page entry in TLB, zeroing memory\n");

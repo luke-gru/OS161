@@ -245,6 +245,7 @@ void as_destroy(struct addrspace *as) {
 	}
 	as->destroying = true;
 	as->is_active = false;
+	as->running_cpu_idx = -1;
 
 	struct regionlist *reglst = as->regions;
 	struct regionlist *temp;
@@ -260,9 +261,6 @@ void as_destroy(struct addrspace *as) {
 	while (pte) {
 		if (pte->coremap_idx > 0) {
 			struct page *core = &coremap[pte->coremap_idx];
-			if (core->entry != pte) {
-				panic("WHAAT");
-			}
 			DEBUGASSERT(core->entry == pte);
 			free_upages(pte->paddr, false);
 			DEBUGASSERT(pte->coremap_idx == 0);
