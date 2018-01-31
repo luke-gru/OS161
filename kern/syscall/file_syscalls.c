@@ -79,6 +79,7 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
     *retval = -1;
     return EBADF;
   }
+  //vm_pin_region(stat_buf, stat_buf + sizeof(struct stat));
   int errcode = 0;
   struct stat st;
   int res = filedes_stat(file_des, &st, &errcode);
@@ -89,6 +90,7 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
     return errcode;
   }
   copyout(&st, stat_buf, sizeof(struct stat));
+  //vm_unpin_region(stat_buf, stat_buf + sizeof(struct stat));
   *retval = 0;
   return 0;
 }
@@ -230,12 +232,14 @@ int sys_getdirentry(int fd, userptr_t dirname_ubuf, size_t buf_count, int *retva
   }
   struct iovec iov;
   struct uio myuio;
+  // vm_pin_region(dirname_ubuf, dirname_ubuf + buf_count)
   uio_uinit(&iov, &myuio, dirname_ubuf, buf_count, file_des->offset, UIO_READ);
   int res = VOP_GETDIRENTRY(file_des->node, &myuio);
   if (res != 0) {
     *retval = -1;
     return res;
   }
+  // vm_unpin_region(dirname_ubuf, dirname_ubuf + buf_count)
   if (myuio.uio_offset == 0) { // no more entries
     *retval = 0;
     return 0;

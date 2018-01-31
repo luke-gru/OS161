@@ -132,6 +132,7 @@ boot(void)
 	thread_start_cpus();
 	test161_bootstrap();
   console_lock_bootstrap();
+  kswapd_bootstrap();
 
 	/* Default bootfs - but ignore failure, in case emu0 doesn't exist */
 	vfs_setbootfs("emu0");

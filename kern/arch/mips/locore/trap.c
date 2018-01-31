@@ -127,8 +127,13 @@ mips_trap(struct trapframe *tf)
 {
 	uint32_t code;
 	/*bool isutlb; -- not used */
-	bool iskern;
+	bool iskern, iskswapd;
 	int spl;
+
+	iskswapd = false;
+	if (curthread->t_pid == KSWAPD_PID) {
+		iskswapd = true;
+	}
 
 	/* The trap frame is supposed to be 35 registers long. */
 	KASSERT(sizeof(struct trapframe)==(35*4));
@@ -267,7 +272,7 @@ mips_trap(struct trapframe *tf)
 	 * it was a page fault we couldn't handle.
 	 */
 
-	if (!iskern) {
+	if (!iskern && !iskswapd) {
 		/*
 		 * Fatal fault in user mode.
 		 * Kill the current user process.
@@ -320,7 +325,7 @@ mips_trap(struct trapframe *tf)
 	 * stored interrupt state.
 	 */
 	cpu_irqoff();
- done2:
+ done2: // fallthru
 
 	/*
 	 * The boot thread can get here (e.g. on interrupt return) but
@@ -333,6 +338,7 @@ mips_trap(struct trapframe *tf)
 	}
 
 	cputhreads[curcpu->c_number] = (vaddr_t)curthread;
+	curproc->p_addrspace->running_cpu_idx = curcpu->c_number;
 	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE;
 
 	/*
@@ -378,6 +384,7 @@ mips_usermode(struct trapframe *tf)
 	cpu_irqoff();
 
 	cputhreads[curcpu->c_number] = (vaddr_t)curthread;
+	curproc->p_addrspace->running_cpu_idx = curcpu->c_number;
 	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE; // top of stack (highest addr)
 
 	/*

@@ -572,8 +572,10 @@ thread_fork(const char *name,
 	wchan_wakeall(thread_count_wchan, &thread_count_lock);
 	spinlock_release(&thread_count_lock);
 
-	if (proc != kproc && proc->pid <= 0) {
+	if (proc != kproc && proc != kswapproc && proc->pid <= 0) {
 		KASSERT(proc_init_pid(proc) == 0);
+		newthread->t_pid = proc->pid;
+	} else {
 		newthread->t_pid = proc->pid;
 	}
 
@@ -734,6 +736,7 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 			panic("invalid thread state: %d", (int)newstate);
 	}
 	cur->t_state = newstate;
+	cur->t_proc->p_addrspace->running_cpu_idx = -1;
 
 	/*
 	 * Get the next thread. While there isn't one, call cpu_idle().

@@ -44,6 +44,16 @@
 #include <vnode.h>
 #include <kern/stat.h>
 
+static struct spinlock addrspace_g_lock = SPINLOCK_INITIALIZER;
+
+static unsigned long alloc_addrspace_id() {
+	unsigned long as_id;
+	spinlock_acquire(&addrspace_g_lock);
+	as_id = ++last_addrspace_id;
+	spinlock_release(&addrspace_g_lock);
+	return as_id;
+}
+
 struct addrspace *as_create(char *name) {
 	struct addrspace *as;
 
@@ -52,6 +62,8 @@ struct addrspace *as_create(char *name) {
 		return NULL;
 	}
 	as->name = kstrdup(name);
+	as->id = alloc_addrspace_id();
+	as->pid = 0;
 	as->pages = NULL;
 	as->regions = NULL;
 	as->stack = NULL;
@@ -61,21 +73,46 @@ struct addrspace *as_create(char *name) {
 	as->destroying = false;
 	as->last_activation = (time_t)0;
 	as->is_active = false;
+	as->running_cpu_idx = -1;
 	spinlock_init(&as->spinlock);
 
 	return as;
 }
 
-static int as_num_pages(struct addrspace *as) {
+int as_num_pages(struct addrspace *as) {
+	if (as->regions == NULL) { return 0; }
 	struct page_table_entry *pte = as->pages;
 	int i = 0;
-	int max_pages = coretotal();
 	while (pte != NULL) {
 		i++;
-		if (i >= max_pages) {
-			panic("cycle detected in as_num_pages");
+		pte = pte->next;
+	}
+	return i;
+}
+
+static bool pte_is_active(struct page_table_entry *pte) {
+	return (pte->coremap_idx > 0 && !pte->is_swapped);
+}
+
+static int as_num_active_pages(struct addrspace *as) {
+	if (as->regions == NULL) { return 0; }
+	struct page_table_entry *pte = as->pages;
+	int i = 0;
+	while (pte != NULL) {
+		if (pte_is_active(pte)) {
+			i++;
 		}
 		pte = pte->next;
+	}
+	return i;
+}
+
+static int as_num_regions(struct addrspace *as) {
+	struct regionlist *region = as->regions;
+	int i = 0;
+	while (region != NULL) {
+		i++;
+		region = region->next;
 	}
 	return i;
 }
@@ -84,6 +121,24 @@ static time_t as_timestamp(void) {
 	struct timespec tv;
 	gettime(&tv);
 	return tv.tv_sec;
+}
+
+bool as_is_destroyed(struct addrspace *as) {
+	return as->id == 0 || as->destroying || as->name == NULL;// || (void*)as->name == (void*)0xdeadbeef;
+}
+
+static bool as_is_debuggable(struct addrspace *as) {
+	return (!as_is_destroyed(as)) && (as->regions != NULL) && (as->pages != NULL);
+}
+
+void as_debug(struct addrspace *as) {
+	DEBUGASSERT(as != NULL);
+	if (!as_is_debuggable(as)) { return; }
+	DEBUG(DB_VM, "Addrspace Debug Info: id=%lu (%s)\n", as->id, as->name);
+	DEBUG(DB_VM, "  regions: %d\n", as_num_regions(as));
+	DEBUG(DB_VM, "  pages:   %d (%d active)\n",
+		as_num_pages(as), as_num_active_pages(as)
+	);
 }
 
 int as_copy(struct addrspace *old, struct addrspace **ret) {
@@ -118,7 +173,8 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 		itr = itr->next;
 	}
 
-	// Now actually allocate new pages for these regions, along with pages for stack and 1 initial heap page
+	// Now actually allocate new pages for these regions, along with pages for stack
+	// and 1 initial heap page
 	if (as_prepare_load(new) != 0) {
 		as_destroy(new);
 		return ENOMEM;
@@ -134,7 +190,7 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 			as_destroy(new);
 			return ENOMEM;
 		}
-		paddr_t paddr = alloc_upages(1);
+		paddr_t paddr = find_upage_for_entry(new_heappage, VM_PIN_PAGE);
 		if (paddr == 0) {
 			as_destroy(new);
 			return ENOMEM;
@@ -172,13 +228,22 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 	return 0;
 }
 
+void as_lock_all(void) {
+	spinlock_acquire(&addrspace_g_lock);
+}
+
+void as_unlock_all(void) {
+	spinlock_release(&addrspace_g_lock);
+}
+
 void as_destroy(struct addrspace *as) {
 	DEBUGASSERT(as != NULL);
-	if (as->destroying) { return; }
-	spinlock_acquire(&as->spinlock);
-	if (as->destroying) { return; }
+	lock_pagetable();
+	if (as->destroying) {
+		unlock_pagetable();
+		return;
+	}
 	as->destroying = true;
-	spinlock_release(&as->spinlock);
 	as->is_active = false;
 
 	struct regionlist *reglst = as->regions;
@@ -193,7 +258,16 @@ void as_destroy(struct addrspace *as) {
 	struct page_table_entry *pte = as->pages;
 	struct page_table_entry *pagetemp;
 	while (pte) {
-		free_upages(pte->paddr);
+		if (pte->coremap_idx > 0) {
+			struct page *core = &coremap[pte->coremap_idx];
+			if (core->entry != pte) {
+				panic("WHAAT");
+			}
+			DEBUGASSERT(core->entry == pte);
+			free_upages(pte->paddr, false);
+			DEBUGASSERT(pte->coremap_idx == 0);
+			DEBUGASSERT(core->entry == NULL);
+		}
 		pagetemp = pte;
 		pte = pte->next;
 		pagetemp->next = NULL;
@@ -202,6 +276,7 @@ void as_destroy(struct addrspace *as) {
 	spinlock_cleanup(&as->spinlock);
 	kfree(as->name);
 	kfree(as);
+	unlock_pagetable();
 }
 
 //static
@@ -216,22 +291,39 @@ void as_activate(void) {
 
 	struct addrspace *as = proc_getas();
 	if (!as) { return; }
-
-	/* Disable interrupts on this CPU while frobbing the TLB. */
 	spl = splhigh();
+	if (curproc == kswapproc) {
+		for (i=0; i<NUM_TLB; i++) {
+			tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+		}
+		struct page_table_entry *pte = as->pages;
+		i = 0;
+		while (pte != NULL) {
+			tlb_write(pte->vaddr, pte->paddr|TLBLO_DIRTY|TLBLO_VALID, i);
+			pte->tlb_idx = i;
+			pte->cpu_idx = curcpu->c_number;
+			i++;
+			pte = pte->next;
+		}
+		splx(spl);
+	} else {
+		/* Disable interrupts on this CPU while frobbing the TLB. */
 
-	for (i=0; i<NUM_TLB; i++) {
-		tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+		for (i=0; i<NUM_TLB; i++) {
+			tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+		}
+		splx(spl);
 	}
-	splx(spl);
 
 	as->is_active = true;
+	as->running_cpu_idx = curcpu->c_number;
 	as->last_activation = as_timestamp();
 }
 
 void as_deactivate(void) {
 	struct addrspace *as = proc_getas();
 	as->is_active = false;
+	as->running_cpu_idx = -1;
 }
 
 /*
@@ -283,7 +375,8 @@ int as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 }
 
 // Allocates new pages for code and data regions, along with pages for entire stack and 1 initial
-// heap page
+// heap page. It still should work even if as->regions is NULL, because we also allocate pages
+// for the kernel's kswapd process this way.
 int as_prepare_load(struct addrspace *as) {
 	paddr_t paddr;
 	vaddr_t vaddr;
@@ -291,7 +384,7 @@ int as_prepare_load(struct addrspace *as) {
 	DEBUGASSERT(as->pages == NULL);
 	DEBUGASSERT(as->heap == NULL);
 	DEBUGASSERT(as->stack == NULL);
-	DEBUGASSERT(as->regions != NULL);
+	//DEBUGASSERT(as->regions != NULL);
 
 	// Setting up page tables
 	struct regionlist *regionlst;
@@ -304,11 +397,12 @@ int as_prepare_load(struct addrspace *as) {
 			if (as->pages==NULL) {
 				as->pages = (struct page_table_entry *)kmalloc(sizeof(*pages));
 				as->pages->vaddr = vaddr;
+				as->pages->as = as;
 				as->pages->permissions = regionlst->permissions;
 				as->pages->next = NULL;
 				as->pages->page_entry_type = PAGE_ENTRY_TYPE_EXEC;
-				paddr = alloc_upages(1);
-				if (paddr == 0) {
+				paddr = find_upage_for_entry(as->pages, VM_PIN_PAGE);
+				if (paddr == 0) { // TODO: swap out!
 					return ENOMEM;
 				}
 				as->pages->paddr = paddr;
@@ -316,10 +410,11 @@ int as_prepare_load(struct addrspace *as) {
 				for (pages=as->pages; pages->next!=NULL; pages=pages->next); // get last page
 				pages->next = (struct page_table_entry *)kmalloc(sizeof(*pages));
 				pages->next->vaddr = vaddr;
+				pages->next->as = as;
 				pages->next->permissions = regionlst->permissions;
 				pages->next->next = NULL;
 				pages->next->page_entry_type = PAGE_ENTRY_TYPE_EXEC;
-				paddr = alloc_upages(1);
+				paddr = find_upage_for_entry(pages->next, VM_PIN_PAGE);
 				if (paddr == 0){
 					return ENOMEM;
 				}
@@ -332,26 +427,33 @@ int as_prepare_load(struct addrspace *as) {
 		regionlst = regionlst->next;
 	}
 
-	// New Code
 	vaddr_t stackvaddr = USERSTACK - VM_STACKPAGES * PAGE_SIZE;
-	for (pages=as->pages;pages->next!=NULL;pages=pages->next);
-	for (int i=0; i<VM_STACKPAGES; i++){
-		struct page_table_entry *stack = (struct page_table_entry *)kmalloc(sizeof(*pages));
+	if (as->pages) {
+		for (pages=as->pages; pages->next!=NULL; pages=pages->next);
+	}
+	for (int i=0; i<VM_STACKPAGES; i++) {
+		struct page_table_entry *stack = (struct page_table_entry *)kmalloc(sizeof(*stack));
 		stack->page_entry_type = PAGE_ENTRY_TYPE_STACK;
 		stack->permissions = PF_R|PF_W;
-		pages->next = stack;
+		stack->as = as;
+		if (pages) {
+			pages->next = stack;
+		}
 		if (i==0) {
 			as->stack = stack; // bottom of stack
+			if (as->pages == NULL) {
+				as->pages = stack;
+			}
 		}
 		stack->vaddr = stackvaddr;
 		stack->next = NULL;
-		paddr = alloc_upages(1);
+		paddr = find_upage_for_entry(stack, VM_PIN_PAGE);
 		if (paddr == 0) {
 			return ENOMEM;
 		}
 		stack->paddr = paddr;
 		stackvaddr = stackvaddr + PAGE_SIZE;
-		pages = pages->next;
+		pages = stack;
 	}
 
 	// start with 1 heap page, can be added to with sbrk() user syscall
@@ -359,8 +461,9 @@ int as_prepare_load(struct addrspace *as) {
 	pages->next = heap_page;
 	heap_page->next = NULL;
 	heap_page->page_entry_type = PAGE_ENTRY_TYPE_HEAP;
+	heap_page->as = as;
 
-	paddr = alloc_upages(1);
+	paddr = find_upage_for_entry(heap_page, VM_PIN_PAGE);
 	if (paddr == 0) {
 		return ENOMEM;
 	}
@@ -388,13 +491,15 @@ static vaddr_t as_stackbottom(struct addrspace *as) {
 
 static void dealloc_page_entries(struct page_table_entry *pte) {
 	struct page_table_entry *last;
+	lock_pagetable();
 	while (pte) {
 		DEBUGASSERT(pte->paddr > 0);
-		free_upages(pte->paddr);
+		free_upages(pte->paddr, false);
 		last = pte;
 		pte = pte->next;
 		kfree(last);
 	}
+	unlock_pagetable();
 }
 
 int as_growheap(struct addrspace *as, size_t bytes) {
@@ -416,10 +521,11 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 			first_heap_pte = pte; // to free allocated pages if we get an error
 		}
 		pte->vaddr = vaddr;
-		paddr_t paddr = alloc_upages(1);
+		paddr_t paddr = find_upage_for_entry(pte, VM_PIN_PAGE);
 		if (paddr == 0) {
 			goto nomem;
 		}
+		pte->as = as;
 		pte->paddr = paddr;
 		pte->permissions = PF_R|PF_W;
 		pte->page_entry_type = PAGE_ENTRY_TYPE_HEAP;
@@ -470,6 +576,15 @@ int as_complete_load(struct addrspace *as) {
 		pte->last_fault_access = 0;
 		pte->swap_offset = 0;
 		pte->num_swaps = 0;
+		pte->page_age = 0;
+		pte->as = as;
+		pte->debug_name = as->name; // shares same mem as address space
+		if (pte->coremap_idx > 0 && pte->page_entry_type != PAGE_ENTRY_TYPE_STACK) {
+			// entries are pinned in as_prepare_load so as not to be swapped out before the process starts
+			vm_unpin_page_entry(pte);
+		}
+		pte->tlb_idx = -1; // set during vm_fault, and used for doing TLB shootdowns and tlb_invalidation when we swap pages
+		pte->cpu_idx = curcpu->c_number; // same as above
 		pte = pte->next;
 	}
 	return 0;
@@ -479,48 +594,86 @@ int as_complete_load(struct addrspace *as) {
 // 	return true;
 // }
 
-const char *swapfilefmt = "swapfile%d.dat";
+int as_swapout(struct addrspace *as) {
+	//if (!vm_can_sleep()) return -1;
+	struct page_table_entry *pte = as->pages;
+	while (pte) {
+		pte_swapout(as, pte, true);
+		pte = pte->next;
+	}
+	return 0;
+}
+
+int as_swapin(struct addrspace *as) {
+	if (!vm_can_sleep()) return -1;
+	struct page_table_entry *pte = as->pages;
+	while (pte) {
+		pte_swapin(as, pte, NULL);
+		pte = pte->next;
+	}
+	return 0;
+}
+
+const char *swapfilefmt = "swapfile%d-%d.dat";
 
 int pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fill_mem) {
-	(void)as;
 	if (!vm_can_sleep()) return -1;
+	if (pte->is_swapped) {
+		DEBUG(DB_VM, "Page entry already swapped\n");
+		return 0;
+	}
 	int spl = spl0();
-	int pid = (int)curproc->pid;
+	int pid = (int)as->pid;
 	off_t write_offset = pte->swap_offset;
 	bool append_offset = false;
 	int openflags = O_WRONLY|O_CREAT;
 	if (pte->num_swaps == 0) {
 		write_offset = 0;
 		append_offset = true;
-		openflags |= O_APPEND;
 	}
 	char swapfname[30];
-	snprintf(swapfname, 30, swapfilefmt, pid);
+	bzero(swapfname, 30);
+	snprintf(swapfname, 30, swapfilefmt, pid, as->id);
+	char *swapfnamecopy = kstrdup(swapfname); // vfs_open munges our data!
 
 	struct uio myuio;
 	struct iovec iov;
-	char buf[PAGE_SIZE];
+	char *buf = kmalloc(PAGE_SIZE); // NOTE: can't use stack for some reason, need to figure out why
 	memcpy(buf, (void*)PADDR_TO_KVADDR(pte->paddr), PAGE_SIZE);
 	struct vnode *node;
-	int result = vfs_open(swapfname, openflags, 0644, &node);
+	DEBUG(DB_VM, "Opening file for swap: %s\n", swapfname);
+	int result = vfs_open(swapfnamecopy, openflags, 0644, &node);
 	if (result != 0) {
+		DEBUG(DB_VM, "Failed to open file for swap\n");
+		kfree(swapfnamecopy);
+		kfree(buf);
 		splx(spl);
 		return result;
 	}
-	struct stat st;
-	result = VOP_STAT(node, &st); // fills out stat struct
-	if (result != 0) {
-		splx(spl);
-		return 0;
-	}
-	off_t prev_filesize = st.st_size;
+
 	if (append_offset) {
-		write_offset = prev_filesize;
+		struct stat st;
+		result = VOP_STAT(node, &st); // fills out stat struct
+		if (result != 0) {
+			DEBUG(DB_VM, "Failed to stat file for swap\n");
+			kfree(swapfnamecopy);
+			kfree(buf);
+			splx(spl);
+			return result;
+		}
+		off_t prev_filesize = st.st_size;
+		if (append_offset) {
+			write_offset = prev_filesize;
+		}
 	}
+
 	DEBUG(DB_VM, "Swapping out page entry to file %s, offset: %lld\n", swapfname, write_offset);
 	uio_kinit(&iov, &myuio, buf, PAGE_SIZE, write_offset, UIO_WRITE);
 	result = VOP_WRITE(node, &myuio);
 	if (result != 0) {
+		DEBUG(DB_VM, "Failed to write file for swap\n");
+		kfree(swapfnamecopy);
+		kfree(buf);
 		splx(spl);
 		return result;
 	}
@@ -533,14 +686,16 @@ int pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fi
 	pte->num_swaps++;
 	DEBUG(DB_VM, "Done swapping out\n");
 	vfs_close(node);
+	kfree(swapfnamecopy);
+	kfree(buf);
 	splx(spl);
 	return 0;
 }
 
 int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page **into_page) {
-	(void)as;
 	(void)into_page;
 	if (!vm_can_sleep()) return -1;
+	if (!pte->is_swapped) { return 0; }
 	int spl = spl0();
 	int pid = (int)curproc->pid;
 	off_t read_offset = pte->swap_offset;
@@ -548,7 +703,7 @@ int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page *
 	DEBUGASSERT(pte->num_swaps > 0);
 	int openflags = O_RDONLY;
 	char swapfname[30];
-	snprintf(swapfname, 30, swapfilefmt, pid);
+	snprintf(swapfname, 30, swapfilefmt, pid, as->id);
 	DEBUG(DB_VM, "Swapping in page entry from file %s, offset: %lld\n", swapfname, read_offset);
 	struct uio myuio;
 	struct iovec iov;

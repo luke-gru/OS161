@@ -61,6 +61,7 @@
  * The process for the kernel; this holds all the kernel-only threads.
  */
 struct proc *kproc;
+struct proc *kswapproc;
 
 const char *special_filedes_name(int i) {
 	switch (i) {
@@ -427,7 +428,7 @@ int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode
 /*
  * Create a proc structure with empty address space and file table.
  */
-static struct proc *proc_create(const char *name) {
+struct proc *proc_create(const char *name) {
 	struct proc *proc;
 
 	proc = kmalloc(sizeof(*proc));
@@ -476,6 +477,7 @@ void proc_destroy(struct proc *proc) {
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
 	KASSERT(proc != curproc);
+	KASSERT(proc != kswapproc);
 
 	/*
 	 * We don't take p_lock in here because we must have the only
@@ -890,6 +892,7 @@ struct addrspace *proc_setas(struct addrspace *newas) {
 	spinlock_acquire(&p->p_lock);
 	oldas = p->p_addrspace;
 	p->p_addrspace = newas;
+	newas->pid = p->pid;
 	spinlock_release(&p->p_lock);
 	return oldas;
 }

@@ -45,9 +45,11 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
   }
   struct iovec iov;
   struct uio myuio;
+  // vm_pin_region(buf, buf + count);
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_READ);
   int errcode = 0;
   int bytes_read = file_read(file_des, &myuio, &errcode);
+  // vm_unpin_region(buf, buf + count);
   if (bytes_read < 0) {
     DEBUG(DB_SYSCALL, "sys_read for fd %d failed with error: %d, %s\n", fd, errcode, strerror(errcode));
     *retval = -1;

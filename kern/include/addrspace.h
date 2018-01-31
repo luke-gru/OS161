@@ -42,6 +42,8 @@
 struct vnode;
 struct page;
 
+unsigned long last_addrspace_id;
+
 enum page_entry_type {
   PAGE_ENTRY_TYPE_EXEC = 1, // page for memory loaded from executable
   PAGE_ENTRY_TYPE_STACK = 2, // page for user stack
@@ -49,16 +51,24 @@ enum page_entry_type {
 };
 
 struct page_table_entry {
+  struct addrspace *as;
+  char *debug_name;
 	vaddr_t vaddr;
 	paddr_t paddr;
 	int permissions;
   enum page_entry_type page_entry_type;
   bool is_swapped;
   // Dirty means the contents of the page are different from the saved contents on disk
+  // TODO: in vm_fault, set all TLB entries to read-only initially, then a write gets a
+  // fault and we mark it as dirty and continue.
   bool is_dirty;
   int32_t last_fault_access; // timestamp
-  off_t swap_offset;
-  unsigned long num_swaps; // number of times swapped out
+  off_t swap_offset; // byte offset into swap file
+  unsigned long num_swaps; // number of times this page entry was swapped out
+  long coremap_idx;
+  unsigned short page_age; // 0-VM_PAGE_AGE_MAX, age is incremented every kswapd loop
+  short tlb_idx;
+  short cpu_idx; // CPU tlb index
 
 	struct page_table_entry *next;
 	struct page_table_entry *last;
@@ -92,6 +102,8 @@ struct addrspace {
         paddr_t as_stackpbase;
 #else
         char *name; // used for debugging purposes
+        unsigned long id; // address space ID
+        pid_t pid;        // process ID of address space
         struct page_table_entry *pages; // all pages in address space (including stack, heap and data and executable)
         struct page_table_entry *heap; // beginning of heap (bottom address, heap grows up)
         struct page_table_entry *stack; // top of stack (bottom address, stack grows down)
@@ -99,9 +111,10 @@ struct addrspace {
         vaddr_t heap_start;
         vaddr_t heap_end;
         struct spinlock spinlock;
-        time_t last_activation;
+        time_t last_activation; // last time that this address space began its time slice
         bool destroying;
-        bool is_active;
+        bool is_active; // Doesn't mean it's currently running, just that it ran at least one time slice
+        short running_cpu_idx; // If the address space is currently running, this is the cpu idx (0-3) of the CPU
 #endif
 };
 
@@ -163,10 +176,18 @@ int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
 
 vaddr_t           as_heapend(struct addrspace *as);
 int               as_growheap(struct addrspace *as, size_t bytes);
+
 bool              pte_can_handle_fault_type(struct page_table_entry *pte, int faulttype);
 void              as_touch_pte(struct page_table_entry *pte);
+int               as_swapout(struct addrspace *as);
+int               as_swapin(struct addrspace *as);
 int               pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fill_mem);
 int               pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page **into_page);
+void              as_debug(struct addrspace *as);
+void              as_lock_all(void);
+void              as_unlock_all(void);
+bool              as_is_destroyed(struct addrspace *as);
+int               as_num_pages(struct addrspace *as);
 
 
 /*

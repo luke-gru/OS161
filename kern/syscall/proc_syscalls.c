@@ -84,7 +84,8 @@ int sys_fork(struct trapframe *tf, int *retval) {
 int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *retval) {
   int err = 0; // should be set below
   (void)options;
-  DEBUG(DB_SYSCALL, "Pprocess %d waiting for %d\n", (int)curproc->pid, (int)child_pid);
+  DEBUG(DB_SYSCALL, "process %d waiting for %d\n", (int)curproc->pid, (int)child_pid);
+  // vm_pin_region(exitstatus_buf, exitstatus_buf + sizeof(int));
   int result = proc_waitpid_sleep(child_pid, &err);
   if (result == -1) {
     KASSERT(err > 0);
@@ -100,6 +101,7 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
   );
 
   copyout((const void*)&waitstatus, exitstatus_buf, sizeof(int));
+  // vm_unpin_region(exitstatus_buf, exitstatus_buf + sizeof(int));
   *retval = 0;
   return 0;
 }

@@ -70,7 +70,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   }
   // disable interrupts during writes to avoid race conditions writing to the same file
   int spl = splhigh();
-
+  // vm_pin_region(buf, buf + count);
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
   if (is_console) {
     if (dolock) {
@@ -81,6 +81,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   }
 
   int res = file_write(file_des, &myuio, &errcode); // releases filedes lock
+  // vm_unpin_region(buf, buf + count);
   splx(spl);
   if (res == -1) {
     if (is_console) {

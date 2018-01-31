@@ -106,7 +106,7 @@ pid_bootstrap(void)
 		panic("Out of memory creating bootup pid for kernel process\n");
 	}
 
-	nextpid = PID_MIN;
+	nextpid = USERPID_MIN;
 	nprocs = 1;
 }
 
@@ -174,7 +174,7 @@ static void inc_nextpid(void) {
 
 	nextpid++;
 	if (nextpid > PID_MAX) {
-		nextpid = PID_MIN;
+		nextpid = USERPID_MIN;
 	}
 }
 
@@ -260,7 +260,7 @@ void pid_unalloc(pid_t theirpid) {
 void pid_disown(pid_t theirpid) {
 	struct pidinfo *them;
 
-	KASSERT(theirpid >= PID_MIN && theirpid <= PID_MAX);
+	KASSERT(theirpid >= USERPID_MIN && theirpid <= PID_MAX);
 
 	lock_acquire(pidlock);
 
@@ -386,5 +386,5 @@ bool is_valid_pid(pid_t pid) {
 }
 
 bool is_valid_user_pid(pid_t pid) {
-	return pid > BOOTUP_PID && pid <= PID_MAX;
+	return pid >= USERPID_MIN && pid <= PID_MAX;
 }

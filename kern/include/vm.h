@@ -48,6 +48,9 @@ struct addrspace;
 
 #define VM_STACKPAGES    12
 
+#define VM_PIN_PAGE 1
+#define VM_PAGE_AGE_MAX 100
+
 enum page_t {
   PAGETYPE_KERN = 1,
   PAGETYPE_USER
@@ -60,11 +63,15 @@ enum pagestate_t {
 
 /* Initialization function */
 void vm_bootstrap(void);
-paddr_t getppages(unsigned long npages, enum page_t pagetype);
+void kswapd_bootstrap(void);
+void kswapd_start(void *data1, unsigned long data2);
+paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *coremap_idx, bool dolock);
 // returns number of free physical memory pages
 unsigned long corefree(void);
 // returns total number of physical memory pages
 unsigned long coretotal(void);
+void lock_pagetable(void);
+void unlock_pagetable(void);
 /*
  * Return amount of memory (in bytes) used by allocated coremap pages. If
  * there are ongoing allocations, this value could change after it is returned
@@ -75,20 +82,28 @@ unsigned long coremap_used_bytes(void);
 struct page {
     vaddr_t va;
     paddr_t pa;
+    struct page_table_entry *entry;
     int partofpage; // is used for de-allocation of blocks of pages
     bool contained;
     enum pagestate_t state;
     bool is_kern_page;
+    // some RAM needs to be pinned, which means it isn't swappable. For instance,
+    // if we're reading from a userptr buffer in one process, and get context switched,
+    // we can't evict that userptr buffer page.
+    bool is_pinned;
 };
+
+struct page *coremap;
 
 /* Fault handling function called by trap code */
 int vm_fault(int faulttype, vaddr_t faultaddress);
 
 /* Allocate/free kernel heap pages (called by kmalloc/kfree) */
 vaddr_t alloc_kpages(int npages);
-vaddr_t alloc_upages(int npages);
+paddr_t alloc_upages(int npages, unsigned long *coremap_idx, bool dolock);
+paddr_t find_upage_for_entry(struct page_table_entry *pte, int page_flags);
 void free_kpages(vaddr_t addr);
-void free_upages(vaddr_t addr);
+void free_upages(paddr_t addr, bool dolock);
 
 
 
@@ -96,6 +111,7 @@ void free_upages(vaddr_t addr);
 void vm_tlbshootdown(const struct tlbshootdown *);
 void vm_tlbshootdown_all(void);
 bool vm_can_sleep(void);
+void vm_unpin_page_entry(struct page_table_entry *entry);
 
 
 #endif /* _VM_H_ */
