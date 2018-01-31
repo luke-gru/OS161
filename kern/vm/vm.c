@@ -146,12 +146,17 @@ static void kswapd_swapout_pages() {
     if (coremap[i].entry->page_entry_type == PAGE_ENTRY_TYPE_HEAP) {
       struct page_table_entry *pte = coremap[i].entry;
       char *name = pte->debug_name;
-      if (pte->is_swapped) {
+      if (pte->is_swapped || pte->swap_errors > 10) {
         continue;
       }
       DEBUG(DB_VM, "\nswapping out pages for %s\n", name);
-      KASSERT(pte_swapout(pte->as, pte, false) == 0);
-      // NOTE: only invalidate the TLB if the address space is currently running
+      int swap_res;
+      swap_res = pte_swapout(pte->as, pte, false);
+      if (swap_res != 0) {
+        pte->swap_errors++;
+        continue;
+      }
+      // NOTE: only invalidate the TLB if the process for this address space is currently running
       if (pte->as->running_cpu_idx > 0) {
         if (pte->tlb_idx >= 0 && pte->tlb_idx < NUM_TLB) {
           if (pte->cpu_idx == (short)curcpu->c_number) {
@@ -159,13 +164,14 @@ static void kswapd_swapout_pages() {
             tlb_write(TLBHI_INVALID(pte->tlb_idx), TLBLO_INVALID(), pte->tlb_idx);
             memset((void*)PADDR_TO_KVADDR(pte->paddr), 0, PAGE_SIZE);
           } else {
-            panic("needs TLB shootdown");
+            // TODO: needs TLB shootdown
           }
         }
       }
-
+      lock_pagetable();
       coremap[i].state = PAGESTATE_FREE;
       coremap[i].entry = NULL;
+      unlock_pagetable();
       break;
     }
   }
@@ -180,12 +186,14 @@ void kswapd_start(void *_data1, unsigned long _data2) {
 	(void)_data2;
 	while (1) {
 		clocksleep(3);
+
     lock_pagetable();
     kswapd_age_pages();
-
     unlock_pagetable();
+
     kswapd_swapout_pages();
     kswapd_swapin_async_pages();
+
     thread_yield();
 	}
 }

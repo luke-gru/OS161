@@ -73,6 +73,7 @@ struct page_table_entry {
   short tlb_idx; // TLB index if it's resident in memory and hit the TLB, -1 if not. Invalidated every
   // activation of the thread (quantum)
   short cpu_idx; // CPU index for TLB entry (0-3)
+  short swap_errors; // number of errors trying to swap
 
 	struct page_table_entry *next;
 	struct page_table_entry *last;

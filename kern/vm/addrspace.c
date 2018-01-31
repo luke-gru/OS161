@@ -261,7 +261,7 @@ void as_destroy(struct addrspace *as) {
 	while (pte) {
 		if (pte->coremap_idx > 0) {
 			struct page *core = &coremap[pte->coremap_idx];
-			DEBUGASSERT(core->entry == pte);
+			//DEBUGASSERT(core->entry == pte);
 			free_upages(pte->paddr, false);
 			DEBUGASSERT(pte->coremap_idx == 0);
 			DEBUGASSERT(core->entry == NULL);
@@ -276,13 +276,6 @@ void as_destroy(struct addrspace *as) {
 	kfree(as);
 	unlock_pagetable();
 }
-
-//static
-//void
-//as_zero_region(paddr_t paddr, unsigned npages)
-//{
-//	bzero((void *)PADDR_TO_KVADDR(paddr), npages * PAGE_SIZE);
-//}
 
 void as_activate(void) {
 	int i, spl;
@@ -575,6 +568,7 @@ int as_complete_load(struct addrspace *as) {
 		pte->swap_offset = 0;
 		pte->num_swaps = 0;
 		pte->page_age = 0;
+		pte->swap_errors = 0;
 		pte->as = as;
 		pte->debug_name = as->name; // shares same mem as address space
 		if (pte->coremap_idx > 0 && pte->page_entry_type != PAGE_ENTRY_TYPE_STACK) {
@@ -593,7 +587,7 @@ int as_complete_load(struct addrspace *as) {
 // }
 
 int as_swapout(struct addrspace *as) {
-	//if (!vm_can_sleep()) return -1;
+	if (!vm_can_sleep()) return -1;
 	struct page_table_entry *pte = as->pages;
 	while (pte) {
 		pte_swapout(as, pte, true);
@@ -682,6 +676,7 @@ int pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fi
 	pte->swap_offset = write_offset;
 	pte->is_dirty = false;
 	pte->num_swaps++;
+	pte->swap_errors = 0;
 	DEBUG(DB_VM, "Done swapping out\n");
 	vfs_close(node);
 	kfree(swapfnamecopy);
@@ -695,26 +690,32 @@ int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page *
 	if (!vm_can_sleep()) return -1;
 	if (!pte->is_swapped) { return 0; }
 	int spl = spl0();
-	int pid = (int)curproc->pid;
+	int pid = (int)as->pid;
 	off_t read_offset = pte->swap_offset;
-	DEBUGASSERT(read_offset > 0);
+	DEBUGASSERT(read_offset >= 0);
 	DEBUGASSERT(pte->num_swaps > 0);
 	int openflags = O_RDONLY;
 	char swapfname[30];
+	bzero(swapfname, 30);
 	snprintf(swapfname, 30, swapfilefmt, pid, as->id);
+	char *swapfnamecopy = kstrdup(swapfname);
 	DEBUG(DB_VM, "Swapping in page entry from file %s, offset: %lld\n", swapfname, read_offset);
 	struct uio myuio;
 	struct iovec iov;
-	char buf[PAGE_SIZE];
+	char *buf = kmalloc(PAGE_SIZE);
 	uio_kinit(&iov, &myuio, buf, PAGE_SIZE, read_offset, UIO_READ);
 	struct vnode *node;
-	int result = vfs_open(swapfname, openflags, 0644, &node);
+	int result = vfs_open(swapfnamecopy, openflags, 0644, &node);
 	if (result != 0) {
+		kfree(buf);
+		kfree(swapfnamecopy);
 		splx(spl);
 		return result;
 	}
 	result = VOP_READ(node, &myuio);
 	if (result != 0) {
+		kfree(buf);
+		kfree(swapfnamecopy);
 		splx(spl);
 		return result;
 	}
@@ -723,6 +724,8 @@ int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page *
 	pte->is_dirty = false;
 	DEBUG(DB_VM, "Done swapping in\n");
 	vfs_close(node);
+	kfree(buf);
+	kfree(swapfnamecopy);
 	splx(spl);
 	return 0;
 }
