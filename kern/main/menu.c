@@ -70,10 +70,6 @@
  * Function for a thread that runs an arbitrary userlevel program by
  * name.
  *
- * Note: this cannot pass arguments to the program. You may wish to
- * change it so it can, because that will make testing much easier
- * in the future.
- *
  * It copies the program name because runprogram destroys the copy
  * it gets by passing it to vfs_open().
  */
@@ -97,8 +93,7 @@ cmd_progthread(void *ptr, unsigned long nargs)
 		kprintf("Running program %s failed: %s\n", args[0], strerror(result));
 		return;
 	}
-
-	/* NOTREACHED: runprogram only returns on error. */
+	panic("NOTREACHED");
 }
 
 /*
@@ -961,7 +956,7 @@ menu_execute(char *line, int isargs)
 void
 menu(char *args)
 {
-	dbflags = DB_NET;
+	dbflags = DB_VM;
 	kswapproc->p_cwd = kproc->p_cwd; // necessary for opening swap file
 	char buf[64];
 	menu_execute(args, 1);

@@ -147,7 +147,7 @@ static void kswapd_swapout_pages() {
     if (coremap[i].entry->page_entry_type == PAGE_ENTRY_TYPE_HEAP) {
       struct page_table_entry *pte = coremap[i].entry;
       char *name = pte->debug_name;
-      if (pte->is_swapped) {
+      if (pte->is_swapped || pte->page_age < 3) {
         continue;
       }
       DEBUG(DB_VM, "\nswapping out pages for %s\n", name);
@@ -157,15 +157,15 @@ static void kswapd_swapout_pages() {
 				DEBUG(DB_VM, "Swap error: %d\n", swap_res);
         continue;
       }
-			continue; // TODO:
       // NOTE: only invalidate the TLB if the process for this address space is currently running
-      if (pte->as->running_cpu_idx > 0) {
+      if (pte->as->running_cpu_idx >= 0) {
         if (pte->tlb_idx >= 0 && pte->tlb_idx < NUM_TLB) {
           if (pte->cpu_idx == (short)curcpu->c_number) {
             DEBUG(DB_VM, "Invalidating page entry in TLB, zeroing memory\n");
             tlb_write(TLBHI_INVALID(pte->tlb_idx), TLBLO_INVALID(), pte->tlb_idx);
             memset((void*)PADDR_TO_KVADDR(pte->paddr), 0, PAGE_SIZE);
           } else {
+						DEBUG(DB_VM, "TODO: implement TLB shootdown\n");
             // TODO: needs TLB shootdown
           }
         }
@@ -463,6 +463,19 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	if (paddr == 0) {
 		panic("unhandled fault");
 		return EFAULT;
+	}
+
+	lock_pagetable();
+	if (pte && pte->is_swapped) {
+		unlock_pagetable();
+		int swap_res = pte_swapin(pte->as, pte, NULL);
+		if (swap_res != 0) {
+			panic("swapin failed!");
+			return EFAULT;
+		}
+		KASSERT(!pte->is_swapped);
+	} else {
+		unlock_pagetable();
 	}
 
   DEBUGASSERT(pte != NULL);

@@ -170,9 +170,7 @@ thread_create(const char *name)
 	thread->t_iplhigh_count = 1; /* corresponding to t_curspl */
 
 	/* If you add to struct thread, be sure to initialize here */
-	thread->t_tf = NULL;
 	thread->t_pid = INVALID_PID;
-	thread->just_forked = false;
 
 	return thread;
 }
@@ -300,10 +298,6 @@ thread_destroy(struct thread *thread)
 	if (thread->t_stack != NULL) {
 		kfree(thread->t_stack);
 		thread->t_stack = NULL;
-	}
-	if (thread->t_tf != NULL) {
-		//kfree(thread->t_tf); FIXME: was giving invalid page size alignment issues when freeing
-		//thread->t_tf = NULL;
 	}
 	if (thread->t_context != NULL) {
 		thread->t_context = NULL; // switchframe points into stack, so is already freed above

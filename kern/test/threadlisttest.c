@@ -119,7 +119,7 @@ threadlisttest_a(void)
 {
 	struct threadlist tl;
 
-	threadlist_init(&tl);
+	threadlist_init(&tl, "tl a");
 	KASSERT(threadlist_isempty(&tl));
 	threadlist_cleanup(&tl);
 }
@@ -131,7 +131,7 @@ threadlisttest_b(void)
 	struct threadlist tl;
 	struct thread *t;
 
-	threadlist_init(&tl);
+	threadlist_init(&tl, "tl b");
 
 	threadlist_addhead(&tl, fakethreads[0]);
 	check_order(&tl, false);
@@ -159,7 +159,7 @@ threadlisttest_c(void)
 	struct threadlist tl;
 	struct thread *t;
 
-	threadlist_init(&tl);
+	threadlist_init(&tl, "tl c");
 
 	threadlist_addhead(&tl, fakethreads[0]);
 	threadlist_addhead(&tl, fakethreads[1]);
@@ -195,7 +195,7 @@ threadlisttest_d(void)
 	struct threadlist tl;
 	struct thread *t;
 
-	threadlist_init(&tl);
+	threadlist_init(&tl, "tl d");
 
 	threadlist_addhead(&tl, fakethreads[0]);
 	threadlist_addtail(&tl, fakethreads[1]);
@@ -232,7 +232,7 @@ threadlisttest_e(void)
 	struct thread *t;
 	unsigned i;
 
-	threadlist_init(&tl);
+	threadlist_init(&tl, "tl e");
 
 	threadlist_addhead(&tl, fakethreads[1]);
 	threadlist_addtail(&tl, fakethreads[3]);
@@ -277,7 +277,7 @@ threadlisttest_f(void)
 	struct thread *t;
 	unsigned i;
 
-	threadlist_init(&tl);
+	threadlist_init(&tl, "tl f");
 
 	for (i=0; i<NUMNAMES; i++) {
 		threadlist_addtail(&tl, fakethreads[i]);

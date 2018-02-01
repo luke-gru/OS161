@@ -96,8 +96,6 @@ struct thread {
 	struct switchframe *t_context;	/* Saved register context from context switch (on stack) */
 	struct cpu *t_cpu;		/* CPU thread runs on */
 	struct proc *t_proc;		/* Process thread belongs to */
-	struct trapframe *t_tf; /* most recent trap frame for thread */
-	volatile bool just_forked;
 	time_t wakeup_at; /* for timed wakeup */
 	pid_t t_pid; /* Same as t_proc->pid, but proc might be destroyed before thread is cleaned up, so we store it here too */
 	HANGMAN_ACTOR(t_hangman);	/* Deadlock detector hook */

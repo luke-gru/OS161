@@ -44,14 +44,14 @@
 #include <vnode.h>
 #include <kern/stat.h>
 
-static struct spinlock addrspace_g_lock = SPINLOCK_INITIALIZER;
+static time_t as_timestamp(void) {
+	struct timespec tv;
+	gettime(&tv);
+	return tv.tv_sec;
+}
 
-static unsigned long alloc_addrspace_id() {
-	unsigned long as_id;
-	spinlock_acquire(&addrspace_g_lock);
-	as_id = ++last_addrspace_id;
-	spinlock_release(&addrspace_g_lock);
-	return as_id;
+static unsigned long new_addrspace_id() {
+	return (unsigned long)random();
 }
 
 struct addrspace *as_create(char *name) {
@@ -62,7 +62,7 @@ struct addrspace *as_create(char *name) {
 		return NULL;
 	}
 	as->name = kstrdup(name);
-	as->id = alloc_addrspace_id();
+	as->id = new_addrspace_id();
 	as->pid = 0;
 	as->pages = NULL;
 	as->regions = NULL;
@@ -128,12 +128,6 @@ static int as_num_regions(struct addrspace *as) {
 		region = region->next;
 	}
 	return i;
-}
-
-static time_t as_timestamp(void) {
-	struct timespec tv;
-	gettime(&tv);
-	return tv.tv_sec;
 }
 
 bool as_is_destroyed(struct addrspace *as) {
@@ -239,14 +233,6 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 
 	*ret = new;
 	return 0;
-}
-
-void as_lock_all(void) {
-	spinlock_acquire(&addrspace_g_lock);
-}
-
-void as_unlock_all(void) {
-	spinlock_release(&addrspace_g_lock);
 }
 
 void as_destroy(struct addrspace *as) {
@@ -636,14 +622,22 @@ int as_swapin(struct addrspace *as) {
 	return 0;
 }
 
-const char *swapfilefmt = "swapfile%d-%d.dat";
+const char *swapfilefmt = "swapfile%d-%lu.dat";
 
 int pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fill_mem) {
-	if (!vm_can_sleep()) return -1;
 	if (pte->is_swapped) {
 		DEBUG(DB_VM, "Page entry already swapped\n");
+		return -1;
+	}
+	if (!pte->is_dirty) {
+		DEBUGASSERT(pte->num_swaps > 0);
+		if (zero_fill_mem) {
+			memset((void*)PADDR_TO_KVADDR(pte->paddr), 0, PAGE_SIZE);
+		}
+		pte->is_swapped = true;
 		return 0;
 	}
+	if (!vm_can_sleep()) return -1;
 	int spl = spl0();
 	int pid = (int)as->pid;
 	off_t write_offset = pte->swap_offset;
@@ -717,7 +711,7 @@ int pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fi
 int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page **into_page) {
 	(void)into_page;
 	if (!vm_can_sleep()) return -1;
-	if (!pte->is_swapped) { return 0; }
+	if (!pte->is_swapped) { return -1; }
 	int spl = spl0();
 	int pid = (int)as->pid;
 	off_t read_offset = pte->swap_offset;
@@ -748,9 +742,22 @@ int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page *
 		splx(spl);
 		return result;
 	}
+	// get page
+	paddr_t paddr = find_upage_for_entry(pte, 0, true);
+	if (paddr == 0) {
+		kfree(buf);
+		kfree(swapfnamecopy);
+		splx(spl);
+		return ENOMEM;
+	}
+	if (into_page != NULL) {
+		*into_page = &coremap[pte->coremap_idx];
+	}
+	pte->paddr = paddr;
 	memcpy((void*)PADDR_TO_KVADDR(pte->paddr), buf, PAGE_SIZE);
 	pte->is_swapped = false;
 	pte->is_dirty = false;
+	pte->page_age = 0;
 	DEBUG(DB_VM, "Done swapping in\n");
 	vfs_close(node);
 	kfree(buf);
