@@ -32,6 +32,8 @@
 #include <array.h>
 #include <test.h>
 
+#include <clock.h>
+
 #define TESTSIZE 73
 #define BIGTESTSIZE 3000  /* more than one page of pointers */
 #define NTH(i) ((void *)(0xb007 + 3*(i)))
@@ -127,6 +129,11 @@ arraytest(int nargs, char **args)
 
 	(void)nargs;
 	(void)args;
+
+	struct timespec tv;
+	gettime(&tv);
+	kprintf("tv_sec: %d\n", (int)tv.tv_sec);
+	return 0;
 
 	kprintf("Beginning array test...\n");
 	a = array_create();

@@ -101,7 +101,7 @@ int vm_fault(int faulttype, vaddr_t faultaddress);
 /* Allocate/free kernel heap pages (called by kmalloc/kfree) */
 vaddr_t alloc_kpages(int npages);
 paddr_t alloc_upages(int npages, unsigned long *coremap_idx, bool dolock);
-paddr_t find_upage_for_entry(struct page_table_entry *pte, int page_flags);
+paddr_t find_upage_for_entry(struct page_table_entry *pte, int page_flags, bool dolock);
 void free_kpages(vaddr_t addr);
 void free_upages(paddr_t addr, bool dolock);
 

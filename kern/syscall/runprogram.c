@@ -240,9 +240,12 @@ int runprogram(char *progname, char **args, int nargs) {
 		panic("Can't run runprogram on the kernel itself!");
 	}
 
+	char *prognamecpy = kstrdup(progname);
+
 	/* Open the file. */
-	result = vfs_open(progname, O_RDONLY, 0, &v);
+	result = vfs_open(prognamecpy, O_RDONLY, 0, &v);
 	if (result != 0) {
+		kfree(prognamecpy);
 		return result;
 	}
 
@@ -253,6 +256,7 @@ int runprogram(char *progname, char **args, int nargs) {
 	as = as_create(progname);
 	if (as == NULL) {
 		vfs_close(v);
+		kfree(prognamecpy);
 		return ENOMEM;
 	}
 
@@ -265,6 +269,7 @@ int runprogram(char *progname, char **args, int nargs) {
 	if (result != 0) {
 		/* p_addrspace will go away when curproc is destroyed */
 		vfs_close(v);
+		kfree(prognamecpy);
 		return result;
 	}
 
@@ -275,6 +280,7 @@ int runprogram(char *progname, char **args, int nargs) {
 	result = as_define_stack(as, &stackptr);
 	if (result != 0) {
 		/* p_addrspace will go away when curproc is destroyed */
+		kfree(prognamecpy);
 		return result;
 	}
 
@@ -285,13 +291,16 @@ int runprogram(char *progname, char **args, int nargs) {
 	if (copyout_args(argdata, &userspace_argv_ary, &stackptr) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args into user process\n");
 		argvdata_destroy(argdata);
+		kfree(prognamecpy);
 		return -1;
 	}
 	argvdata_destroy(argdata);
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
+		kfree(prognamecpy);
 		return pre_exec_res;
 	}
+	kfree(prognamecpy);
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
 			  NULL /*userspace addr of environment*/,
@@ -315,7 +324,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	vaddr_t entrypoint, stackptr;
 	int result;
 
-	if (curproc == kproc) {
+	if (curproc == kproc || curproc == kswapproc) {
 		panic("Can't run runprogram_uspace (execv) on the kernel itself!");
 	}
 

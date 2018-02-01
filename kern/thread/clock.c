@@ -83,6 +83,7 @@ timerclock(void)
 	spinlock_acquire(&lbolt_lock);
 	wchan_wakeall(lbolt, &lbolt_lock);
 	spinlock_release(&lbolt_lock);
+	thread_add_ready_sleepers_to_runqueue();
 }
 
 /*
@@ -108,6 +109,7 @@ hardclock(void)
 
 /*
  * Suspend execution for n seconds.
+ * NOTE: this causes more context switches than necessary. See thread_sleep_n_seconds for a better solution.
  */
 void
 clocksleep(int num_secs)

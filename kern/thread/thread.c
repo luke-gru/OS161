@@ -53,6 +53,7 @@
 #include <vnode.h>
 #include <mips/trapframe.h>
 #include <syscall.h>
+#include <clock.h>
 
 
 /* Magic number used as a guard value on kernel thread stacks. */
@@ -77,6 +78,16 @@ static struct semaphore *cpu_startup_sem;
 unsigned thread_count = 0;
 static struct spinlock thread_count_lock = SPINLOCK_INITIALIZER;
 static struct wchan *thread_count_wchan;
+
+/* Used for thread sleeping for specified amount of time */
+static struct wchan *thread_sleepers_wchan;
+static struct spinlock thread_sleepers_lock = SPINLOCK_INITIALIZER;
+
+static time_t timestamp() {
+	struct timespec tv;
+	gettime(&tv);
+	return tv.tv_sec;
+}
 
 ////////////////////////////////////////////////////////////
 
@@ -141,6 +152,7 @@ thread_create(const char *name)
 	strcpy(thread->t_name, name);
 	thread->t_wchan_name = "NEW";
 	thread->t_state = S_READY;
+	thread->wakeup_at = 0;
 
 	/* Thread subsystem fields */
 	thread_machdep_init(&thread->t_machdep);
@@ -189,12 +201,12 @@ cpu_create(unsigned hardware_number)
 	c->c_hardware_number = hardware_number;
 
 	c->c_curthread = NULL;
-	threadlist_init(&c->c_zombies);
+	threadlist_init(&c->c_zombies, "zombie queue");
 	c->c_hardclocks = 0;
 	c->c_spinlocks = 0;
 
 	c->c_isidle = false;
-	threadlist_init(&c->c_runqueue);
+	threadlist_init(&c->c_runqueue, "run queue");
 	spinlock_init(&c->c_runqueue_lock);
 
 	c->c_ipi_pending = 0;
@@ -408,6 +420,8 @@ thread_bootstrap(void)
 	(void)cpu_create(0);
 	KASSERT(CURCPU_EXISTS() == true);
 
+	thread_sleepers_wchan = wchan_create("thread_sleepers");
+
 	/* cpu_create() should also have set t_proc. */
 	KASSERT(curcpu != NULL);
 	KASSERT(curthread != NULL);
@@ -455,6 +469,7 @@ thread_start_cpus(void)
 
 	cpu_startup_sem = sem_create("cpu_hatch", 0);
 	thread_count_wchan = wchan_create("thread_count");
+
 	mainbus_start_cpus();
 
 	num_cpus = cpuarray_num(&allcpus);
@@ -651,6 +666,28 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 	return child_pid;
 }
 
+static bool thread_find_ready_sleeper_cb(struct thread *t) {
+	return t->wakeup_at == 0 || t->wakeup_at <= timestamp();
+}
+
+// NOTE: runs once a second
+void thread_add_ready_sleepers_to_runqueue(void) {
+	bool dolock = !spinlock_do_i_hold(&thread_sleepers_lock);
+	if (dolock)
+		spinlock_acquire(&thread_sleepers_lock);
+	struct thread *ready;
+	if (!wchan_isempty(thread_sleepers_wchan, &thread_sleepers_lock)) {
+		while ((ready = threadlist_remove_if(&thread_sleepers_wchan->wc_threads, thread_find_ready_sleeper_cb)) != NULL) {
+			bool already_have_lock = spinlock_do_i_hold(&ready->t_cpu->c_runqueue_lock);
+			ready->wakeup_at = 0;
+			ready->t_wchan_name = NULL;
+			thread_make_runnable(ready, already_have_lock);
+		}
+	}
+	if (dolock)
+		spinlock_release(&thread_sleepers_lock);
+}
+
 /*
  * High level, machine-independent context switch code.
  *
@@ -674,20 +711,21 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 
 	cur = curthread;
 
-	/*
-	 * If we're idle, return without doing anything. This happens
-	 * when the timer interrupt interrupts the idle loop.
-	 */
-	if (curcpu->c_isidle) {
-		splx(spl);
-		return;
-	}
-
 	/* Check the stack guard band. */
 	thread_checkstack(cur);
 
 	/* Lock the run queue. */
 	spinlock_acquire(&curcpu->c_runqueue_lock);
+
+	/*
+	 * If we're idle, return without doing anything. This happens
+	 * when the timer interrupt interrupts the idle loop.
+	 */
+	if (curcpu->c_isidle) {
+		spinlock_release(&curcpu->c_runqueue_lock);
+		splx(spl);
+		return;
+	}
 
 	/* Micro-optimization: if nothing to do, just return */
 	if (newstate == S_READY && threadlist_isempty(&curcpu->c_runqueue)) {
@@ -736,6 +774,7 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 			panic("invalid thread state: %d", (int)newstate);
 	}
 	cur->t_state = newstate;
+
 	// NOTE: the kernel has no userlevel address space
 	if (cur->t_proc && cur->t_proc->p_addrspace) {
 		cur->t_proc->p_addrspace->running_cpu_idx = -1;
@@ -903,6 +942,10 @@ void thread_exit(int status) {
 	if (cur_p != kproc && !is_valid_pid(cur_p->pid)) {
 		panic("invalid PID in thread_exit: %d", cur_p->pid);
 	}
+	if (cur_p == kswapproc) {
+		panic("kswapd exited");
+	}
+
 	if (cur_p && is_valid_user_pid(cur_p->pid)) {
 		 // notifies any parents that could be waiting on us, and sets our exit status
 		pid_setexitstatus(cur_p->pid, status);
@@ -929,7 +972,7 @@ void thread_exit(int status) {
 
 	/* Interrupts off on this processor */
 	splhigh();
-	thread_switch(S_ZOMBIE, NULL, NULL); // run new thread, current one gets destroyed during exorcise
+	thread_switch(S_ZOMBIE, NULL, NULL); // run a new thread, current one gets destroyed during exorcise
 	panic("braaaaaaaiiiiiiiiiiinssssss\n");
 }
 
@@ -1005,7 +1048,7 @@ thread_consider_migration(void)
 	}
 
 	to_send = my_count - one_share;
-	threadlist_init(&victims);
+	threadlist_init(&victims, "victims");
 	spinlock_acquire(&curcpu->c_runqueue_lock);
 	for (i=0; i<to_send; i++) {
 		t = threadlist_remtail(&curcpu->c_runqueue);
@@ -1083,6 +1126,15 @@ thread_consider_migration(void)
 	threadlist_cleanup(&victims);
 }
 
+void thread_sleep_n_seconds(int seconds) {
+	spinlock_acquire(&thread_sleepers_lock);
+	struct thread *t = curthread;
+	t->wakeup_at = timestamp() + seconds;
+	// puts curthread on wait channel threadlist and sleeps the thread
+	wchan_sleep(thread_sleepers_wchan, &thread_sleepers_lock); // unlocks and then locks spinlock
+	spinlock_release(&thread_sleepers_lock);
+}
+
 ////////////////////////////////////////////////////////////
 
 /*
@@ -1106,7 +1158,7 @@ wchan_create(const char *name)
 	if (wc == NULL) {
 		return NULL;
 	}
-	threadlist_init(&wc->wc_threads);
+	threadlist_init(&wc->wc_threads, name);
 	wc->wc_name = name;
 
 	return wc;
@@ -1182,30 +1234,12 @@ void
 wchan_wakeall(struct wchan *wc, struct spinlock *lk)
 {
 	struct thread *target;
-	struct threadlist list;
 
 	KASSERT(spinlock_do_i_hold(lk));
 
-	threadlist_init(&list);
-
-	/*
-	 * Grab all the threads from the channel, moving them to a
-	 * private list.
-	 */
 	while ((target = threadlist_remhead(&wc->wc_threads)) != NULL) {
-		threadlist_addtail(&list, target);
-	}
-
-	/*
-	 * We could conceivably sort by cpu first to cause fewer lock
-	 * ops and fewer IPIs, but for now at least don't bother. Just
-	 * make each thread runnable.
-	 */
-	while ((target = threadlist_remhead(&list)) != NULL) {
 		thread_make_runnable(target, false);
 	}
-
-	threadlist_cleanup(&list);
 }
 
 /*

@@ -314,7 +314,7 @@ void pid_setexitstatus(pid_t pid, int status) {
 	pid_i->pi_exitstatus = status;
 	pid_i->pi_exited = 1;
 	/* wake up our parent, if they're waiting on us */
-  cv_broadcast(pid_i->pi_cv, pidlock);
+  cv_signal(pid_i->pi_cv, pidlock);
 
 	if (pid_i->pi_ppid == INVALID_PID) {
 		/* no parent user process, drop the pidinfo */
@@ -369,13 +369,13 @@ int pid_wait_sleep(pid_t childpid, int *status) {
 		*status = child_info->pi_exitstatus;
 	}
 
-	struct proc *parent = proc_lookup(child_info->pi_ppid);
-	if (parent)
-		spinlock_acquire(&parent->p_lock);
+	// struct proc *parent = proc_lookup(child_info->pi_ppid);
+	// if (parent)
+	// 	spinlock_acquire(&parent->p_lock);
 	child_info->pi_ppid = INVALID_PID;
 	pi_drop(child_info->pi_pid);
-	if (parent)
-		spinlock_release(&parent->p_lock);
+	// if (parent)
+	// 	spinlock_release(&parent->p_lock);
 
 	lock_release(pidlock);
 	return 0;

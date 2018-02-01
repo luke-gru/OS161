@@ -70,6 +70,7 @@ struct addrspace *as_create(char *name) {
 	as->heap = NULL;
 	as->heap_end = (vaddr_t)0;
 	as->heap_start = (vaddr_t)0;
+	as->heap_brk = (vaddr_t)0;
 	as->destroying = false;
 	as->last_activation = (time_t)0;
 	as->is_active = false;
@@ -85,6 +86,18 @@ int as_num_pages(struct addrspace *as) {
 	int i = 0;
 	while (pte != NULL) {
 		i++;
+		pte = pte->next;
+	}
+	return i;
+}
+
+static int as_num_pages_of_type(struct addrspace *as, enum page_entry_type type) {
+	struct page_table_entry *pte = as->pages;
+	int i = 0;
+	while (pte != NULL) {
+		if (pte->page_entry_type == type) {
+			i++;
+		}
 		pte = pte->next;
 	}
 	return i;
@@ -190,15 +203,15 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 			as_destroy(new);
 			return ENOMEM;
 		}
-		paddr_t paddr = find_upage_for_entry(new_heappage, VM_PIN_PAGE);
+		new_heappage->vaddr = old_heappage->vaddr;
+		new_heappage->page_entry_type = PAGE_ENTRY_TYPE_HEAP;
+		new_heappage->permissions = old_heappage->permissions;
+		paddr_t paddr = find_upage_for_entry(new_heappage, VM_PIN_PAGE, true);
 		if (paddr == 0) {
 			as_destroy(new);
 			return ENOMEM;
 		}
 		new_heappage->paddr = paddr;
-		new_heappage->vaddr = old_heappage->vaddr;
-		new_heappage->page_entry_type = PAGE_ENTRY_TYPE_HEAP;
-		new_heappage->permissions = old_heappage->permissions;
 		last_new_heappage->next = new_heappage;
 		last_new_heappage = new_heappage;
 		old_heappage = old_heappage->next;
@@ -238,6 +251,7 @@ void as_unlock_all(void) {
 
 void as_destroy(struct addrspace *as) {
 	DEBUGASSERT(as != NULL);
+	DEBUG(DB_VM, "Destroying address space %s\n", as->name);
 	lock_pagetable();
 	if (as->destroying) {
 		unlock_pagetable();
@@ -268,7 +282,6 @@ void as_destroy(struct addrspace *as) {
 		}
 		pagetemp = pte;
 		pte = pte->next;
-		pagetemp->next = NULL;
 		kfree(pagetemp);
 	}
 	spinlock_cleanup(&as->spinlock);
@@ -279,33 +292,14 @@ void as_destroy(struct addrspace *as) {
 
 void as_activate(void) {
 	int i, spl;
-
 	struct addrspace *as = proc_getas();
-	if (!as) { return; }
 	spl = splhigh();
-	if (curproc == kswapproc) {
-		for (i=0; i<NUM_TLB; i++) {
-			tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
-		}
-		struct page_table_entry *pte = as->pages;
-		i = 0;
-		while (pte != NULL) {
-			tlb_write(pte->vaddr, pte->paddr|TLBLO_DIRTY|TLBLO_VALID, i);
-			pte->tlb_idx = i;
-			pte->cpu_idx = curcpu->c_number;
-			i++;
-			pte = pte->next;
-		}
-		splx(spl);
-	} else {
-		/* Disable interrupts on this CPU while frobbing the TLB. */
-
-		for (i=0; i<NUM_TLB; i++) {
-			tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
-		}
-		splx(spl);
+	/* Disable interrupts on this CPU while frobbing the TLB. */
+	for (i=0; i<NUM_TLB; i++) {
+		tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
 	}
-
+	splx(spl);
+	if (!as) { return; }
 	as->is_active = true;
 	as->running_cpu_idx = curcpu->c_number;
 	as->last_activation = as_timestamp();
@@ -386,26 +380,30 @@ int as_prepare_load(struct addrspace *as) {
 		vaddr = regionlst->vbase;
 		for (i=0; i<regionlst->npages; i++) {
 			if (as->pages==NULL) {
-				as->pages = (struct page_table_entry *)kmalloc(sizeof(*pages));
+				as->pages = kmalloc(sizeof(*pages));
+				KASSERT(as->pages);
+				memset(as->pages, 0, sizeof(*pages));
 				as->pages->vaddr = vaddr;
 				as->pages->as = as;
 				as->pages->permissions = regionlst->permissions;
 				as->pages->next = NULL;
 				as->pages->page_entry_type = PAGE_ENTRY_TYPE_EXEC;
-				paddr = find_upage_for_entry(as->pages, VM_PIN_PAGE);
+				paddr = find_upage_for_entry(as->pages, VM_PIN_PAGE, true);
 				if (paddr == 0) { // TODO: swap out!
 					return ENOMEM;
 				}
 				as->pages->paddr = paddr;
 			} else {
-				for (pages=as->pages; pages->next!=NULL; pages=pages->next); // get last page
-				pages->next = (struct page_table_entry *)kmalloc(sizeof(*pages));
+				for (pages=as->pages; pages->next!=NULL; pages=pages->next) { } // get last page
+				pages->next = kmalloc(sizeof(*pages));
+				KASSERT(pages->next);
+				memset(pages->next, 0, sizeof(*pages));
 				pages->next->vaddr = vaddr;
 				pages->next->as = as;
 				pages->next->permissions = regionlst->permissions;
 				pages->next->next = NULL;
 				pages->next->page_entry_type = PAGE_ENTRY_TYPE_EXEC;
-				paddr = find_upage_for_entry(pages->next, VM_PIN_PAGE);
+				paddr = find_upage_for_entry(pages->next, VM_PIN_PAGE, true);
 				if (paddr == 0){
 					return ENOMEM;
 				}
@@ -420,10 +418,12 @@ int as_prepare_load(struct addrspace *as) {
 
 	vaddr_t stackvaddr = USERSTACK - VM_STACKPAGES * PAGE_SIZE;
 	if (as->pages) {
-		for (pages=as->pages; pages->next!=NULL; pages=pages->next);
+		for (pages=as->pages; pages->next!=NULL; pages=pages->next) {}
 	}
 	for (int i=0; i<VM_STACKPAGES; i++) {
-		struct page_table_entry *stack = (struct page_table_entry *)kmalloc(sizeof(*stack));
+		struct page_table_entry *stack = kmalloc(sizeof(*stack));
+		KASSERT(stack);
+		memset(stack, 0, sizeof(*stack));
 		stack->page_entry_type = PAGE_ENTRY_TYPE_STACK;
 		stack->permissions = PF_R|PF_W;
 		stack->as = as;
@@ -438,7 +438,7 @@ int as_prepare_load(struct addrspace *as) {
 		}
 		stack->vaddr = stackvaddr;
 		stack->next = NULL;
-		paddr = find_upage_for_entry(stack, VM_PIN_PAGE);
+		paddr = find_upage_for_entry(stack, VM_PIN_PAGE, true);
 		if (paddr == 0) {
 			return ENOMEM;
 		}
@@ -447,27 +447,35 @@ int as_prepare_load(struct addrspace *as) {
 		pages = stack;
 	}
 
+	if (as->no_heap_alloc) {
+		return 0;
+	}
+
 	// start with 1 heap page, can be added to with sbrk() user syscall
-	struct page_table_entry *heap_page = (struct page_table_entry *)kmalloc(sizeof(*pages));
+	struct page_table_entry *heap_page = kmalloc(sizeof(*heap_page));
+	KASSERT(heap_page);
+	memset(heap_page, 0, sizeof(*heap_page));
 	pages->next = heap_page;
 	heap_page->next = NULL;
 	heap_page->page_entry_type = PAGE_ENTRY_TYPE_HEAP;
 	heap_page->as = as;
-
-	paddr = find_upage_for_entry(heap_page, VM_PIN_PAGE);
+	heap_page->permissions = PF_R|PF_W;
+	heap_page->vaddr = vaddr;
+	paddr = find_upage_for_entry(heap_page, VM_PIN_PAGE, true);
 	if (paddr == 0) {
 		return ENOMEM;
 	}
-
 	heap_page->paddr = paddr;
-	heap_page->vaddr = vaddr;
 
 	as->heap_start = vaddr; // starts at end of loaded data region
+	as->heap_brk = vaddr;
 	as->heap_end = vaddr + PAGE_SIZE;
 	as->heap = heap_page; // first heap page
 
 	KASSERT(as->heap_start != 0);
 	KASSERT(as->heap_end != 0);
+	KASSERT(as->heap_start % PAGE_SIZE == 0);
+	KASSERT(as->heap_end % PAGE_SIZE == 0);
 
 	return 0;
 }
@@ -480,9 +488,10 @@ static vaddr_t as_stackbottom(struct addrspace *as) {
 	return as->stack->vaddr;
 }
 
-static void dealloc_page_entries(struct page_table_entry *pte) {
+static void dealloc_page_entries(struct page_table_entry *pte, bool dolock) {
 	struct page_table_entry *last;
-	lock_pagetable();
+	if (dolock)
+		lock_pagetable();
 	while (pte) {
 		DEBUGASSERT(pte->paddr > 0);
 		free_upages(pte->paddr, false);
@@ -490,12 +499,21 @@ static void dealloc_page_entries(struct page_table_entry *pte) {
 		pte = pte->next;
 		kfree(last);
 	}
-	unlock_pagetable();
+	if (dolock)
+		unlock_pagetable();
 }
 
 int as_growheap(struct addrspace *as, size_t bytes) {
 	size_t nbytes = ROUNDUP(bytes, PAGE_SIZE);
 	size_t npages = nbytes / PAGE_SIZE;
+	DEBUGASSERT(npages > 0);
+	// We initally give a process 1 page of heap, so the first allocation is just bookkeeping for us
+	if (as->heap_brk + bytes <= as->heap_end) {
+		DEBUG(DB_VM, "Fake allocation of %d bytes\n", (int)bytes);
+		as->heap_brk += bytes;
+		return 0;
+	}
+	lock_pagetable();
 	if (as->heap_end + nbytes >= as_stackbottom(as)) {
 		return ENOMEM;
 	}
@@ -504,15 +522,18 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 	}
 	struct page_table_entry *first_heap_pte;
 	struct page_table_entry *last = NULL;
+	vaddr_t old_heapbrk = as->heap_brk;
 	vaddr_t vaddr = as->heap_end;
+	DEBUGASSERT(vaddr > 0);
 	for (size_t i = 0; i < npages; i++) {
 		struct page_table_entry *pte = kmalloc(sizeof(*pte));
 		DEBUGASSERT(pte);
+		memset(pte, 0, sizeof(*pte));
 		if (i == 0) {
 			first_heap_pte = pte; // to free allocated pages if we get an error
 		}
 		pte->vaddr = vaddr;
-		paddr_t paddr = find_upage_for_entry(pte, VM_PIN_PAGE);
+		paddr_t paddr = find_upage_for_entry(pte, VM_PIN_PAGE, false);
 		if (paddr == 0) {
 			goto nomem;
 		}
@@ -520,7 +541,13 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 		pte->paddr = paddr;
 		pte->permissions = PF_R|PF_W;
 		pte->page_entry_type = PAGE_ENTRY_TYPE_HEAP;
-		pte->next = NULL; pte->last = NULL;
+		pte->next = NULL;
+		pte->tlb_idx = -1;
+		pte->cpu_idx = curcpu->c_number;
+		pte->is_dirty = true;
+		pte->is_swapped = false;
+		pte->debug_name = as->name;
+		pte->num_swaps = 0;
 		if (last) {
 			last->next = pte;
 		}
@@ -528,15 +555,20 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 		last = pte;
 	}
 	as->heap_end = vaddr;
+	as->heap_brk = old_heapbrk + bytes;
 	struct page_table_entry *page;
 	int old_num_pages = as_num_pages(as);
+	int old_num_heap_pages = as_num_pages_of_type(as, PAGE_ENTRY_TYPE_HEAP);
 	// link heap pages into as->pages
-	for (page = as->pages; page->next != NULL; page = page->next); // get last page
+	for (page = as->pages; page->next != NULL; page = page->next) {} // get last page
 	page->next = first_heap_pte;
 	DEBUGASSERT((old_num_pages + (int)npages) == as_num_pages(as));
+	DEBUGASSERT((old_num_heap_pages + (int)npages) == as_num_pages_of_type(as, PAGE_ENTRY_TYPE_HEAP));
+	unlock_pagetable();
 	return 0;
 	nomem: {
-		dealloc_page_entries(first_heap_pte);
+		dealloc_page_entries(first_heap_pte, false);
+		unlock_pagetable();
 		return ENOMEM;
 	}
 }
@@ -564,11 +596,9 @@ int as_complete_load(struct addrspace *as) {
 	while (pte) {
 		pte->is_dirty = true;
 		pte->is_swapped = false;
-		pte->last_fault_access = 0;
 		pte->swap_offset = 0;
 		pte->num_swaps = 0;
-		pte->page_age = 0;
-		pte->swap_errors = 0;
+		pte->page_age = 0;;
 		pte->as = as;
 		pte->debug_name = as->name; // shares same mem as address space
 		if (pte->coremap_idx > 0 && pte->page_entry_type != PAGE_ENTRY_TYPE_STACK) {
@@ -676,7 +706,6 @@ int pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fi
 	pte->swap_offset = write_offset;
 	pte->is_dirty = false;
 	pte->num_swaps++;
-	pte->swap_errors = 0;
 	DEBUG(DB_VM, "Done swapping out\n");
 	vfs_close(node);
 	kfree(swapfnamecopy);
@@ -731,7 +760,8 @@ int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page *
 }
 
 void as_touch_pte(struct page_table_entry *pte) {
-	pte->last_fault_access = as_timestamp();
+	//pte->last_fault_access = as_timestamp();
+	(void)pte;
 }
 
 int as_define_stack(struct addrspace *as, vaddr_t *stackptr) {

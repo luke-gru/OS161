@@ -62,9 +62,9 @@ struct page_table_entry {
   // TODO: in vm_fault, set all TLB entries to read-only initially, then a write gets a
   // fault and we mark it as dirty and continue.
   bool is_dirty;
-  int32_t last_fault_access; // timestamp
+  //int32_t last_fault_access; // timestamp
   off_t swap_offset; // byte offset into swap file, if num_swaps > 0
-  unsigned long num_swaps; // number of times this page entry was swapped out
+  unsigned short num_swaps; // number of times this page entry was swapped out
   // index into coremap. 0 means the page isn't resident in physical memory, We can
   // treat 0 as an invalid index because the first few pages in the coremap are for the
   // coremap itself, and they contain no page table entries
@@ -73,10 +73,10 @@ struct page_table_entry {
   short tlb_idx; // TLB index if it's resident in memory and hit the TLB, -1 if not. Invalidated every
   // activation of the thread (quantum)
   short cpu_idx; // CPU index for TLB entry (0-3)
-  short swap_errors; // number of errors trying to swap
+  //short swap_errors; // number of errors trying to swap
 
 	struct page_table_entry *next;
-	struct page_table_entry *last;
+	//struct page_table_entry *last;
 };
 
 struct regionlist {
@@ -113,10 +113,12 @@ struct addrspace {
         struct regionlist *regions;
         vaddr_t heap_start;
         vaddr_t heap_end;
+        vaddr_t heap_brk;
         struct spinlock spinlock;
         time_t last_activation; // last time that this address space began its time slice
         bool destroying;
         bool is_active; // Doesn't mean it's currently running, just that it ran at least one time slice and hasn't exited
+        bool no_heap_alloc; // For now, used for processes internal to the kernel that run in their own special "userspace"
         short running_cpu_idx; // If the address space's process is currently running, this is the cpu idx (0-3) of the CPU
 #endif
 };

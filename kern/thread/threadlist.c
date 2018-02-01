@@ -58,10 +58,10 @@ threadlistnode_cleanup(struct threadlistnode *tln)
 }
 
 void
-threadlist_init(struct threadlist *tl)
+threadlist_init(struct threadlist *tl, const char *name)
 {
 	DEBUGASSERT(tl != NULL);
-
+	tl->name = name;
 	tl->tl_head.tln_next = &tl->tl_tail;
 	tl->tl_head.tln_prev = NULL;
 	tl->tl_tail.tln_next = NULL;
@@ -158,6 +158,27 @@ threadlist_removenode(struct threadlistnode *tln)
 
 ////////////////////////////////////////////////////////////
 // public
+
+struct thread *threadlist_remove_if(struct threadlist *tl, bool (*callback)(struct thread *t)) {
+	struct threadlistnode *cur = tl->tl_head.tln_next;
+	struct thread *found = NULL;
+	while (cur) {
+		if (!cur->tln_self) {
+			cur = cur->tln_next;
+			continue;
+		}
+		if (callback(cur->tln_self)) {
+			found = cur->tln_self;
+			break;
+		}
+		cur = cur->tln_next;
+	}
+	if (!found) {
+		return NULL;
+	}
+	threadlist_remove(tl, found);
+	return found;
+}
 
 void
 threadlist_addhead(struct threadlist *tl, struct thread *t)

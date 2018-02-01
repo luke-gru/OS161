@@ -41,7 +41,7 @@ unsigned long coretotal(void) {
 }
 
 void lock_pagetable() {
-  spinlock_acquire(&stealmem_lock);
+	spinlock_acquire(&stealmem_lock);
 }
 
 void unlock_pagetable() {
@@ -94,8 +94,9 @@ void kswapd_bootstrap() {
   kswapd_proc->p_cwd = kproc->p_cwd;
   struct addrspace *as = as_create(kswapd_proc->p_name);
   KASSERT(as);
+	as->no_heap_alloc = true;
   kswapd_proc->p_addrspace = as;
-  KASSERT(as_prepare_load(as) == 0); // allocate stack pages
+  KASSERT(as_prepare_load(as) == 0); // allocate userspace stack pages
   struct page_table_entry *pte = as->pages;
   char *pte_name = as->name;
   while (pte != NULL) {
@@ -119,17 +120,17 @@ static void kswapd_age_pages() {
     KASSERT(coremap[i].entry != NULL);
     KASSERT(coremap[i].entry->coremap_idx > 0);
     // this happens when proc_destroy doesn't call as_destroy(), just as_deactivate()
-    if (!coremap[i].entry->as->is_active) {
-      coremap[i].entry->coremap_idx = 0;
-      coremap[i].entry = NULL;
-      coremap[i].state = PAGESTATE_FREE;
-      continue;
-    }
+    // if (!coremap[i].entry->as->is_active) {
+    //   coremap[i].entry->coremap_idx = 0;
+    //   coremap[i].entry = NULL;
+    //   coremap[i].state = PAGESTATE_FREE;
+    //   continue;
+    // }
     if (coremap[i].entry->page_age < VM_PAGE_AGE_MAX) {
       char *name = coremap[i].entry->debug_name;
       DEBUG(DB_VM, "\naging page %s: %d\n", name, (int)coremap[i].entry->page_age);
       coremap[i].entry->page_age++;
-      as_debug(coremap[i].entry->as);
+      //as_debug(coremap[i].entry->as);
     }
   }
 }
@@ -146,16 +147,17 @@ static void kswapd_swapout_pages() {
     if (coremap[i].entry->page_entry_type == PAGE_ENTRY_TYPE_HEAP) {
       struct page_table_entry *pte = coremap[i].entry;
       char *name = pte->debug_name;
-      if (pte->is_swapped || pte->swap_errors > 10) {
+      if (pte->is_swapped) {
         continue;
       }
       DEBUG(DB_VM, "\nswapping out pages for %s\n", name);
       int swap_res;
       swap_res = pte_swapout(pte->as, pte, false);
       if (swap_res != 0) {
-        pte->swap_errors++;
+				DEBUG(DB_VM, "Swap error: %d\n", swap_res);
         continue;
       }
+			continue; // TODO:
       // NOTE: only invalidate the TLB if the process for this address space is currently running
       if (pte->as->running_cpu_idx > 0) {
         if (pte->tlb_idx >= 0 && pte->tlb_idx < NUM_TLB) {
@@ -168,11 +170,8 @@ static void kswapd_swapout_pages() {
           }
         }
       }
-      lock_pagetable();
       coremap[i].state = PAGESTATE_FREE;
       coremap[i].entry = NULL;
-      unlock_pagetable();
-      break;
     }
   }
 }
@@ -185,16 +184,14 @@ void kswapd_start(void *_data1, unsigned long _data2) {
 	(void)_data1;
 	(void)_data2;
 	while (1) {
-		clocksleep(3);
+		thread_sleep_n_seconds(3);
 
     lock_pagetable();
     kswapd_age_pages();
     unlock_pagetable();
+		kswapd_swapout_pages();
 
-    kswapd_swapout_pages();
     kswapd_swapin_async_pages();
-
-    thread_yield();
 	}
 }
 
@@ -203,8 +200,9 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
   unsigned long page_start = 0;
   unsigned long block_count = npages;
   unsigned long i;
-  if (dolock)
-    spinlock_acquire(&stealmem_lock);
+  if (dolock) {
+		lock_pagetable();
+	}
 	if (beforeVM){
 		addr = ram_stealmem(npages);
 	} else {
@@ -222,8 +220,9 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
 		}
 
 		if (i == pages_in_coremap) { // not found
-      if (dolock)
-        spinlock_release(&stealmem_lock);
+      if (dolock) {
+				unlock_pagetable();
+			}
 			return 0;
 		} else {
 			for (i=0; i<npages; i++) {
@@ -232,12 +231,15 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
 				coremap[i+page_start].partofpage = page_start; // note: if allocating 1 page, pop == idx into coremap for page
         coremap[i+page_start].is_kern_page = (pagetype == PAGETYPE_KERN);
         coremap[i+page_start].is_pinned = false;
+				coremap[i+page_start].va = PADDR_TO_KVADDR(coremap[i+page_start].pa);
 			}
 			addr = coremap[page_start].pa;
+			KASSERT(addr > 0);
 		}
 	}
-  if (dolock)
-	  spinlock_release(&stealmem_lock);
+  if (dolock) {
+		unlock_pagetable();
+	}
   if (coremap_idx) {
     *coremap_idx = page_start;
   }
@@ -247,11 +249,14 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
 static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
   int pop = 0;
 	unsigned long i;
-  if (spinlock_do_i_hold(&stealmem_lock))
-    dolock = false;
+  if (spinlock_do_i_hold(&stealmem_lock)) {
+		dolock = false;
+	}
 
-  if (dolock)
-	 spinlock_acquire(&stealmem_lock);
+  if (dolock) {
+		lock_pagetable();
+	}
+
 	for (i=0; i<pages_in_coremap; i++){
 		if (pagetype == PAGETYPE_KERN && coremap[i].va == addr) {
 			pop = coremap[i].partofpage;
@@ -262,6 +267,7 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
     }
 	}
 
+	int pages_freed = 0;
 	while (coremap[i].contained && coremap[i].partofpage == pop) {
     if (pagetype == PAGETYPE_KERN) {
       KASSERT(coremap[i].is_kern_page);
@@ -278,15 +284,27 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
     }
     coremap[i].entry = NULL;
     coremap[i].is_pinned = false;
+		coremap[i].partofpage = 0;
+		KASSERT(coremap[i].pa > 0);
+		coremap[i].va = PADDR_TO_KVADDR(coremap[i].pa);
+		pages_freed++;
 		i++;
 	}
-  if (dolock)
-	  spinlock_release(&stealmem_lock);
+	KASSERT(pages_freed > 0);
+	if (pagetype == PAGETYPE_KERN) {
+		DEBUG(DB_VM, "kmalloc: freed %d kernel pages\n", pages_freed);
+	} else {
+		DEBUG(DB_VM, "Freed %d userlevel pages\n", pages_freed);
+	}
+  if (dolock) {
+		unlock_pagetable();
+	}
 }
 
 /* Allocate/free some kernel-space virtual pages */
 vaddr_t alloc_kpages(int npages) {
 	paddr_t pa;
+	DEBUG(DB_VM, "Allocating %d kernel pages\n", npages);
 	pa = getppages(npages, PAGETYPE_KERN, NULL, true);
 
 	if (pa==0) {
@@ -313,25 +331,31 @@ void free_upages(paddr_t addr, bool dolock) {
   free_pages(addr, PAGETYPE_USER, dolock);
 }
 
-paddr_t find_upage_for_entry(struct page_table_entry *pte, int page_flags) {
+paddr_t find_upage_for_entry(struct page_table_entry *pte, int page_flags, bool dolock) {
   unsigned long idx = 0;
-  spinlock_acquire(&stealmem_lock);
+	if (dolock)
+  	lock_pagetable();
   paddr_t addr = alloc_upages(1, &idx, false);
   if (addr == 0) {
     return 0;
   }
+	KASSERT(idx > 0);
   coremap[idx].entry = pte;
   coremap[idx].is_pinned = (page_flags & VM_PIN_PAGE) != 0;
+	if (pte->vaddr > 0) {
+		coremap[idx].va = pte->vaddr;
+	}
   pte->coremap_idx = idx;
-  spinlock_release(&stealmem_lock);
+	if (dolock)
+  	unlock_pagetable();
   return addr;
 }
 
 void vm_unpin_page_entry(struct page_table_entry *entry) {
   DEBUGASSERT(entry->coremap_idx > 0);
-  spinlock_acquire(&stealmem_lock);
+  lock_pagetable();
   coremap[entry->coremap_idx].is_pinned = false;
-  spinlock_release(&stealmem_lock);
+  unlock_pagetable();
 }
 
 // static void vm_pin_region(vaddr_t region_start, vaddr_t region_end) {
@@ -363,6 +387,8 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	struct addrspace *as;
 	int spl;
 
+	vaddr_t initial_addr = faultaddress;
+	(void)initial_addr;
 	faultaddress &= PAGE_FRAME;
 
 	//DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
@@ -386,6 +412,7 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 
 	as = proc_getas();
 	if (as == NULL) {
+		panic("kernel fault");
 		/*
 		 * No address space set up. This is probably a kernel
 		 * fault early in boot. Return EFAULT so as to panic
@@ -407,7 +434,7 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	// KASSERT((as->heap_end & PAGE_FRAME) == as->heap_end);
 	KASSERT((as->pages->vaddr & PAGE_FRAME) == as->pages->vaddr);
 
-	stackbase = USERSTACK - VM_STACKPAGES * PAGE_SIZE;
+	stackbase = USERSTACK - (VM_STACKPAGES * PAGE_SIZE);
 	stacktop = USERSTACK;
 
 	struct page_table_entry *pte;
@@ -434,12 +461,13 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	}
 
 	if (paddr == 0) {
+		panic("unhandled fault");
 		return EFAULT;
 	}
 
   DEBUGASSERT(pte != NULL);
-  DEBUGASSERT(pte->vaddr == faultaddress);
-  DEBUGASSERT(pte->paddr == paddr);
+  // DEBUGASSERT(pte->vaddr == faultaddress);
+  // DEBUGASSERT(pte->paddr == paddr);
   as_touch_pte(pte);
 
   // if (!pte_can_handle_fault_type(pte, faulttype)) {
@@ -459,7 +487,7 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 		}
 		ehi = faultaddress;
 		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
-		//DEBUG(DB_VM, "myvm: TLB write 0x%x -> 0x%x (index: %d)\n", faultaddress, paddr, i);
+		DEBUG(DB_VM, "myvm: %s TLB write 0x%x -> 0x%x (index: %d)\n", as->name, faultaddress, paddr, i);
     pte->tlb_idx = (short)i;
     pte->cpu_idx = (short)curcpu->c_number;
 		tlb_write(ehi, elo, i);
@@ -469,8 +497,9 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 
 	ehi = faultaddress;
 	elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
-	//DEBUG(DB_VM, "myvm (TLB eviction): 0x%x -> 0x%x\n", faultaddress, paddr);
+	DEBUG(DB_VM, "myvm (TLB eviction): 0x%x -> 0x%x\n", faultaddress, paddr);
 	tlb_random(ehi, elo); // evict random TLB entry, we ran out
+	pte->tlb_idx = -1;
 	splx(spl);
 	return 0;
 }

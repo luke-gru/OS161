@@ -237,23 +237,23 @@ mips_trap(struct trapframe *tf)
 	 * Panic on the bus error exceptions.
 	 */
 	switch (code) {
-	case EX_MOD:
+	case EX_MOD: // 1
 		if (vm_fault(VM_FAULT_READONLY, tf->tf_vaddr)==0) {
 			goto done;
 		}
 		break;
-	case EX_TLBL:
+	case EX_TLBL: // 2
 		if (vm_fault(VM_FAULT_READ, tf->tf_vaddr)==0) {
 			goto done;
 		}
 		break;
-	case EX_TLBS:
+	case EX_TLBS: // 3
 		if (vm_fault(VM_FAULT_WRITE, tf->tf_vaddr)==0) {
 			goto done;
 		}
 		break;
-	case EX_IBE:
-	case EX_DBE:
+	case EX_IBE: // 6
+	case EX_DBE: // 7
 		/*
 		 * This means you loaded invalid TLB entries, or
 		 * touched invalid parts of the direct-mapped

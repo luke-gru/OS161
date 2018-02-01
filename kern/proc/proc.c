@@ -91,6 +91,7 @@ int special_filedes_flags(int i) {
 }
 static struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
+	KASSERT(file_des);
 	file_des->pathname = kstrdup(pathname);
 	file_des->node = node;
 	file_des->flags = flags;
@@ -106,7 +107,8 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	kfree(file_des->pathname);
-	file_des->flags = 0; file_des->offset = 0;
+	file_des->flags = 0;
+	file_des->offset = 0;
 	KASSERT(!lock_do_i_hold(file_des->lk));
 	lock_destroy(file_des->lk);
 	vfs_close(file_des->node); // check success?
@@ -479,6 +481,8 @@ void proc_destroy(struct proc *proc) {
 	KASSERT(proc != curproc);
 	KASSERT(proc != kswapproc);
 
+	DEBUG(DB_VM, "Destroying process %s\n", proc->p_name);
+
 	/*
 	 * We don't take p_lock in here because we must have the only
 	 * reference to this structure. (Otherwise it would be
@@ -535,6 +539,7 @@ void proc_destroy(struct proc *proc) {
 		struct addrspace *as;
 
 		if (proc == curproc) {
+			DEBUG(DB_VM, "Calling as_deactivate in proc_destroy for %s\n", proc->p_name);
 			as = proc_setas(NULL);
 			as_deactivate();
 		}
@@ -542,6 +547,7 @@ void proc_destroy(struct proc *proc) {
 			as = proc->p_addrspace;
 			proc->p_addrspace = NULL;
 		}
+		DEBUG(DB_VM, "Calling as_destroy in proc_destroy for %s\n", proc->p_name);
 		as_destroy(as);
 	}
 
@@ -880,7 +886,7 @@ struct addrspace *proc_getas(void) {
 
 /*
  * Change the address space of (the current) process. Return the old
- * one for later restoration or disposal.
+ * one for later restoration or disposal. NOTE: newas can be NULL.
  */
 struct addrspace *proc_setas(struct addrspace *newas) {
 	struct addrspace *oldas;

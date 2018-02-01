@@ -138,19 +138,27 @@ int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
   return res;
 }
 
+// NOTE: sbrk here is only ever >= 0, because memory from userland free() is never
+// actually given back to the OS, just written over for now and re-used in later
+// allocations in the same process.
 int sys_sbrk(uint32_t increment, int *retval) {
-  struct addrspace *as = curproc->p_addrspace;
-  vaddr_t old_heapend = as_heapend(as);
+  struct addrspace *as = proc_getas();
+  vaddr_t old_heapbrk = as->heap_brk;
+  DEBUGASSERT(old_heapbrk > 0);
   if (increment == 0) {
-    *retval = (int)old_heapend;
+    DEBUG(DB_VM, "Giving back initial heap brk\n");
+    *retval = (int)old_heapbrk;
     return 0;
   } else {
     int grow_res = as_growheap(as, increment);
-    if (grow_res != 0) {
+    DEBUG(DB_VM, "Growing heap by %u\n", increment);
+    if (grow_res != 0) { // ENOMEM
+      DEBUG(DB_VM, "Growing heap failed with: %d\n", grow_res);
       *retval = -1;
       return grow_res;
     }
-    *retval = (int)old_heapend;
+    DEBUG(DB_VM, "Old heapbrk from sbrk: %d\n", (int)old_heapbrk);
+    *retval = (int)old_heapbrk;
     return 0;
   }
 }
@@ -184,7 +192,8 @@ int sys_sleep(int seconds, int *retval) {
     *retval = 0;
     return 0;
   }
-  clocksleep(seconds);
+  thread_sleep_n_seconds(seconds);
+  //clocksleep(seconds);
   *retval = 0;
   return 0;
 }

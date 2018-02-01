@@ -37,8 +37,9 @@
 int
 nettest(int nargs, char **args)
 {
+
 	(void)nargs;
 	(void)args;
-	kprintf("No network support available\n");
+	//kprintf("No network support available\n");
 	return 1;
 }

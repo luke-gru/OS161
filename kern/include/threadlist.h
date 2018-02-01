@@ -61,6 +61,7 @@ struct threadlistnode {
 };
 
 struct threadlist {
+	const char *name; // for debug purposes
 	struct threadlistnode tl_head;
 	struct threadlistnode tl_tail;
 	unsigned tl_count;
@@ -71,7 +72,7 @@ void threadlistnode_init(struct threadlistnode *tln, struct thread *self);
 void threadlistnode_cleanup(struct threadlistnode *tln);
 
 /* Initialize and clean up a thread list. Must be empty at cleanup. */
-void threadlist_init(struct threadlist *tl);
+void threadlist_init(struct threadlist *tl, const char *name);
 void threadlist_cleanup(struct threadlist *tl);
 
 /* Check if it's empty */
@@ -89,6 +90,7 @@ void threadlist_insertafter(struct threadlist *tl,
 void threadlist_insertbefore(struct threadlist *tl,
 			     struct thread *addee, struct thread *onlist);
 void threadlist_remove(struct threadlist *tl, struct thread *t);
+struct thread *threadlist_remove_if(struct threadlist *tl, bool (*callback)(struct thread *t));
 
 /* Iteration; itervar should previously be declared as (struct thread *) */
 #define THREADLIST_FORALL(itervar, tl) \

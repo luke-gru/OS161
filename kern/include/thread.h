@@ -91,13 +91,14 @@ struct thread {
 	 * Thread subsystem internal fields.
 	 */
 	struct thread_machdep t_machdep; /* Any machine-dependent goo */
-	struct threadlistnode t_listnode; /* Link for run/sleep/zombie lists */
+	struct threadlistnode t_listnode; /* Link for run/sleep/zombie lists. Can only be on 1 of these lists at a time! */
 	void *t_stack;			/* Kernel-level stack */
 	struct switchframe *t_context;	/* Saved register context from context switch (on stack) */
 	struct cpu *t_cpu;		/* CPU thread runs on */
 	struct proc *t_proc;		/* Process thread belongs to */
 	struct trapframe *t_tf; /* most recent trap frame for thread */
 	volatile bool just_forked;
+	time_t wakeup_at; /* for timed wakeup */
 	pid_t t_pid; /* Same as t_proc->pid, but proc might be destroyed before thread is cleaned up, so we store it here too */
 	HANGMAN_ACTOR(t_hangman);	/* Deadlock detector hook */
 
@@ -190,5 +191,8 @@ void thread_consider_migration(void);
 
 extern unsigned thread_count;
 void thread_wait_for_count(unsigned);
+
+void thread_sleep_n_seconds(int seconds);
+void thread_add_ready_sleepers_to_runqueue(void);
 
 #endif /* _THREAD_H_ */
