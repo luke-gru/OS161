@@ -154,6 +154,9 @@ ssize_t __getcwd(char *buf, size_t buflen);
 
 int sleep(int seconds);
 
+int pageout_region(__u32 startaddr, size_t nbytes);
+int lock_region(__u32 startaddr, size_t nbytes);
+
 /*
  * These are not themselves system calls, but wrapper routines in libc.
  */

@@ -193,7 +193,30 @@ int sys_sleep(int seconds, int *retval) {
     return 0;
   }
   thread_sleep_n_seconds(seconds);
-  //clocksleep(seconds);
   *retval = 0;
+  return 0;
+}
+
+int sys_pageout_region(uint32_t startaddr, size_t nbytes, int *retval) {
+  struct addrspace *as = proc_getas();
+  KASSERT(as);
+  int res = vm_pageout_region(as, startaddr, nbytes);
+  if (res <= 0) {
+    *retval = -1;
+  } else {
+    *retval = res; // number of pages swapped out
+  }
+  return 0;
+}
+
+int sys_lock_region(uint32_t startaddr, size_t nbytes, int *retval) {
+  struct addrspace *as = proc_getas();
+  KASSERT(as);
+  int res = vm_pin_region(as, startaddr, nbytes);
+  if (res <= 0) {
+    *retval = -1;
+  } else {
+    *retval = res; // number of pages pinned
+  }
   return 0;
 }

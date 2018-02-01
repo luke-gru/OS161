@@ -178,7 +178,14 @@ syscall(struct trapframe *tf)
 			panic("shouldn't return from exit");
 			break;
 		case SYS_sleep:
-			sys_sleep((int)tf->tf_a0, &retval);
+			err = sys_sleep((int)tf->tf_a0, &retval);
+			break;
+		// system calls for testing Kernel
+		case SYS_pageout_region:
+			err = sys_pageout_region((uint32_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);
+			break;
+		case SYS_lock_region:
+			err = sys_lock_region((uint32_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);
 			break;
 	  default:
 			kprintf("Unknown syscall %d\n", callno);

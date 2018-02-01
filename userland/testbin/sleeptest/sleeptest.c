@@ -6,21 +6,41 @@
 int main(int argc, char *argv[]) {
   (void)argc;
   (void)argv;
-  printf("mallocing 5 pages\n");
-  for (int j = 0; j < 5; j++) {
-    char *chars = malloc(2000);
-    memset(chars, 'A', 2000);
-    printf("sleeping\n");
-    sleep(3);
-    printf("checking\n");
-    for (int i = 0; i < 2000; i++) {
-      if (chars[i] != 'A') {
-        printf("Invalid memory at index %d!\n", i);
-        exit(1);
-      }
-    }
-    free(chars);
-  }
+
+  char *buf = malloc(2000);
+  memset(buf, 'A', 2000);
+
+  printf("paging out region\n");
+  int res = pageout_region((__u32)buf, 2000);
+  printf("page result: %d\n", res);
+
+  printf("accessing region\n");
+  char letter = buf[1];
+  printf("got: %c\n", letter);
+
+  printf("locking (pinning) region\n");
+  res = lock_region((__u32)buf, 2000);
+  printf("got: %d\n", res);
+
+  printf("paging out locked region, should fail\n");
+  res = pageout_region((__u32)buf, 2000);
+  printf("page result: %d\n", res);
+
+  // printf("mallocing 5 pages\n");
+  // for (int j = 0; j < 5; j++) {
+  //   char *chars = malloc(2000);
+  //   memset(chars, 'A', 2000);
+  //   printf("sleeping\n");
+  //   sleep(3);
+  //   printf("checking\n");
+  //   for (int i = 0; i < 2000; i++) {
+  //     if (chars[i] != 'A') {
+  //       printf("Invalid memory at index %d!\n", i);
+  //       exit(1);
+  //     }
+  //   }
+  //   //free(chars);
+  // }
   printf("done\n");
   exit(0);
 }

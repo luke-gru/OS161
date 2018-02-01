@@ -113,5 +113,8 @@ void vm_tlbshootdown_all(void);
 bool vm_can_sleep(void);
 void vm_unpin_page_entry(struct page_table_entry *entry);
 
+int vm_pin_region(struct addrspace *as, uint32_t region_start, size_t nbytes);
+int vm_pageout_region(struct addrspace *as, uint32_t region_start, size_t nbytes);
+
 
 #endif /* _VM_H_ */

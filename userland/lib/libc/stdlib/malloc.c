@@ -52,6 +52,8 @@
 #error "please fix me"
 #endif
 
+//#define MALLOCDEBUG 1
+
 /*
  * malloc block header.
  *

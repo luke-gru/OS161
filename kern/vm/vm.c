@@ -374,13 +374,83 @@ void vm_unpin_page_entry(struct page_table_entry *entry) {
   unlock_pagetable();
 }
 
-// static void vm_pin_region(vaddr_t region_start, vaddr_t region_end) {
-//   // TODO
+int vm_pin_region(struct addrspace *as, uint32_t region_start, size_t nbytes) {
+	uint32_t region_end = region_start + nbytes;
+	struct page_table_entry *pte = as->pages;
+	int num_entries_pinned = 0;
+	while (pte) {
+		if ((region_start < (pte->vaddr + PAGE_SIZE)) && region_end > pte->vaddr) {
+			if (pte->coremap_idx == -1) {
+				pte = pte->next;
+				continue;
+			}
+			struct page *page = &coremap[pte->coremap_idx];
+			lock_pagetable();
+			page->is_pinned = true;
+			unlock_pagetable();
+			num_entries_pinned++;
+		}
+		pte = pte->next;
+	}
+	return num_entries_pinned;
+}
+
+// void vm_unpin_region(struct addrspace *as, uint32_t region_start, size_t nbytes) {
+// 	uint32_t region_end = region_start + nbytes;
+// 	struct page_table_entry *pte = as->pages;
+// 	int num_entries_unpinned = 0;
+// 	while (pte) {
+// 		if ((region_start < (pte->vaddr + PAGE_SIZE)) && region_end > pte->vaddr) {
+// 			if (pte->coremap_idx == -1) {
+// 				pte = pte->next;
+// 				continue;
+// 			}
+// 			struct page *page = &coremap[pte->coremap_idx];
+// 			lock_pagetable();
+// 			page->is_pinned = false;
+// 			unlock_pagetable();
+// 			num_entries_unpinned++;
+// 		}
+// 		pte = pte->next;
+// 	}
+// 	return num_entries_unpinned;
 // }
-//
-// static void vm_unpin_region(vaddr_t region_start, vaddr_t region_end) {
-//   // TODO
-// }
+
+int vm_pageout_region(struct addrspace *as, uint32_t region_start, size_t nbytes) {
+	uint32_t region_end = region_start + nbytes;
+	struct page_table_entry *pte = as->pages;
+	int num_entries_swapped = 0;
+	while (pte) {
+		if ((region_start < (pte->vaddr + PAGE_SIZE)) && region_end > pte->vaddr) {
+			if (pte->coremap_idx == -1) {
+				pte = pte->next;
+				continue;
+			}
+			struct page *page = &coremap[pte->coremap_idx];
+			if (page->is_pinned) {
+				pte = pte->next;
+				continue;
+			}
+			int swap_res = pte_swapout(pte->as, pte, false);
+			if (swap_res == 0) {
+				lock_pagetable();
+				page->state = PAGESTATE_FREE;
+				page->entry = NULL;
+				page->is_pinned = false;
+				unlock_pagetable();
+				num_entries_swapped++;
+			}
+			if (pte->tlb_idx >= 0) {
+				// NOTE: assumes address space given is of the currently running process
+				tlb_write(TLBHI_INVALID(pte->tlb_idx), TLBLO_INVALID(), pte->tlb_idx);
+				KASSERT(pte->paddr > 0);
+				memset((void*)PADDR_TO_KVADDR(pte->paddr), 0, PAGE_SIZE);
+			}
+		}
+		pte = pte->next;
+	}
+	return num_entries_swapped;
+}
 
 void
 vm_tlbshootdown_all(void)

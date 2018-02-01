@@ -89,4 +89,9 @@ int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 
 int sys_sleep(int seconds, int *retval);
 
+// NOTE: this is used to test paging memory in/out and memory region locking
+// in the kernel!
+int sys_pageout_region(uint32_t startaddr, size_t nbytes, int *retval);
+int sys_lock_region(uint32_t startaddr, size_t nbytes, int *retval);
+
 #endif /* _SYSCALL_H_ */
