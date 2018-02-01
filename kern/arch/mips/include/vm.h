@@ -117,10 +117,10 @@ paddr_t ram_getfirstfree(void);
  */
 
 struct tlbshootdown {
-	/*
-	 * Change this to what you need for your VM design.
-	 */
-	int ts_placeholder;
+	int tlb_idx;
+	unsigned long addrspace_id;
+	bool zero_mem;
+	paddr_t paddr; // in case we zero memory after flushing the TLB entry, we need to have the paddr
 };
 
 #define TLBSHOOTDOWN_MAX 16

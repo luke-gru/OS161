@@ -131,6 +131,7 @@ struct thread {
 #define THREADINLINE INLINE
 #endif
 
+// threadarray_get, threadarray_num
 DECLARRAY(thread, THREADINLINE);
 DEFARRAY(thread, THREADINLINE);
 
@@ -157,8 +158,13 @@ void thread_shutdown(void);
  * disappear at any time without notice.
  */
 int thread_fork(const char *name, struct proc *proc,
-                void (*func)(void *, unsigned long),
-                void *data1, unsigned long data2);
+                void (*entrypoint)(void *data1, unsigned long data2),
+								void *data1, unsigned long data2);
+// same as above except starts on the given CPU
+int thread_fork_in_cpu(const char *name, struct proc *proc, struct cpu *cpu,
+									     void (*entrypoint)(void *data1, unsigned long data2),
+										 	 void *data1, unsigned long data2);
+struct cpu *thread_get_cpu(unsigned index);
 int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *tf, int *errcode);
 
 /*

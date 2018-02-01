@@ -89,6 +89,11 @@ static time_t timestamp() {
 	return tv.tv_sec;
 }
 
+struct cpu *thread_get_cpu(unsigned index) {
+	DEBUGASSERT(index < num_cpus);
+	return cpuarray_get(&allcpus, index);
+}
+
 ////////////////////////////////////////////////////////////
 
 /*
@@ -535,10 +540,17 @@ thread_make_runnable(struct thread *target, bool already_have_lock)
  * as the caller, unless the scheduler intervenes first.
  */
 int
-thread_fork(const char *name,
-	    struct proc *proc,
-	    void (*entrypoint)(void *data1, unsigned long data2),
-	    void *data1, unsigned long data2)
+thread_fork(const char *name, struct proc *proc,
+	    		  void (*entrypoint)(void *data1, unsigned long data2),
+						void *data1, unsigned long data2)
+{
+	return thread_fork_in_cpu(name, proc, curthread->t_cpu, entrypoint, data1, data2);
+}
+
+int
+thread_fork_in_cpu(const char *name, struct proc *proc, struct cpu *cpu,
+	    		  void (*entrypoint)(void *data1, unsigned long data2),
+						void *data1, unsigned long data2)
 {
 	struct thread *newthread;
 	int result;
@@ -554,8 +566,7 @@ thread_fork(const char *name,
 		return ENOMEM;
 	}
 	thread_checkstack_init(newthread);
-
-	newthread->t_cpu = curthread->t_cpu;
+	newthread->t_cpu = cpu;
 
 	/* Attach the new thread to the current process by default */
 	if (proc == NULL) {
@@ -599,7 +610,8 @@ thread_fork(const char *name,
 
 // If returns -1, then fork failed and *errcode is set.
 // Otherwise returns PID > 0 of child process. The child process is setup to run on
-// some next context switch, to return 0 from the caller's trapframe.
+// some next context switch, to return 0 from the caller's trapframe into userland.
+// This is to be used from sys_fork() only!, and requires an interrupt trapframe.
 int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapframe *tf, int *errcode) {
 	int result;
 	struct thread *newthread;

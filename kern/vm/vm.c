@@ -10,6 +10,7 @@
 #include <addrspace.h>
 #include <clock.h>
 #include <proc.h>
+#include <cpu.h>
 
 static bool beforeVM = true;
 static unsigned long pages_in_coremap;
@@ -24,7 +25,7 @@ static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 unsigned long corefree(void) {
 	int k=0;
 	for (unsigned long i=0; i<pages_in_coremap; i++){
-		if (coremap[i].state == PAGESTATE_FREE){
+		if (coremap[i].state == PAGESTATE_FREE) {
 			k++;
 		}
 	}
@@ -96,7 +97,7 @@ void kswapd_bootstrap() {
   KASSERT(as);
 	as->no_heap_alloc = true;
   kswapd_proc->p_addrspace = as;
-  KASSERT(as_prepare_load(as) == 0); // allocate userspace stack pages
+  KASSERT(as_prepare_load(as) == 0); // allocate userspace stack pages so we can jump to entrypoint func
   struct page_table_entry *pte = as->pages;
   char *pte_name = as->name;
   while (pte != NULL) {
@@ -107,7 +108,8 @@ void kswapd_bootstrap() {
     coremap[pte->coremap_idx].is_pinned = true;
     pte = pte->next;
   }
-  int fork_res = thread_fork("kswapd", kswapd_proc, kswapd_start, NULL, 0);
+	struct cpu *non_boot_cpu = thread_get_cpu(3);
+  int fork_res = thread_fork_in_cpu("kswapd", kswapd_proc, non_boot_cpu, kswapd_start, NULL, 0);
 	KASSERT(fork_res == 0);
 }
 
@@ -150,34 +152,47 @@ static void kswapd_swapout_pages() {
       if (pte->is_swapped || pte->page_age < 3) {
         continue;
       }
-      DEBUG(DB_VM, "\nswapping out pages for %s\n", name);
+      DEBUG(DB_VM, "swapping out pages for %s\n", name);
       int swap_res;
       swap_res = pte_swapout(pte->as, pte, false);
       if (swap_res != 0) {
+				panic("swap error");
 				DEBUG(DB_VM, "Swap error: %d\n", swap_res);
         continue;
       }
-      // NOTE: only invalidate the TLB if the process for this address space is currently running
+      // NOTE: only invalidate the TLB if the process using this address space is currently running
       if (pte->as->running_cpu_idx >= 0) {
         if (pte->tlb_idx >= 0 && pte->tlb_idx < NUM_TLB) {
+					// Is this CPU currently running the user process? Right now this can't happen,
+					// as kswapd is running as a "virtual" user process, and it doesn't swap its own page
+					// tables. In the future if we decide kswapd should be a kernel level thread without a
+					// process attached, we could reach here.
           if (pte->cpu_idx == (short)curcpu->c_number) {
-            DEBUG(DB_VM, "Invalidating page entry in TLB, zeroing memory\n");
+            DEBUG(DB_VM, "Invalidating page entry in curcpu's TLB, zeroing memory\n");
             tlb_write(TLBHI_INVALID(pte->tlb_idx), TLBLO_INVALID(), pte->tlb_idx);
             memset((void*)PADDR_TO_KVADDR(pte->paddr), 0, PAGE_SIZE);
-          } else {
-						DEBUG(DB_VM, "TODO: implement TLB shootdown\n");
-            // TODO: needs TLB shootdown
+          } else { // send a IPI to the right CPU.
+						KASSERT(pte->cpu_idx >= 0);
+						int spl = splhigh();
+						struct tlbshootdown notif;
+						notif.tlb_idx = pte->tlb_idx;
+						notif.paddr = pte->paddr;
+						notif.zero_mem = true;
+						notif.addrspace_id = pte->as->id;
+						struct cpu *cpu = thread_get_cpu(pte->cpu_idx);
+						KASSERT(cpu);
+						ipi_tlbshootdown(cpu, &notif);
+						splx(spl);
           }
         }
       }
+			lock_pagetable();
       coremap[i].state = PAGESTATE_FREE;
       coremap[i].entry = NULL;
+			coremap[i].is_pinned = false;
+			unlock_pagetable();
     }
   }
-}
-
-static void kswapd_swapin_async_pages() {
-  return;
 }
 
 void kswapd_start(void *_data1, unsigned long _data2) {
@@ -189,9 +204,8 @@ void kswapd_start(void *_data1, unsigned long _data2) {
     lock_pagetable();
     kswapd_age_pages();
     unlock_pagetable();
-		kswapd_swapout_pages();
 
-    kswapd_swapin_async_pages();
+		kswapd_swapout_pages();
 	}
 }
 
@@ -290,11 +304,13 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
 		pages_freed++;
 		i++;
 	}
-	KASSERT(pages_freed > 0);
-	if (pagetype == PAGETYPE_KERN) {
-		DEBUG(DB_VM, "kmalloc: freed %d kernel pages\n", pages_freed);
-	} else {
-		DEBUG(DB_VM, "Freed %d userlevel pages\n", pages_freed);
+	// page could have been freed by kswapd on a different CPU, in which case we do nothing
+	if (pages_freed > 0) {
+		if (pagetype == PAGETYPE_KERN) {
+			DEBUG(DB_VM, "kmalloc: freed %d kernel pages\n", pages_freed);
+		} else {
+			DEBUG(DB_VM, "Freed %d userlevel pages\n", pages_freed);
+		}
 	}
   if (dolock) {
 		unlock_pagetable();
@@ -369,14 +385,26 @@ void vm_unpin_page_entry(struct page_table_entry *entry) {
 void
 vm_tlbshootdown_all(void)
 {
-	panic("vm tried to do tlb shootdown?!\n");
+	panic("vm tried to do tlb shootdown all?!\n");
 }
 
 void
 vm_tlbshootdown(const struct tlbshootdown *ts)
 {
-	(void)ts;
-	panic("vm tried to do tlb shootdown?!\n");
+	struct addrspace *as = proc_getas();
+	if (!as) { return; }
+	if (as->id != ts->addrspace_id) { return; }
+	int spl = splhigh();
+	if (as->running_cpu_idx != (short)curcpu->c_number) {
+		DEBUG(DB_VM, "Address space no longer running, skipping shootdown notif\n");
+	}
+	DEBUG(DB_VM, "Received TLB shootdown notif, shooting down\n");
+	KASSERT(ts->tlb_idx >= 0 && ts->tlb_idx < NUM_TLB);
+	tlb_write(TLBHI_INVALID(ts->tlb_idx), TLBLO_INVALID(), ts->tlb_idx);
+	if (ts->zero_mem && ts->paddr > 0) {
+		memset((void*)PADDR_TO_KVADDR(ts->paddr), 0, PAGE_SIZE);
+	}
+	splx(spl);
 }
 
 int vm_fault(int faulttype, vaddr_t faultaddress) {
