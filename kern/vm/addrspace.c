@@ -75,6 +75,7 @@ struct addrspace *as_create(char *name) {
 	as->last_activation = (time_t)0;
 	as->is_active = false;
 	as->running_cpu_idx = -1;
+	as->no_heap_alloc = false;
 	spinlock_init(&as->spinlock);
 
 	return as;
@@ -216,17 +217,11 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 	// Copy the data from old to new
 	struct page_table_entry *iterate1 = old->pages;
 	struct page_table_entry *iterate2 = new->pages;
-
+	 // copy heap, stack and executable memory regions
 	while (iterate1 != NULL && iterate2 != NULL) {
 		DEBUGASSERT(iterate1->page_entry_type == iterate2->page_entry_type);
-		if (iterate1->page_entry_type == PAGE_ENTRY_TYPE_STACK) {
-			memset((void *)PADDR_TO_KVADDR(iterate2->paddr), 0, PAGE_SIZE); // zero out new stack memory
-		} else {
-			memcpy((void *)PADDR_TO_KVADDR(iterate2->paddr),
-					(const void *)PADDR_TO_KVADDR(iterate1->paddr), PAGE_SIZE); // copy heap and executable memory regions
-		}
-
-
+		memcpy((void *)PADDR_TO_KVADDR(iterate2->paddr),
+			(const void *)PADDR_TO_KVADDR(iterate1->paddr), PAGE_SIZE);
 		iterate1 = iterate1->next;
 		iterate2 = iterate2->next;
 	}
@@ -683,7 +678,9 @@ int pte_swapout(struct addrspace *as, struct page_table_entry *pte, bool zero_fi
 		}
 	}
 
-	DEBUG(DB_VM, "Swapping out page entry to file %s, offset: %lld\n", swapfname, write_offset);
+	DEBUG(DB_VM, "Swapping out page entry (%lu) to file %s, offset: %lld\n",
+		pte->coremap_idx, swapfname, write_offset
+	);
 	uio_kinit(&iov, &myuio, buf, PAGE_SIZE, write_offset, UIO_WRITE);
 	result = VOP_WRITE(node, &myuio);
 	if (result != 0) {
@@ -722,7 +719,6 @@ int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page *
 	bzero(swapfname, 30);
 	snprintf(swapfname, 30, swapfilefmt, pid, as->id);
 	char *swapfnamecopy = kstrdup(swapfname);
-	DEBUG(DB_VM, "Swapping in page entry from file %s, offset: %lld\n", swapfname, read_offset);
 	struct uio myuio;
 	struct iovec iov;
 	char *buf = kmalloc(PAGE_SIZE);
@@ -750,6 +746,9 @@ int pte_swapin(struct addrspace *as, struct page_table_entry *pte, struct page *
 		splx(spl);
 		return ENOMEM;
 	}
+	DEBUG(DB_VM, "Swapping in page entry from file %s to page %lu, offset: %lld\n",
+		swapfname, pte->coremap_idx, read_offset
+	);
 	if (into_page != NULL) {
 		*into_page = &coremap[pte->coremap_idx];
 	}

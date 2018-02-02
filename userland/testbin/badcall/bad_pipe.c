@@ -50,7 +50,7 @@ pipe_badptr(void *ptr, const char *desc)
 	int rv;
 
 	report_begin("%s", desc);
-	rv = pipe(ptr);
+	rv = pipe(ptr, 100);
 	return report_check(rv, errno, EFAULT);
 }
 
@@ -67,7 +67,7 @@ pipe_unaligned(void)
 	ptr = (char *)&fds[0];
 	ptr++;
 
-	rv = pipe((int *)ptr);
+	rv = pipe((int *)ptr, 100);
 	report_survival(rv, errno, &result);
 	if (rv == 0) {
 		memmove(fds, ptr, 2*sizeof(int));

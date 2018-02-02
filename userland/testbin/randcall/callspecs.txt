@@ -19,7 +19,7 @@
 5 symlink	ptr	ptr
 5 readlink	ptr	ptr	size
 2 dup2		int	int
-5 pipe		ptr
+5 pipe		ptr size
 5 __time	ptr	ptr
 2 __getcwd	ptr	size
 5 stat		ptr	ptr

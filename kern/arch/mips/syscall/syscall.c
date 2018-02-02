@@ -180,6 +180,9 @@ syscall(struct trapframe *tf)
 		case SYS_sleep:
 			err = sys_sleep((int)tf->tf_a0, &retval);
 			break;
+		case SYS_pipe:
+			err = sys_pipe((userptr_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);
+			break;
 		// system calls for testing Kernel
 		case SYS_pageout_region:
 			err = sys_pageout_region((uint32_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);

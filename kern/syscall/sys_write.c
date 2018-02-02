@@ -33,6 +33,7 @@
 #include <current.h>
 #include <kern/errno.h>
 #include <uio.h>
+#include <copyinout.h>
 
 #include <lib.h>
 
@@ -56,6 +57,36 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   struct uio myuio;
   int errcode = 0;
 
+  if (file_des->ftype == FILEDES_TYPE_PIPE) {
+    struct pipe *pipe = file_des->pipe;
+    if (!pipe->is_writer || !pipe->pair) {
+      DEBUG(DB_SYSCALL, "Write to pipe failed: not writer or pair doesn't exist!\n");
+      *count_retval = -1;
+      return EBADF;
+    }
+    if ((pipe->bufpos + count) > pipe->buflen) {
+      DEBUG(DB_SYSCALL, "Write to pipe failed, bufsize not big enough\n");
+      *count_retval = -1;
+      return ENOMEM;
+    }
+    int copy_res = copyin(buf, pipe->buf + pipe->bufpos, count);
+    if (copy_res != 0) {
+      DEBUG(DB_SYSCALL, "Write to pipe failed, copyin failure: %d\n", copy_res);
+      *count_retval = -1;
+      return copy_res;
+    }
+    pipe->bufpos += count;
+    //DEBUG(DB_SYSCALL, "Pipe write buffer after write: %s\n", pipe->buf);
+    if (pipe->pair->buflen <= pipe->bufpos && pipe->pair->buflen > 0) {
+      DEBUG(DB_SYSCALL, "Write to pipe successful, signalling reader\n");
+      pipe_signal_can_read(pipe->pair); // wake up any ready readers
+    } else {
+      DEBUG(DB_SYSCALL, "Write to pipe successful\n");
+    }
+    *count_retval = count;
+    return 0;
+  }
+
   bool dolock = curthread->t_in_interrupt == false &&
     curthread->t_curspl == 0 && curcpu->c_spinlocks == 0;
   // avoid extraneous context switches on lock acquisition when printing to console
@@ -70,7 +101,6 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   }
   // disable interrupts during writes to avoid race conditions writing to the same file
   int spl = splhigh();
-  // vm_pin_region(buf, buf + count);
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
   if (is_console) {
     if (dolock) {
@@ -81,7 +111,6 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   }
 
   int res = file_write(file_des, &myuio, &errcode); // releases filedes lock
-  // vm_unpin_region(buf, buf + count);
   splx(spl);
   if (res == -1) {
     if (is_console) {

@@ -146,7 +146,7 @@ int symlink(const char *target, const char *linkname);
 ssize_t readlink(const char *path, char *buf, size_t buflen);
 int dup2(int filehandle, int newhandle);
 int dup(int oldfd);
-int pipe(int filehandles[2]);
+int pipe(int filehandles[2], size_t buflen);
 int __time(time_t *seconds, unsigned long *nanoseconds);
 ssize_t __getcwd(char *buf, size_t buflen);
 /* stat - see sys/stat.h */

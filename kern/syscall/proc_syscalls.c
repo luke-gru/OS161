@@ -48,7 +48,6 @@ void sys_exit(int status) {
   // from it to run other threads. Exorcise gets called once in a while (when starting
   // and switching threads), which destroys the parts of the thread that can't be destroyed
   // while it's running.
-
   thread_exit(status);
 }
 
@@ -86,7 +85,6 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
   int err = 0; // should be set below
   (void)options;
   DEBUG(DB_SYSCALL, "process %d waiting for %d\n", (int)curproc->pid, (int)child_pid);
-  // vm_pin_region(exitstatus_buf, exitstatus_buf + sizeof(int));
   int result = proc_waitpid_sleep(child_pid, &err);
   if (result == -1) {
     KASSERT(err > 0);
@@ -102,7 +100,6 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
   );
 
   copyout((const void*)&waitstatus, exitstatus_buf, sizeof(int));
-  // vm_unpin_region(exitstatus_buf, exitstatus_buf + sizeof(int));
   *retval = 0;
   return 0;
 }
@@ -146,18 +143,18 @@ int sys_sbrk(uint32_t increment, int *retval) {
   vaddr_t old_heapbrk = as->heap_brk;
   DEBUGASSERT(old_heapbrk > 0);
   if (increment == 0) {
-    DEBUG(DB_VM, "Giving back initial heap brk\n");
+    //DEBUG(DB_VM, "Giving back initial heap brk\n");
     *retval = (int)old_heapbrk;
     return 0;
   } else {
     int grow_res = as_growheap(as, increment);
-    DEBUG(DB_VM, "Growing heap by %u\n", increment);
+    //DEBUG(DB_VM, "Growing heap by %u\n", increment);
     if (grow_res != 0) { // ENOMEM
       DEBUG(DB_VM, "Growing heap failed with: %d\n", grow_res);
       *retval = -1;
       return grow_res;
     }
-    DEBUG(DB_VM, "Old heapbrk from sbrk: %d\n", (int)old_heapbrk);
+    //DEBUG(DB_VM, "Old heapbrk from sbrk: %d\n", (int)old_heapbrk);
     *retval = (int)old_heapbrk;
     return 0;
   }
@@ -174,7 +171,6 @@ int sys_getcwd(userptr_t buf, size_t buflen, int *retval)
   struct iovec iov;
   struct uio useruio;
   int result;
-
   uio_uinit(&iov, &useruio, buf, buflen, 0, UIO_READ);
 
   result = vfs_getcwd(&useruio);

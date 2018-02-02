@@ -62,6 +62,15 @@ int sys_chdir(userptr_t dirbuf, int *retval) {
 }
 
 int sys_close(int fd, int *retval) {
+  struct filedes *file_des = filetable_get(curproc, fd);
+  if (file_des->ftype == FILEDES_TYPE_PIPE && file_des->pipe->is_writer) {
+    // notify reader if it's blocked
+    if (!file_des->pipe->pair->is_closed && file_des->pipe->pair->buflen > 0) {
+      file_des->pipe->is_closed = true;
+      DEBUG(DB_SYSCALL, "Closed pipe writer, signalling reader\n");
+      pipe_signal_can_read(file_des->pipe->pair);
+    }
+  }
   int res = file_close(fd);
   if (res != 0) {
     DEBUG(DB_SYSCALL, "Error in sys_close: fd %d for process %d: code=%d (%s)\n",
@@ -79,7 +88,6 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
     *retval = -1;
     return EBADF;
   }
-  //vm_pin_region(stat_buf, stat_buf + sizeof(struct stat));
   int errcode = 0;
   struct stat st;
   int res = filedes_stat(file_des, &st, &errcode);
@@ -90,7 +98,6 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
     return errcode;
   }
   copyout(&st, stat_buf, sizeof(struct stat));
-  //vm_unpin_region(stat_buf, stat_buf + sizeof(struct stat));
   *retval = 0;
   return 0;
 }
@@ -232,19 +239,30 @@ int sys_getdirentry(int fd, userptr_t dirname_ubuf, size_t buf_count, int *retva
   }
   struct iovec iov;
   struct uio myuio;
-  // vm_pin_region(dirname_ubuf, dirname_ubuf + buf_count)
   uio_uinit(&iov, &myuio, dirname_ubuf, buf_count, file_des->offset, UIO_READ);
   int res = VOP_GETDIRENTRY(file_des->node, &myuio);
   if (res != 0) {
     *retval = -1;
     return res;
   }
-  // vm_unpin_region(dirname_ubuf, dirname_ubuf + buf_count)
   if (myuio.uio_offset == 0) { // no more entries
     *retval = 0;
     return 0;
   }
   file_des->offset += 1; // this is the offset to the next entry in the directory (the "slot")
   *retval = buf_count - myuio.uio_resid; // amount of bytes written to dirname_ubuf
+  return 0;
+}
+
+int sys_pipe(userptr_t pipes_ary, size_t buflen, int *retval) {
+  int reader_fd, writer_fd;
+  int pipe_creat_res = file_create_pipe_pair(&reader_fd, &writer_fd, buflen);
+  if (pipe_creat_res != 0) {
+    *retval = -1;
+    return pipe_creat_res;
+  }
+  copyout(&reader_fd, pipes_ary, sizeof(int));
+  copyout(&writer_fd, pipes_ary + sizeof(int), sizeof(int));
+  *retval = 0;
   return 0;
 }

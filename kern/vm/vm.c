@@ -486,7 +486,7 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	int spl;
 
 	vaddr_t initial_addr = faultaddress;
-	(void)initial_addr;
+	(void)initial_addr; // for debug purposes
 	faultaddress &= PAGE_FRAME;
 
 	//DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
@@ -518,8 +518,6 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 		 */
 		return EFAULT;
 	}
-
-
 
 	/* Assert that the address space has been set up properly. */
 	KASSERT(as->heap_end != 0);

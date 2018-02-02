@@ -56,6 +56,8 @@
 #include <kern/fcntl.h>
 #include <uio.h>
 #include <syscall.h>
+#include <wchan.h>
+#include <copyinout.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -93,7 +95,9 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
 	KASSERT(file_des);
 	file_des->pathname = kstrdup(pathname);
+	file_des->ftype = FILEDES_TYPE_REG;
 	file_des->node = node;
+	file_des->pipe = NULL;
 	file_des->flags = flags;
 	file_des->offset = 0;
 	file_des->refcount = 1;
@@ -106,16 +110,119 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	return file_des;
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
-	kfree(file_des->pathname);
 	file_des->flags = 0;
 	file_des->offset = 0;
+	// FIXME: cleanup
+	if (file_des->ftype == FILEDES_TYPE_PIPE) {
+		if (file_des->pipe->pair->is_closed) {
+			if (file_des->pipe->buf) {
+				kfree(file_des->pipe->buf);
+			}
+			if (file_des->pipe->pair->buf) {
+				kfree(file_des->pipe->pair->buf);
+			}
+			// TODO: clean up wchan and spinlock
+			kfree(file_des->pipe->pair);
+			kfree(file_des->pipe);
+			return;
+		} else {
+			//file_des->pipe->is_closed = true; // wait until pipe pair is closed to destroy the pair together
+			return;
+		}
+	} else {
+		kfree(file_des->pathname);
+		vfs_close(file_des->node); // check success?
+		file_des->node = (void*)0xdeadbeef;
+	}
 	KASSERT(!lock_do_i_hold(file_des->lk));
 	lock_destroy(file_des->lk);
-	vfs_close(file_des->node); // check success?
-	file_des->node = (void*)0xdeadbeef;
 	filetable_nullout(p, file_des);
 	file_des->refcount = 0;
 	kfree(file_des);
+}
+static void init_pipe(struct pipe *p, bool is_writer, size_t buflen) {
+	p->bufpos = 0;
+	p->pair = NULL; // set elsewhere
+	p->is_writer = is_writer;
+	p->is_closed = false;
+	if (is_writer) {
+		p->buflen = buflen;
+		p->buf = kmalloc(buflen);
+		KASSERT(p->buf); // TODO: check sane size
+		memset(p->buf, 0, buflen);
+		p->wchan = NULL;
+	} else {
+		p->buf = NULL;
+		p->buflen = 0;
+		p->wchan = wchan_create("pipe wchan");
+		spinlock_init(&p->wchan_lk);
+	}
+}
+static struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx) {
+	struct filedes *file_des = kmalloc(sizeof(*file_des));
+	KASSERT(file_des);
+	file_des->ftype = FILEDES_TYPE_PIPE;
+	file_des->pathname = (buflen == 0) ? (char*)"pipe(reader)" :
+																			 (char*)"pipe(writer)";
+	file_des->node = NULL;
+	file_des->pipe = kmalloc(sizeof(struct pipe));
+	KASSERT(file_des->pipe);
+	init_pipe(file_des->pipe, buflen > 0, buflen);
+	file_des->flags = flags;
+	file_des->offset = 0; // not used //
+	file_des->refcount = 1;
+	file_des->lk = NULL;
+	file_des->latest_fd = -1;
+	int fd = filetable_put(p, file_des, table_idx);
+	// TODO: return error when too many files being opened
+	KASSERT(fd != -1);
+	file_des->latest_fd = fd;
+	return file_des;
+}
+
+void pipe_signal_can_read(struct pipe *reader) {
+	spinlock_acquire(&reader->wchan_lk);
+	wchan_wakeone(reader->wchan, &reader->wchan_lk);
+	spinlock_release(&reader->wchan_lk);
+}
+
+int pipe_read_nonblock(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err) {
+	// read should be ready now
+	DEBUGASSERT(count <= writer->buflen);
+	int copyout_res = copyout(writer->buf, ubuf, count);
+	if (copyout_res != 0) {
+		*err = copyout_res;
+		return -1;
+	}
+	unsigned pos = writer->bufpos;
+	if (pos > count) { // there's more left in the buffer
+		// move the remaining buffer (tail) to the head and zero out the new tail
+		memmove(writer->buf, writer->buf + count, writer->buflen - count);
+		memset(writer->buf + (writer->buflen - count), 0, count);
+		//DEBUG(DB_SYSCALL, "Pipe buffer left in writer: %s\n", writer->buf);
+		writer->bufpos -= count;
+		reader->buflen -= count;
+	} else { // read everything in buffer, so zero it out
+		memset(writer->buf, 0, writer->buflen);
+		writer->bufpos = 0;
+		reader->buflen = 0;
+	}
+	return count;
+}
+
+int pipe_read_block(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err) {
+	reader->buflen = count;
+	spinlock_acquire(&reader->wchan_lk);
+	wchan_sleep(reader->wchan, &reader->wchan_lk);
+	spinlock_release(&reader->wchan_lk);
+	// check if we're being notified of write-end closure
+	if (writer->is_closed) {
+		char eof_buf[1];
+		eof_buf[0] = '\0';
+		copyout(eof_buf/*EOF*/, ubuf, 1);
+		return 1;
+	}
+	return pipe_read_nonblock(reader, writer, ubuf, count, err);
 }
 
 // close file descriptor for current process.
@@ -215,6 +322,7 @@ bool filedes_is_device(struct filedes *file_des) {
 }
 bool filedes_is_seekable(struct filedes *file_des) {
 	KASSERT(file_des);
+	if (file_des->ftype != FILEDES_TYPE_REG) return false;
 	return VOP_ISSEEKABLE(file_des->node);
 }
 bool filedes_is_console(struct filedes *file_des) {
@@ -222,6 +330,10 @@ bool filedes_is_console(struct filedes *file_des) {
 }
 
 off_t filedes_size(struct filedes *file_des, int *errcode) {
+	if (file_des->ftype != FILEDES_TYPE_REG) {
+		*errcode = EBADF;
+		return -1;
+	}
 	struct stat st;
 	int res = filedes_stat(file_des, &st, errcode);
 	if (res != 0) {
@@ -232,6 +344,10 @@ off_t filedes_size(struct filedes *file_des, int *errcode) {
 
 int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode) {
 	KASSERT(file_des);
+	if (file_des->ftype != FILEDES_TYPE_REG) {
+		*errcode = EBADF;
+		return -1;
+	}
 	int res = VOP_STAT(file_des->node, st); // fills out stat struct
 	if (res != 0) {
 		*errcode = res;
@@ -296,6 +412,9 @@ bool file_exists(char *path) {
 bool file_is_dir(int fd) {
 	struct filedes *file_des = filetable_get(curproc, fd);
 	if (!file_des) return false;
+	if (file_des->ftype != FILEDES_TYPE_REG) {
+		return false;
+	}
 	struct stat st;
 	int errcode;
 	int res = filedes_stat(file_des, &st, &errcode);
@@ -337,6 +456,7 @@ int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
     *errcode = EBADF;
 		return -1;
   }
+	KASSERT(file_des->ftype == FILEDES_TYPE_REG);
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);
 	// NOTE: this must be before VOP_READ, as it's modified by the operation
@@ -362,6 +482,7 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 		*errcode = EBADF;
 		return -1;
 	}
+	KASSERT(file_des->ftype == FILEDES_TYPE_REG);
   int res = 0;
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);
@@ -424,6 +545,18 @@ int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode
 	}
 	DEBUGASSERT(file_des->offset >= 0);
 	file_des->offset = new_offset;
+	return 0;
+}
+
+int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen) {
+	struct filedes *reader = pipe_create(curproc, 0, 0, -1);
+	KASSERT(reader);
+	struct filedes *writer = pipe_create(curproc, 0, buflen, -1);
+	KASSERT(writer);
+	reader->pipe->pair = writer->pipe;
+	writer->pipe->pair = reader->pipe;
+	*reader_fd = reader->latest_fd;
+	*writer_fd = writer->latest_fd;
 	return 0;
 }
 

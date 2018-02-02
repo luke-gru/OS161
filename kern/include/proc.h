@@ -51,13 +51,23 @@ struct vnode;
 struct proc;
 struct stat;
 struct trapframe;
+struct pipe;
 
 #define FPATH_MAX 1024
+
+#define FILEDES_TYPE_REG 1
+#define FILEDES_TYPE_PIPE 2
+
+#define PIPE_TYPE_READER 1
+#define PIPE_TYPE_WRITER 2
+
 // TODO: move to filedes.c/filedes.h
 // Open file descriptor
 struct filedes {
 	char *pathname;
+	int ftype;
 	struct vnode *node;
+	struct pipe *pipe; // TODO: make it a union with vnode*, they're mutually exclusive
 	int flags;
 	int32_t offset;
 	// filedes is shared by child processes, and different fd integers
@@ -66,6 +76,18 @@ struct filedes {
 	unsigned int refcount;
 	int latest_fd;
 	struct lock *lk;
+};
+
+// reader/writer pipes
+struct pipe {
+	size_t buflen; // for writers, length of internal buffer. For readers, non-0 value is length of pending read
+	struct pipe *pair;
+	bool is_writer;
+	bool is_closed;
+	char *buf;
+	unsigned bufpos;
+	struct wchan *wchan; // only reader posesses a wchan
+	struct spinlock wchan_lk; // only reader posseses a wchan_lk
 };
 
 const char *special_filedes_name(int fd);
@@ -191,5 +213,10 @@ struct addrspace *proc_setas(struct addrspace *);
 
 bool is_current_userspace_proc(struct proc *p);
 
+// pipes
+int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen);
+void pipe_signal_can_read(struct pipe *reader);
+int pipe_read_nonblock(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err);
+int pipe_read_block(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err);
 
 #endif /* _PROC_H_ */

@@ -3,8 +3,54 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <err.h>
+#include <sys/stat.h>
+
+static void pipe_test(char **argv) {
+  int pipefd[2];
+  pid_t cpid;
+  char buf;
+
+  if (pipe(pipefd, 100) == -1) {
+    errx(1, "pipe() failed");
+  }
+
+  if (pipefd[0] < 3) {
+    errx(1, "Failed to get reader FD");
+  }
+
+  if (pipefd[1] < 3) {
+    errx(1, "Failed to get writer FD");
+  }
+
+  printf("reader: %d, writer: %d\n", pipefd[0], pipefd[1]);
+
+  cpid = fork();
+  if (cpid == -1) {
+    errx(1, "fork failed");
+  }
+
+  if (cpid == 0) {    /* Child reads from pipe */
+    close(pipefd[1]);          /* Close unused write end */
+
+    while (read(pipefd[0], &buf, 1) > 0)
+      write(1, &buf, 1);
+
+    write(1, "\n", 1);
+    close(pipefd[0]);
+    _exit(0);
+
+  } else {            /* Parent writes argv[1] to pipe */
+    close(pipefd[0]);          /* Close unused read end */
+    write(pipefd[1], argv[1], strlen(argv[1]));
+    close(pipefd[1]);          /* Reader will see EOF */
+    int exitstatus;
+    waitpid(cpid, &exitstatus, 0);              /* Wait for child */
+  }
+}
 
 int main(int argc, char *argv[]) {
+  pipe_test(argv);
+  exit(0);
   if (argc != 2) {
     errx(1, "must give file to write to");
   }
@@ -12,6 +58,17 @@ int main(int argc, char *argv[]) {
   if (fd < 3) {
     errx(1, "Error opening file: %s", argv[1]);
   }
+  struct stat *st = malloc(sizeof(struct stat));
+  int page_res = pageout_region((__u32)st, sizeof(struct stat));
+  if (page_res != 1) {
+    errx(1, "Paging out failed");
+  }
+  int fstat_res = fstat(fd, st);
+  printf("fstat res: %d, size: %d\n", fstat_res, (int)st->st_size);
+  if (fstat_res != 0) {
+    errx(1, "fstat failed");
+  }
+  exit(0);
   printf("old fd: %d\n", fd);
   int newfd = dup(fd);
   if (newfd < fd) {

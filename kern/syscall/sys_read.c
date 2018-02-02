@@ -33,6 +33,7 @@
 #include <current.h>
 #include <kern/errno.h>
 #include <uio.h>
+#include <copyinout.h>
 
 #include <lib.h>
 
@@ -43,13 +44,53 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
     *retval = -1;
     return EBADF;
   }
+  DEBUGASSERT(count > 0);
+  if (file_des->ftype == FILEDES_TYPE_PIPE) {
+    struct pipe *pipe = file_des->pipe;
+    if (pipe->is_writer || !pipe->pair) {
+      DEBUG(DB_SYSCALL, "Read from pipe failed: is writer or pair vanished!\n");
+      *retval = -1;
+      return EBADF;
+    }
+    if (pipe->pair->is_closed && pipe->pair->bufpos == 0) {
+      DEBUG(DB_SYSCALL, "Read from pipe got EOF, writer is closed!\n");
+      *retval = 0 /*EOF*/ ;
+      return 0;
+    }
+    struct pipe *writer = pipe->pair;
+    count = count > writer->buflen ? writer->buflen : count;
+    // non-blocking read, there's a big enough buffer in the write pipe
+    if (writer->bufpos >= count) {
+      count = count > writer->buflen ? writer->buflen : count;
+      int errcode = 0;
+      DEBUG(DB_SYSCALL, "Non-blocking read from pipe\n");
+      int piperead_res = pipe_read_nonblock(pipe, writer, buf, count, &errcode);
+      if (piperead_res == -1) {
+        DEBUG(DB_SYSCALL, "Read from pipe failed: %d\n", errcode);
+        *retval = -1;
+        return errcode;
+      }
+      *retval = count;
+      return 0;
+    } else {
+      int errcode = 0;
+      DEBUG(DB_SYSCALL, "Blocking read from pipe\n");
+      int piperead_res = pipe_read_block(pipe, writer, buf, count, &errcode);
+      if (piperead_res == -1) {
+        DEBUG(DB_SYSCALL, "Read from pipe failed: %d\n", errcode);
+        *retval = -1;
+        return errcode;
+      }
+      *retval = count;
+      return 0;
+    }
+  }
+
   struct iovec iov;
   struct uio myuio;
-  // vm_pin_region(buf, buf + count);
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_READ);
   int errcode = 0;
   int bytes_read = file_read(file_des, &myuio, &errcode);
-  // vm_unpin_region(buf, buf + count);
   if (bytes_read < 0) {
     DEBUG(DB_SYSCALL, "sys_read for fd %d failed with error: %d, %s\n", fd, errcode, strerror(errcode));
     *retval = -1;
