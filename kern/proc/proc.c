@@ -112,28 +112,41 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	file_des->flags = 0;
 	file_des->offset = 0;
-	// FIXME: cleanup
 	if (file_des->ftype == FILEDES_TYPE_PIPE) {
-		if (file_des->pipe->pair->is_closed) {
-			if (file_des->pipe->buf) {
-				kfree(file_des->pipe->buf);
+		// other side of pipe is also closed, safe to destruct pipe pair
+		if (file_des->pipe->pair && file_des->pipe->pair->is_closed) {
+			file_des->pipe->is_closed = true;
+			struct pipe *reader, *writer;
+			if (file_des->pipe->is_writer) {
+				writer = file_des->pipe;
+				reader = writer->pair;
+			} else {
+				reader = file_des->pipe;
+				writer = reader->pair;
 			}
-			if (file_des->pipe->pair->buf) {
-				kfree(file_des->pipe->pair->buf);
-			}
-			// TODO: clean up wchan and spinlock
-			kfree(file_des->pipe->pair);
-			kfree(file_des->pipe);
+			pipe_destroy_pair(reader, writer);
+			file_des->refcount = 0;
+			filetable_nullout(p, file_des);
+			kfree(file_des);
 			return;
+		// gets here if creating the writer pair of the pipe resulted in an error, so we
+		// destroy the reader to free the memory
+		} else if (file_des->pipe->pair == NULL && !file_des->pipe->is_writer) {
+			DEBUG(DB_SYSCALL, "Destroying lone reader side of pipe after creating writer failed\n");
+			pipe_destroy_reader(file_des->pipe);
+			file_des->refcount = 0;
+			filetable_nullout(p, file_des);
+			kfree(file_des);
+			return;
+		// the other side of the pipe is still open, so we don't free this side's memory yet
 		} else {
-			//file_des->pipe->is_closed = true; // wait until pipe pair is closed to destroy the pair together
+			file_des->pipe->is_closed = true; // wait until pipe pair is closed to destroy the pair together
 			return;
 		}
-	} else {
-		kfree(file_des->pathname);
-		vfs_close(file_des->node); // check success?
-		file_des->node = (void*)0xdeadbeef;
 	}
+	kfree(file_des->pathname);
+	vfs_close(file_des->node); // check success?
+	file_des->node = (void*)0xdeadbeef;
 	KASSERT(!lock_do_i_hold(file_des->lk));
 	lock_destroy(file_des->lk);
 	filetable_nullout(p, file_des);
@@ -144,11 +157,13 @@ static void init_pipe(struct pipe *p, bool is_writer, size_t buflen) {
 	p->bufpos = 0;
 	p->pair = NULL; // set elsewhere
 	p->is_writer = is_writer;
+	// pipes are destructed in pairs, so calling close() won't actually free the memory until its pair is closed
 	p->is_closed = false;
 	if (is_writer) {
+		KASSERT(buflen <= PIPE_BUF_MAX);
 		p->buflen = buflen;
 		p->buf = kmalloc(buflen);
-		KASSERT(p->buf); // TODO: check sane size
+		KASSERT(p->buf);
 		memset(p->buf, 0, buflen);
 		p->wchan = NULL;
 	} else {
@@ -158,7 +173,29 @@ static void init_pipe(struct pipe *p, bool is_writer, size_t buflen) {
 		spinlock_init(&p->wchan_lk);
 	}
 }
-static struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx) {
+void pipe_destroy_reader(struct pipe *reader) {
+	DEBUGASSERT(reader->is_closed && !reader->is_writer);
+	if (reader->wchan) {
+		wchan_destroy(reader->wchan);
+		spinlock_cleanup(&reader->wchan_lk);
+	}
+	kfree(reader);
+}
+void pipe_destroy_writer(struct pipe *writer) {
+	DEBUGASSERT(writer->is_closed && writer->is_writer);
+	if (writer->buf) {
+		kfree(writer->buf);
+	}
+	kfree(writer);
+}
+void pipe_destroy_pair(struct pipe *reader, struct pipe *writer) {
+	DEBUG(DB_SYSCALL, "Destroying pipe pair\n");
+	DEBUGASSERT(writer->pair == reader && reader->pair == writer);
+	pipe_destroy_reader(reader);
+	pipe_destroy_writer(writer);
+}
+
+struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx) {
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
 	KASSERT(file_des);
 	file_des->ftype = FILEDES_TYPE_PIPE;
@@ -169,9 +206,9 @@ static struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int
 	KASSERT(file_des->pipe);
 	init_pipe(file_des->pipe, buflen > 0, buflen);
 	file_des->flags = flags;
-	file_des->offset = 0; // not used //
+	file_des->offset = 0; // not used for pipes
 	file_des->refcount = 1;
-	file_des->lk = NULL;
+	file_des->lk = NULL; // not used for pipes
 	file_des->latest_fd = -1;
 	int fd = filetable_put(p, file_des, table_idx);
 	// TODO: return error when too many files being opened
@@ -225,7 +262,10 @@ int pipe_read_block(struct pipe *reader, struct pipe *writer, userptr_t ubuf, si
 	return pipe_read_nonblock(reader, writer, ubuf, count, err);
 }
 
-// close file descriptor for current process.
+// close file descriptor for current process by decreasing refcount on description,
+// and freeing the resources if the refcount is 0.
+// NOTE: the caller must call filetable_put(proc, NULL, fd) to actually have the
+// filedes be unavailable to the process.
 void filedes_close(struct proc *p, struct filedes *file_des) {
 	KASSERT(file_des);
 	if (!p) p = curproc;
@@ -549,10 +589,21 @@ int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode
 }
 
 int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen) {
+	if (buflen == 0) {
+		return EINVAL;
+	} else if (buflen > PIPE_BUF_MAX) {
+		return ENOMEM;
+	}
 	struct filedes *reader = pipe_create(curproc, 0, 0, -1);
-	KASSERT(reader);
+	if (!reader) {
+		return EMFILE;
+	}
 	struct filedes *writer = pipe_create(curproc, 0, buflen, -1);
-	KASSERT(writer);
+	if (!writer) {
+		reader->pipe->is_closed = true;
+		filedes_close(curproc, reader);
+		return EMFILE;
+	}
 	reader->pipe->pair = writer->pipe;
 	writer->pipe->pair = reader->pipe;
 	*reader_fd = reader->latest_fd;

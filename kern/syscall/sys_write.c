@@ -58,29 +58,32 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   int errcode = 0;
 
   if (file_des->ftype == FILEDES_TYPE_PIPE) {
-    struct pipe *pipe = file_des->pipe;
-    if (!pipe->is_writer || !pipe->pair) {
-      DEBUG(DB_SYSCALL, "Write to pipe failed: not writer or pair doesn't exist!\n");
+    struct pipe *writer = file_des->pipe;
+    struct pipe *reader = writer->pair;
+    if (!writer->is_writer || !reader) {
+      DEBUG(DB_SYSCALL, "Write to pipe failed: not writer or reader doesn't exist!\n");
       *count_retval = -1;
       return EBADF;
     }
-    if ((pipe->bufpos + count) > pipe->buflen) {
+    // TODO: If the write is too large, we should write what we can and return the
+    // length written
+    if ((writer->bufpos + count) > writer->buflen) {
       DEBUG(DB_SYSCALL, "Write to pipe failed, bufsize not big enough\n");
       *count_retval = -1;
       return ENOMEM;
     }
-    int copy_res = copyin(buf, pipe->buf + pipe->bufpos, count);
+    int copy_res = copyin(buf, writer->buf + writer->bufpos, count);
     if (copy_res != 0) {
       DEBUG(DB_SYSCALL, "Write to pipe failed, copyin failure: %d\n", copy_res);
       *count_retval = -1;
       return copy_res;
     }
-    pipe->bufpos += count;
+    writer->bufpos += count;
     //DEBUG(DB_SYSCALL, "Pipe write buffer after write: %s\n", pipe->buf);
-    if (pipe->pair->buflen <= pipe->bufpos && pipe->pair->buflen > 0) {
+    if (reader->buflen <= writer->bufpos && reader->buflen > 0) { // reader can read now
       DEBUG(DB_SYSCALL, "Write to pipe successful, signalling reader\n");
-      pipe_signal_can_read(pipe->pair); // wake up any ready readers
-    } else {
+      pipe_signal_can_read(reader); // wake up any blocked readers
+    } else { // no blocked readers, or blocked readers want more in buffer to read at once
       DEBUG(DB_SYSCALL, "Write to pipe successful\n");
     }
     *count_retval = count;

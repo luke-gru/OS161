@@ -58,8 +58,7 @@ struct pipe;
 #define FILEDES_TYPE_REG 1
 #define FILEDES_TYPE_PIPE 2
 
-#define PIPE_TYPE_READER 1
-#define PIPE_TYPE_WRITER 2
+#define PIPE_BUF_MAX 4096
 
 // TODO: move to filedes.c/filedes.h
 // Open file descriptor
@@ -80,12 +79,13 @@ struct filedes {
 
 // reader/writer pipes
 struct pipe {
-	size_t buflen; // for writers, length of internal buffer. For readers, non-0 value is length of pending read
+	size_t buflen; // for writers, length of internal buffer. For readers, non-0 value
+	// is length of pending read
 	struct pipe *pair;
 	bool is_writer;
 	bool is_closed;
-	char *buf;
-	unsigned bufpos;
+	char *buf; // writers only
+	unsigned bufpos; // for writers, amount of bytes in buffer ready to be read
 	struct wchan *wchan; // only reader posesses a wchan
 	struct spinlock wchan_lk; // only reader posseses a wchan_lk
 };
@@ -218,5 +218,10 @@ int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen);
 void pipe_signal_can_read(struct pipe *reader);
 int pipe_read_nonblock(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err);
 int pipe_read_block(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err);
+struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx);
+void pipe_destroy_reader(struct pipe *reader);
+void pipe_destroy_writer(struct pipe *writer);
+void pipe_destroy_pair(struct pipe *reader, struct pipe *writer);
+
 
 #endif /* _PROC_H_ */
