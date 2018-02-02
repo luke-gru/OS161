@@ -99,7 +99,7 @@ int filetable_put(struct proc *p, struct filedes *file_des, int idx);
 // NULLS all fds in the filetable that refers to this description
 int filetable_nullout(struct proc *p, struct filedes *file_des);
 
-struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx);
+struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx, int *errcode);
 void filedes_close(struct proc *p, struct filedes *file_des);
 
 off_t filedes_size(struct filedes *file_des, int *errcode);
@@ -218,7 +218,7 @@ int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen);
 void pipe_signal_can_read(struct pipe *reader);
 int pipe_read_nonblock(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err);
 int pipe_read_block(struct pipe *reader, struct pipe *writer, userptr_t ubuf, size_t count, int *err);
-struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx);
+struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx, int *err);
 void pipe_destroy_reader(struct pipe *reader);
 void pipe_destroy_writer(struct pipe *writer);
 void pipe_destroy_pair(struct pipe *reader, struct pipe *writer);

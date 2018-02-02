@@ -91,7 +91,7 @@ int special_filedes_flags(int i) {
 			return -1;
 	}
 }
-static struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
+static struct filedes *filedes_create(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx, int *errcode) {
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
 	KASSERT(file_des);
 	file_des->pathname = kstrdup(pathname);
@@ -104,8 +104,10 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	file_des->lk = lock_create("file lock");
 	file_des->latest_fd = -1;
 	int fd = filetable_put(p, file_des, table_idx);
-	// TODO: return error when too many files being opened
-	KASSERT(fd != -1);
+	if (fd == -1) {
+		*errcode = EMFILE;
+		return NULL;
+	}
 	file_des->latest_fd = fd;
 	return file_des;
 }
@@ -195,7 +197,7 @@ void pipe_destroy_pair(struct pipe *reader, struct pipe *writer) {
 	pipe_destroy_writer(writer);
 }
 
-struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx) {
+struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_idx, int *err) {
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
 	KASSERT(file_des);
 	file_des->ftype = FILEDES_TYPE_PIPE;
@@ -211,8 +213,10 @@ struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_
 	file_des->lk = NULL; // not used for pipes
 	file_des->latest_fd = -1;
 	int fd = filetable_put(p, file_des, table_idx);
-	// TODO: return error when too many files being opened
-	KASSERT(fd != -1);
+	if (fd == -1) {
+		*err = EMFILE;
+		return NULL;
+	}
 	file_des->latest_fd = fd;
 	return file_des;
 }
@@ -278,18 +282,23 @@ void filedes_close(struct proc *p, struct filedes *file_des) {
 	}
 }
 
-struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx) {
+struct filedes *filedes_open(struct proc *p, char *pathname, struct vnode *node, int flags, int table_idx, int *errcode) {
 	if (!p) p = curproc;
-	return filedes_create(p, pathname, node, flags, table_idx);
+	return filedes_create(p, pathname, node, flags, table_idx, errcode);
 }
 
-static void filedes_inherit(struct proc *p, struct filedes *file_des, int idx) {
+static int filedes_inherit(struct proc *p, struct filedes *file_des, int idx, int *errcode) {
 	DEBUGASSERT(idx >= 0);
 	file_des->refcount++;
 	int put_res = filetable_put(p, file_des, idx);
-	DEBUGASSERT(put_res != -1);
+	if (put_res == -1) {
+		*errcode = EMFILE;
+		return -1;
+	}
+	return 0;
 }
 
+// NOTE: callers should report EMFILE (too many open files for process) if return value is negative
 int filetable_put(struct proc *p, struct filedes *fd, int idx) {
 	if (!p) p = curproc;
 	struct filedes **fd_tbl = p->file_table;
@@ -474,9 +483,8 @@ int file_open(char *path, int openflags, mode_t mode, int *errcode) {
 		*errcode = result;
 		return -1;
 	}
-	struct filedes *new_filedes = filedes_open(curproc, path, node, openflags, -1);
+	struct filedes *new_filedes = filedes_open(curproc, path, node, openflags, -1, errcode);
 	if (!new_filedes) {
-		*errcode = EMFILE; // too many file descriptors for process
 		return -1;
 	}
 	if (filedes_is_writable(new_filedes) && ((openflags & O_APPEND) != 0)) {
@@ -594,15 +602,16 @@ int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen) {
 	} else if (buflen > PIPE_BUF_MAX) {
 		return ENOMEM;
 	}
-	struct filedes *reader = pipe_create(curproc, 0, 0, -1);
+	int errcode = 0;
+	struct filedes *reader = pipe_create(curproc, 0, 0, -1, &errcode);
 	if (!reader) {
-		return EMFILE;
+		return errcode;
 	}
-	struct filedes *writer = pipe_create(curproc, 0, buflen, -1);
+	struct filedes *writer = pipe_create(curproc, 0, buflen, -1, &errcode);
 	if (!writer) {
 		reader->pipe->is_closed = true;
 		filedes_close(curproc, reader);
-		return EMFILE;
+		return errcode;
 	}
 	reader->pipe->pair = writer->pipe;
 	writer->pipe->pair = reader->pipe;
@@ -758,15 +767,16 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 	struct proc *child_pr = NULL;
 	child_pr = proc_create(parent_pr->p_name);
 	if (!child_pr) {
-		*err = ENOMEM;
+		*err = ENOMEM; // just a guess
 		return -1;
 	}
 	child_pr->p_parent = parent_pr;
 	child_pr->p_addrspace = NULL;
 	lock_acquire(parent_pr->p_mutex);
-	int res = as_copy(proc_getas(), &child_pr->p_addrspace); // NOTE assumes parent_pr == curproc
+	int res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
 	if (res != 0) {
 		lock_release(parent_pr->p_mutex);
+		proc_destroy(child_pr);
 		*err = res;
 		return -1;
 	}
@@ -774,6 +784,7 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 	res = proc_inherit_filetable(parent_pr, child_pr);
 	if (res != 0) {
 		lock_release(parent_pr->p_mutex);
+		proc_destroy(child_pr);
 		*err = res;
 		return -1;
 	}
@@ -862,36 +873,54 @@ int proc_init_filetable(struct proc *p) {
 	KASSERT(console_in != NULL);
 	KASSERT(console_out != NULL);
 	KASSERT(console_err != NULL);
+	int errcode = 0;
 	filedes_open(
 		p,
 		(char*)special_filedes_name(0),
 		console_in,
 		special_filedes_flags(0),
-		0
+		0,
+		&errcode
 	);
+	if (errcode != 0) {
+		return errcode;
+	}
 	filedes_open(
 		p,
 		(char*)special_filedes_name(1),
 		console_out,
 		special_filedes_flags(1),
-		1
+		1,
+		&errcode
 	);
+	if (errcode != 0) {
+		return errcode;
+	}
 	filedes_open(
 		p,
 		(char*)special_filedes_name(2),
 		console_err,
 		special_filedes_flags(2),
-		2
+		2,
+		&errcode
 	);
+	if (errcode != 0) {
+		return errcode;
+	}
 	return 0;
 }
 
 int proc_inherit_filetable(struct proc *parent, struct proc *child) {
 	struct filedes *fd = NULL;
+	int put_res = 0;
+	int errcode = 0;
 	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
 		fd = filetable_get(parent, i);
 		if (fd) {
-			filedes_inherit(child, fd, i);
+			put_res = filedes_inherit(child, fd, i, &errcode);
+			if (put_res == -1) {
+				return errcode;
+			}
 		}
 	}
 	return 0;

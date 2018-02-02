@@ -237,7 +237,8 @@ static int cmd_touch(int nargs, char **args) {
 		kprintf("vfs_open failed (%s)\n", strerror(result));
 		return result;
 	}
-	struct filedes *new_filedes = filedes_open(curproc, fname, node, O_WRONLY|O_CREAT|O_EXCL, -1);
+	int errcode = 0;
+	struct filedes *new_filedes = filedes_open(curproc, fname, node, O_WRONLY|O_CREAT|O_EXCL, -1, &errcode);
 	KASSERT(new_filedes);
 	filedes_close(curproc, new_filedes);
 	kprintf("successfully created file '%s'\n", fname);
