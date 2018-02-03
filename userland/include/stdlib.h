@@ -49,6 +49,7 @@ void abort(void);
  * (This does libc cleanup before calling the _exit system call.)
  */
 void exit(int code);
+int atexit(void (*callback)(void));
 
 /*
  * Get the value of an environment variable. A default environment is

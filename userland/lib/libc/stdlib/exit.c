@@ -29,10 +29,38 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#define ATEXIT_MAX 32
 
 /*
  * C standard function: exit process.
+ * NOTE: normally, the following is done in userland:
+ * 1) Do some last work if there is registered with atexit()
+ * 2) Flush all unwritten buffered data
+ * 3) Close open streams
+ * 4) Remove all files created by function tmpfile()
  */
+
+typedef void (*atexit_cb)(void);
+static atexit_cb exit_handlers[ATEXIT_MAX];
+
+int atexit(void (*callback)(void)) {
+	for (int i = 0; i < ATEXIT_MAX; i++) {
+		if (!exit_handlers[i]) {
+			exit_handlers[i] = callback;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+// run in reverse order
+static void run_atexit_callbacks() {
+	for (int i = ATEXIT_MAX-1; i >= 0; i--) {
+		if (exit_handlers[i]) {
+			exit_handlers[i]();
+		}
+	}
+}
 
 void
 exit(int code)
@@ -41,8 +69,10 @@ exit(int code)
 	 * In a more complicated libc, this would call functions registered
 	 * with atexit() before calling the syscall to actually exit.
 	 */
-
-#ifdef __mips__
+	 run_atexit_callbacks();
+// NOTE: the #ifdef __mips__ thing below interferes with our atexit callbacks, so it's commented out for now.
+#if 0
+//#ifdef __mips__
 	/*
 	 * Because gcc knows that _exit doesn't return, if we call it
 	 * directly it will drop any code that follows it. This means

@@ -19,3 +19,5 @@
 * Implement signals
 * allow lseeking for sparse files (files with holes in them, see lseek(2)
 * Implement fcntl to set fd flags [DONE] (for O_CLOEXEC)
+* get atexit functions working
+* get exec() to parse shebang lines if present, and modify argv and parse options like Linux does

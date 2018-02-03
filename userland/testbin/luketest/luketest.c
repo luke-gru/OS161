@@ -6,6 +6,31 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+int atexit_num = 2;
+static void atexit_printer1(void) {
+  if (atexit_num != 1) {
+    printf("Uh oh, atexit_num isn't 1!\n");
+  }
+  printf("Bye from %d!\n", atexit_num);
+}
+static void atexit_printer2(void) {
+  printf("Bye from %d!\n", atexit_num);
+  atexit_num--;
+}
+
+static void atexit_test(int argc, char **argv) {
+  (void)argc; (void)argv;
+  int res = atexit(atexit_printer1);
+  if (res != 0) {
+    errx(1, "Unable to register atexit handler 1\n");
+  }
+  res = atexit(atexit_printer2); // should run first
+  if (res != 0) {
+    errx(1, "Unable to register atexit handler 2\n");
+  }
+  exit(0);
+}
+
 static void fcntl_test(int argc, char **argv) {
   if (argc == 3) { // luketest fcntl existingfile.txt
     int fd = open(argv[2], O_RDONLY, 0);
@@ -222,7 +247,10 @@ int main(int argc, char *argv[]) {
   } else if (strcmp(argv[1], "files") == 0) {
     files_test(argc, argv);
     exit(0);
+  } else if (strcmp(argv[1], "atexit") == 0) {
+    atexit_test(argc, argv);
+    exit(0);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe|files|atexit OPTIONS\n");
   }
 }
