@@ -57,6 +57,7 @@ struct pipe;
 
 #define FILEDES_TYPE_REG 1
 #define FILEDES_TYPE_PIPE 2
+#define FD_DEV_NULL -2
 
 #define PIPE_BUF_MAX 4096
 
@@ -206,6 +207,7 @@ int proc_waitpid_sleep(pid_t pid, int *errcode);
 int proc_fork(struct proc *parent, struct thread *th, struct trapframe *tf, int *errcode);
 int proc_pre_exec(struct proc *p, char *progname);
 int proc_close_cloexec_files(struct proc *p);
+int proc_redir_standard_streams(struct proc *p, int redir_fd);
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

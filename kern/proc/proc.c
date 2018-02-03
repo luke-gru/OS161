@@ -65,6 +65,8 @@
 struct proc *kproc;
 struct proc *kswapproc;
 
+static struct filedes *devnull;
+
 const char *special_filedes_name(int i) {
 	switch (i) {
 		case 0:
@@ -112,6 +114,7 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	return file_des;
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
+	DEBUGASSERT(file_des != devnull);
 	file_des->flags = 0;
 	file_des->offset = 0;
 	if (file_des->ftype == FILEDES_TYPE_PIPE) {
@@ -275,6 +278,9 @@ void filedes_close(struct proc *p, struct filedes *file_des) {
 	KASSERT(file_des);
 	if (!p) p = curproc;
 	DEBUGASSERT(file_des->refcount > 0);
+	if (file_des == devnull) {
+		return;
+	}
 	if (file_des->refcount > 0) {
 		file_des->refcount--;
 	}
@@ -373,14 +379,16 @@ bool filedes_is_device(struct filedes *file_des) {
 bool filedes_is_seekable(struct filedes *file_des) {
 	KASSERT(file_des);
 	if (file_des->ftype != FILEDES_TYPE_REG) return false;
+	if (!file_des->node) return false;
 	return VOP_ISSEEKABLE(file_des->node);
 }
 bool filedes_is_console(struct filedes *file_des) {
+	if (file_des == devnull) return false;
 	return filedes_is_device(file_des);
 }
 
 off_t filedes_size(struct filedes *file_des, int *errcode) {
-	if (file_des->ftype != FILEDES_TYPE_REG) {
+	if (file_des->ftype != FILEDES_TYPE_REG || !file_des->node) {
 		*errcode = EBADF;
 		return -1;
 	}
@@ -394,7 +402,7 @@ off_t filedes_size(struct filedes *file_des, int *errcode) {
 
 int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode) {
 	KASSERT(file_des);
-	if (file_des->ftype != FILEDES_TYPE_REG) {
+	if (file_des->ftype != FILEDES_TYPE_REG || !file_des->node) {
 		*errcode = EBADF;
 		return -1;
 	}
@@ -485,7 +493,7 @@ bool file_exists(char *path) {
 bool file_is_dir(int fd) {
 	struct filedes *file_des = filetable_get(curproc, fd);
 	if (!file_des) return false;
-	if (file_des->ftype != FILEDES_TYPE_REG) {
+	if (file_des->ftype != FILEDES_TYPE_REG || !file_des->node) {
 		return false;
 	}
 	struct stat st;
@@ -529,6 +537,9 @@ int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
 		return -1;
   }
 	KASSERT(file_des->ftype == FILEDES_TYPE_REG);
+	if (file_des == devnull) {
+		return 0;
+	}
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);
 	// NOTE: this must be before VOP_READ, as it's modified by the operation
@@ -555,6 +566,9 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 		return -1;
 	}
 	KASSERT(file_des->ftype == FILEDES_TYPE_REG);
+	if (file_des == devnull) {
+		return io->uio_iov->iov_len;
+	}
   int res = 0;
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);
@@ -887,6 +901,16 @@ void proc_bootstrap(void) {
 		userprocs[i] = NULL;
 	}
 	pid_bootstrap();
+	devnull = kmalloc(sizeof(struct filedes));
+	KASSERT(devnull);
+	devnull->pathname = kstrdup("/dev/null");
+	devnull->ftype = FILEDES_TYPE_REG;
+	devnull->node = NULL;
+	devnull->pipe = NULL;
+	devnull->flags = O_RDWR;
+	devnull->offset = 0;
+	devnull->refcount = 1;
+	devnull->latest_fd = -1;
 }
 
 /*
@@ -947,6 +971,29 @@ int proc_init_filetable(struct proc *p) {
 	if (errcode != 0) {
 		return errcode;
 	}
+	return 0;
+}
+
+int proc_redir_standard_streams(struct proc *p, int newfd) {
+	struct filedes *new_filedes;
+	if (newfd == FD_DEV_NULL) {
+		new_filedes = devnull;
+	} else {
+		new_filedes = filetable_get(p, newfd);
+		if (!new_filedes) {
+			return -1;
+		}
+	}
+	int put_res = 0;
+	filedes_close(p, filetable_get(p, 0));
+	filedes_close(p, filetable_get(p, 1));
+	filedes_close(p, filetable_get(p, 2));
+	put_res = filetable_put(p, new_filedes, 0);
+	if (put_res < 0) return -1;
+	put_res = filetable_put(p, new_filedes, 1);
+	if (put_res < 0) return -1;
+	put_res = filetable_put(p, new_filedes, 2);
+	if (put_res < 0) return -1;
 	return 0;
 }
 

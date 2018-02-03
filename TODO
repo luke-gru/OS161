@@ -21,3 +21,4 @@
 * Implement fcntl to set fd flags [DONE] (for O_CLOEXEC)
 * get atexit functions working
 * get exec() to parse shebang lines if present, and modify argv and parse options like Linux does
+* get daemonized processes working from kernel shell for testing signals

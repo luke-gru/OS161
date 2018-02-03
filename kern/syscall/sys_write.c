@@ -94,7 +94,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     curthread->t_curspl == 0 && curcpu->c_spinlocks == 0;
   // avoid extraneous context switches on lock acquisition when printing to console
   // so we don't get interleaved output
-  if (!is_console) {
+  if (!is_console && file_des->lk) {
     lock_acquire(file_des->lk);
   }
   if (file_des->node == (void*)0xdeadbeef || file_des->refcount == 0) {

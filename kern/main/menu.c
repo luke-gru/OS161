@@ -101,7 +101,7 @@ cmd_progthread(void *ptr, unsigned long nargs)
  */
 static
 int
-common_prog(int nargs, char **args)
+common_prog(int nargs, char **args, bool wait_for_exit)
 {
 	struct proc *proc;
 	int result;
@@ -109,7 +109,11 @@ common_prog(int nargs, char **args)
 	/* Create a process for the new program to run in. */
 	proc = proc_create_runprogram(args[0] /* name */);
 	if (proc == NULL) {
-		return ENOMEM;
+		return -1;
+	}
+
+	if (!wait_for_exit) {
+		proc_redir_standard_streams(proc, FD_DEV_NULL);
 	}
 
 	pid_t child_pid = 0;
@@ -120,11 +124,16 @@ common_prog(int nargs, char **args)
 	if (result != 0) {
 		kprintf("thread_fork failed: %s\n", strerror(result));
 		proc_destroy(proc);
-		return result;
+		return -1;
 	}
 	// FIXME: careful, proc could be destroyed by child thread upon exit, in which case
 	// this memory access is invalid
 	child_pid = proc->pid;
+	if (!wait_for_exit) {
+		thread_sleep_n_seconds(1); // HACK: make sure data we send to thread_fork isn't freed cleaned up before
+		// cmd_progthread gets run
+		return child_pid;
+	}
 	if (child_pid > 0) {
 		int waiterr;
 		result = proc_waitpid_sleep(child_pid, &waiterr);
@@ -137,7 +146,7 @@ common_prog(int nargs, char **args)
 		panic("invalid child pid: %d", (int)child_pid);
 	}
 
-	DEBUG(DB_VM, "free core entries: %lu\n", corefree());
+	DEBUG(DB_VM, "free core pages: %lu\n", corefree());
 	return 0;
 }
 
@@ -157,7 +166,31 @@ cmd_prog(int nargs, char **args)
 	args++;
 	nargs--;
 
-	return common_prog(nargs, args);
+	return common_prog(nargs, args, true);
+}
+
+/*
+ * Command for running an arbitrary userlevel program.
+ */
+static
+int
+cmd_prog_background(int nargs, char **args)
+{
+	if (nargs < 2) {
+		kprintf("Usage: b program [arguments]\n");
+		return EINVAL;
+	}
+
+	/* drop the leading "b" */
+	args++;
+	nargs--;
+
+	int pid = common_prog(nargs, args, false);
+	if (pid < 3) {
+		return -1;
+	}
+	kprintf("pid: %d\n", pid);
+	return 0;
 }
 
 /*
@@ -175,7 +208,7 @@ cmd_shell(int nargs, char **args)
 
 	args[0] = (char *)_PATH_SHELL;
 
-	return common_prog(nargs, args);
+	return common_prog(nargs, args, true);
 }
 
 /*
@@ -746,6 +779,7 @@ static struct {
 	/* operations */
 	{ "s",		cmd_shell },
 	{ "p",		cmd_prog },
+	{ "b",     cmd_prog_background },
 	{ "mount",	cmd_mount },
 	{ "unmount",	cmd_unmount },
 	{ "bootfs",	cmd_bootfs },

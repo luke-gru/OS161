@@ -604,6 +604,7 @@ thread_fork_in_cpu(const char *name, struct proc *proc, struct cpu *cpu,
 
 	/* Lock the current cpu's run queue and make the new thread runnable */
 	thread_make_runnable(newthread, false);
+	thread_yield(); // try to get child to run first. NOTE: this is NOT guaranteed!
 	// doesn't actually run the thread, but it will get run on some next call to thread_switch
 	return 0;
 }
