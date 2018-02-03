@@ -6,6 +6,30 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+static int clone_entry(void *data1) {
+  (void)data1;
+  printf("Clone entry!\n");
+  sleep(5);
+  char *testaddrspace = malloc(10);
+  snprintf(testaddrspace, 10, "%d", 100);
+  printf("Clone test address space heap not destroyed: %s\n", testaddrspace);
+  return 0;
+}
+
+static void clone_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  size_t stack_size = 4096;
+  __u32 child_stacktop = (__u32)malloc(stack_size);
+  child_stacktop += stack_size;
+  int clone_res = clone(clone_entry, (void*)child_stacktop, stack_size, 0);
+  sleep(2);
+  printf("Clone result: %d\n", clone_res);
+  if (clone_res <= 0) {
+    errx(1, "Error running clone()\n");
+  }
+}
+
 int atexit_num = 2;
 static void atexit_printer1(void) {
   if (atexit_num != 1) {
@@ -249,6 +273,9 @@ int main(int argc, char *argv[]) {
     exit(0);
   } else if (strcmp(argv[1], "atexit") == 0) {
     atexit_test(argc, argv);
+    exit(0);
+  } else if (strcmp(argv[1], "clone") == 0) {
+    clone_test(argc, argv);
     exit(0);
   } else {
     errx(1, "Usage error! luketest fcntl|pipe|files|atexit OPTIONS\n");

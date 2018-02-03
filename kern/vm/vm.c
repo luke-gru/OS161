@@ -11,6 +11,7 @@
 #include <clock.h>
 #include <proc.h>
 #include <cpu.h>
+#include <limits.h>
 
 static bool beforeVM = true;
 static unsigned long pages_in_coremap;
@@ -452,6 +453,24 @@ int vm_pageout_region(struct addrspace *as, uint32_t region_start, size_t nbytes
 	return num_entries_swapped;
 }
 
+bool vm_regions_overlap(vaddr_t reg1_btm, vaddr_t reg1_top, vaddr_t reg2_btm, vaddr_t reg2_top) {
+	KASSERT(reg1_btm < reg1_top);
+	KASSERT(reg2_btm < reg2_top);
+	if (reg1_btm > reg2_btm) {
+		if (reg1_top <= reg2_top) {
+			return true;
+		}
+		return false;
+	} else if (reg2_btm > reg1_btm) {
+		if (reg2_top <= reg1_top) {
+			return true;
+		}
+		return false;
+	} else {
+		return true;
+	}
+}
+
 void
 vm_tlbshootdown_all(void)
 {
@@ -530,8 +549,8 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	// KASSERT((as->heap_end & PAGE_FRAME) == as->heap_end);
 	KASSERT((as->pages->vaddr & PAGE_FRAME) == as->pages->vaddr);
 
-	stackbase = USERSTACK - (VM_STACKPAGES * PAGE_SIZE);
-	stacktop = USERSTACK;
+	stackbase = curproc->p_stacktop - curproc->p_stacksize;
+	stacktop = curproc->p_stacktop;
 
 	struct page_table_entry *pte;
 

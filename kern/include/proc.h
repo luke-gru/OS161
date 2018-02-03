@@ -156,13 +156,19 @@ struct proc {
 
 	pid_t pid; // set on thread_fork
 	struct proc *p_parent;
+
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
+	// top of userlevel stack, not stored in addrspace struct because a clone()ed process can
+	// share an address space with its parent and still have a separate stack (CLONE_VM flag)
+	vaddr_t p_stacktop;
+	// see above comment for p_stacktop for why this isn't in the struct addrspace
+	size_t p_stacksize;
 
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
-	struct filedes *file_table[FILE_TABLE_LIMIT];
-	int next_filedes_idx;
+	struct filedes **file_table;
+	short file_table_refcount;
 
 	/* add more material here as needed */
 };
@@ -192,19 +198,21 @@ unsigned proc_numprocs(void); // number of user processes
 
 /* Create a fresh process for use by runprogram(). */
 struct proc *proc_create_runprogram(const char *name);
+void proc_define_stack(struct proc *p, vaddr_t stacktop, size_t stacksize);
 
 /* Destroy a process. */
 void proc_destroy(struct proc *proc);
 
 /* Attach a thread to a process. Must not already have a process */
 int proc_addthread(struct proc *proc, struct thread *t);
-
 /* Detach a thread from its process. */
 void proc_remthread(struct thread *t);
 
 // Wait on child process to finish, collect its exitstatus and clean it up
 int proc_waitpid_sleep(pid_t pid, int *errcode);
 int proc_fork(struct proc *parent, struct thread *th, struct trapframe *tf, int *errcode);
+struct proc *proc_clone(struct proc *old, vaddr_t stacktop, size_t stacksize, int flags, int *errcode);
+bool proc_is_clone(struct proc *p);
 int proc_pre_exec(struct proc *p, char *progname);
 int proc_close_cloexec_files(struct proc *p);
 int proc_redir_standard_streams(struct proc *p, int redir_fd);

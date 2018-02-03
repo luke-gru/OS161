@@ -135,6 +135,31 @@ int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
   return res;
 }
 
+int sys_clone(userptr_t func, uint32_t child_stack_top, size_t stacksize, int flags, int *retval) {
+  int clone_err = 0;
+  struct proc *clone = proc_clone(curproc, (vaddr_t)child_stack_top, stacksize, flags, &clone_err);
+  if (!clone) {
+    DEBUG(DB_SYSCALL, "proc_clone failed: %d (%s)\n", clone_err, strerror(clone_err));
+    *retval = -1;
+    return clone_err;
+  }
+  int fork_err = 0;
+  int clone_res = thread_fork_for_clone(
+    curthread,
+    clone,
+    func,
+    NULL,
+    &fork_err
+  );
+  if (clone_res < 0) {
+      DEBUG(DB_SYSCALL, "sys_clone: thread_fork_for_clone failed: %d (%s)\n", fork_err, strerror(fork_err));
+    *retval = -1;
+    return fork_err;
+  }
+  *retval = clone->pid;
+  return 0;
+}
+
 // NOTE: sbrk here is only ever >= 0, because memory from userland free() is never
 // actually given back to the OS, just written over for now and re-used in later
 // allocations in the same process.

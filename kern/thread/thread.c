@@ -673,6 +673,70 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 	return child_pid;
 }
 
+// If returns -1, then fork failed and *errcode is set.
+// Otherwise returns PID > 0 of child process. The child process is setup to run on
+// some next context switch, to run the entrypoint userland function.
+int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
+	                        userptr_t func, void *data1, int *errcode) {
+	int result;
+	struct thread *newthread;
+
+	newthread = thread_create(parent_th->t_name);
+	if (newthread == NULL) {
+		*errcode = ENOMEM;
+		return -1;
+	}
+
+	/* Allocate a kernel stack */
+	newthread->t_stack = kmalloc(STACK_SIZE);
+
+	if (newthread->t_stack == NULL) {
+		thread_destroy(newthread);
+		*errcode = ENOMEM;
+		return -1;
+	}
+	int spl = splhigh(); // disable interrupts
+	thread_checkstack_init(newthread);
+
+	/* Thread subsystem fields */
+	newthread->t_cpu = parent_th->t_cpu;
+	KASSERT(!is_valid_pid(clone->pid));
+	KASSERT(proc_init_pid(clone) == 0); // TODO: check error code
+	KASSERT(is_valid_pid(clone->pid));
+
+	result = proc_addthread(clone, newthread);
+	if (result != 0) {
+		/* thread_destroy will clean up the stack */
+		thread_destroy(newthread);
+		pid_unalloc(clone->pid);
+		*errcode = result;
+		splx(spl);
+		return -1;
+	}
+
+	/*
+	 * Because new threads come out holding the cpu runqueue lock
+	 * (see notes at bottom of thread_switch), we need to account
+	 * for the spllower() that will be done releasing it.
+	 */
+	newthread->t_iplhigh_count++;
+
+	spinlock_acquire(&thread_count_lock);
+	++thread_count;
+	wchan_wakeall(thread_count_wchan, &thread_count_lock);
+	spinlock_release(&thread_count_lock);
+
+	pid_t parent_pid = parent_th->t_pid;
+	pid_t child_pid = newthread->t_pid;
+	KASSERT(is_valid_pid(parent_pid));
+	KASSERT(is_valid_pid(child_pid));
+
+	switchframe_init(newthread, enter_cloned_process, (void*)func, (unsigned long)data1);
+	thread_make_runnable(newthread, false);
+	splx(spl);
+	return child_pid;
+}
+
 static bool thread_find_ready_sleeper_cb(struct thread *t) {
 	return t->wakeup_at == 0 || t->wakeup_at <= timestamp();
 }
@@ -941,7 +1005,7 @@ thread_startup(void (*entrypoint)(void *data1, unsigned long data2),
 void thread_exit(int status) {
 	struct thread *cur_th;
 	struct proc *cur_p = curproc;
-	DEBUG(DB_SYSCALL, "exiting from process %d, status: %d\n", cur_p->pid, status);
+	DEBUG(DB_SYSCALL, "exiting from process %d (%s), status: %d\n", cur_p->pid, cur_p->p_name, status);
 
 	cur_th = curthread;
 	// NOTE: during boot, we have to deal with cpu_hatch calling thread_exit()

@@ -105,7 +105,7 @@ paddr_t find_upage_for_entry(struct page_table_entry *pte, int page_flags, bool 
 void free_kpages(vaddr_t addr);
 void free_upages(paddr_t addr, bool dolock);
 
-
+bool vm_regions_overlap(vaddr_t reg1_btm, vaddr_t reg1_top, vaddr_t reg2_btm, vaddr_t reg2_top);
 
 /* TLB shootdown handling called from interprocessor_interrupt */
 void vm_tlbshootdown(const struct tlbshootdown *);
@@ -115,6 +115,5 @@ void vm_unpin_page_entry(struct page_table_entry *entry);
 
 int vm_pin_region(struct addrspace *as, uint32_t region_start, size_t nbytes);
 int vm_pageout_region(struct addrspace *as, uint32_t region_start, size_t nbytes);
-
 
 #endif /* _VM_H_ */

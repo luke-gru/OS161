@@ -120,6 +120,7 @@ struct addrspace {
         bool is_active; // Doesn't mean it's currently running, just that it ran at least one time slice and hasn't exited
         bool no_heap_alloc; // For now, used for processes internal to the kernel that run in their own special "userspace"
         short running_cpu_idx; // If the address space's process is currently running, this is the cpu idx (0-3) of the CPU
+        short refcount;
 #endif
 };
 
@@ -156,10 +157,6 @@ struct addrspace {
  *    as_complete_load - this is called when loading from an executable
  *                is complete.
  *
- *    as_define_stack - set up the stack region in the address space.
- *                (Normally called *after* as_complete_load().) Hands
- *                back the initial stack pointer for the new process.
- *
  * Note that when using dumbvm, addrspace.c is not used and these
  * functions are found in dumbvm.c.
  */
@@ -177,10 +174,10 @@ int               as_define_region(struct addrspace *as,
                                    int executable);
 int               as_prepare_load(struct addrspace *as);
 int               as_complete_load(struct addrspace *as);
-int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
 
 vaddr_t           as_heapend(struct addrspace *as);
 int               as_growheap(struct addrspace *as, size_t bytes);
+bool              as_heap_region_exists(struct addrspace *as, vaddr_t btm, vaddr_t top);
 
 bool              pte_can_handle_fault_type(struct page_table_entry *pte, int faulttype);
 void              as_touch_pte(struct page_table_entry *pte);

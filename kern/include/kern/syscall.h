@@ -66,6 +66,7 @@
 //#define SYS_mlock      13
 #define SYS_pageout_region 12
 #define SYS_lock_region 13
+#define SYS_clone 14
 //#define SYS_munlock    14
 //#define SYS_munlockall 15
 //#define SYS_minherit   16

@@ -15,10 +15,13 @@
 * Implement O_CLOEXEC on file descriptors [DONE]
 * Implement vfork
 * Implement copy on write for forked processes
-* Implement clone() for user-level thread
-* Implement signals
+* Implement clone() for user-level threads
+* Implement signals (hard!)
 * allow lseeking for sparse files (files with holes in them, see lseek(2)
 * Implement fcntl to set fd flags [DONE] (for O_CLOEXEC)
-* get atexit functions working
+* get atexit functions working [DONE]
 * get exec() to parse shebang lines if present, and modify argv and parse options like Linux does
-* get daemonized processes working from kernel shell for testing signals
+* get daemonized processes working from kernel shell for testing signals [DONE, mostly]
+* Implement process scheduling
+* Implement CPU thread migration
+* Add process accounting info, like CPU time, wall time, sleep time, etc.

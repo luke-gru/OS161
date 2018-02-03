@@ -76,6 +76,7 @@ struct addrspace *as_create(char *name) {
 	as->is_active = false;
 	as->running_cpu_idx = -1;
 	as->no_heap_alloc = false;
+	as->refcount = 1;
 	spinlock_init(&as->spinlock);
 
 	return as;
@@ -232,6 +233,11 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 
 void as_destroy(struct addrspace *as) {
 	DEBUGASSERT(as != NULL);
+	as->refcount--;
+	if (as->refcount > 0) {
+		DEBUG(DB_VM, "Decrementing refcount of address space %s\n", as->name);
+		return;
+	}
 	DEBUG(DB_VM, "Destroying address space %s\n", as->name);
 	lock_pagetable();
 	if (as->destroying) {
@@ -770,11 +776,13 @@ void as_touch_pte(struct page_table_entry *pte) {
 	(void)pte;
 }
 
-int as_define_stack(struct addrspace *as, vaddr_t *stackptr) {
-	(void)as;
-
-	/* Initial user-level stack pointer */
-	*stackptr = USERSTACK;
-
-	return 0;
+// is the given virtual address region within the allocated heap of the given address space?
+bool as_heap_region_exists(struct addrspace *as, vaddr_t reg_btm, vaddr_t reg_top) {
+	KASSERT(reg_btm < reg_top);
+	KASSERT(as != NULL);
+	struct page_table_entry *heap = as->heap; // bottom of heap
+	if (!heap) {
+		return false;
+	}
+	return reg_btm >= heap->vaddr && reg_top < as->heap_brk;
 }

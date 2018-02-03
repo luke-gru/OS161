@@ -49,4 +49,6 @@
 #define OPEN_MAX        __OPEN_MAX
 #define IOV_MAX         __IOV_MAX
 
+#define UINT32_MAX (4294967295)
+
 #endif /* _LIMITS_H_ */

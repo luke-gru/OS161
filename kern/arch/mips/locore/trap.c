@@ -267,6 +267,12 @@ mips_trap(struct trapframe *tf)
 		break;
 	}
 
+	// FIXME: hack for returning from threads, load invalid address and catch it here.
+	if (code == EX_ADEL && proc_is_clone(curproc) && tf->tf_vaddr == UINT32_MAX) {
+		// thread exited
+		thread_exit(0);
+	}
+
 	/*
 	 * If we get to this point, it's a fatal fault - either it's
 	 * one of the other exceptions, like illegal instruction, or
@@ -431,10 +437,8 @@ mips_usermode(struct trapframe *tf)
  *
  * Works by creating an ersatz trapframe.
  */
-void
-enter_new_process(int argc, userptr_t argv, userptr_t env,
-		  vaddr_t stack, vaddr_t entry)
-{
+void enter_new_process(int argc, userptr_t argv, userptr_t env,
+		  vaddr_t stack, vaddr_t entry) {
 	struct trapframe tf;
 
 	bzero(&tf, sizeof(tf));
@@ -445,6 +449,22 @@ enter_new_process(int argc, userptr_t argv, userptr_t env,
 	tf.tf_a1 = (vaddr_t)argv;
 	tf.tf_a2 = (vaddr_t)env;
 	tf.tf_sp = stack;
+
+	mips_usermode(&tf);
+}
+
+void enter_cloned_process(void *entrypoint, unsigned long data1) {
+	struct trapframe tf;
+	vaddr_t stacktop = curproc->p_stacktop;
+
+	bzero(&tf, sizeof(tf));
+
+	tf.tf_status = CST_IRQMASK | CST_IEp | CST_KUp;
+	tf.tf_ra = -1; // FIXME: hack, we catch this in the vm_trap code and exit from thread gracefully
+	tf.tf_epc = (uint32_t)entrypoint;
+	tf.tf_a0 = 1;
+	tf.tf_a1 = (uint32_t)data1;
+	tf.tf_sp = stacktop;
 
 	mips_usermode(&tf);
 }

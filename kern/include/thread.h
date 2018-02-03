@@ -84,7 +84,7 @@ struct thread {
 	 */
 
 	char t_name[MAX_NAME_LENGTH];
-	const char *t_wchan_name;	/* Name of wait channel, if sleeping */
+	const char *t_wchan_name;	/* Name of wait channel, if sleeping. Useful when debugging */
 	threadstate_t t_state;		/* State this thread is in */
 
 	/*
@@ -164,6 +164,8 @@ int thread_fork(const char *name, struct proc *proc,
 int thread_fork_in_cpu(const char *name, struct proc *proc, struct cpu *cpu,
 									     void (*entrypoint)(void *data1, unsigned long data2),
 										 	 void *data1, unsigned long data2);
+int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
+											 	  userptr_t entrypoint, void *data1, int *errcode);
 struct cpu *thread_get_cpu(unsigned index);
 int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *tf, int *errcode);
 

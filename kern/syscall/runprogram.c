@@ -233,7 +233,7 @@ static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
 int runprogram(char *progname, char **args, int nargs) {
 	struct addrspace *as;
 	struct vnode *v;
-	vaddr_t entrypoint, stackptr;
+	vaddr_t entrypoint;
 	int result;
 
 	if (curproc == kproc) {
@@ -276,19 +276,14 @@ int runprogram(char *progname, char **args, int nargs) {
 	/* Done with the file now. */
 	vfs_close(v);
 
-	/* Define the user stack in the address space */
-	result = as_define_stack(as, &stackptr);
-	if (result != 0) {
-		/* p_addrspace will go away when curproc is destroyed */
-		kfree(prognamecpy);
-		return result;
-	}
+	/* Define the user stack for the address space */
+	proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * PAGE_SIZE);
 
 	struct argvdata *argdata = argvdata_create();
 	argvdata_fill(argdata, progname, args, nargs);
 	argvdata_debug(argdata, "runprogram", progname);
 	userptr_t userspace_argv_ary;
-	if (copyout_args(argdata, &userspace_argv_ary, &stackptr) != 0) {
+	if (copyout_args(argdata, &userspace_argv_ary, &curproc->p_stacktop) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args into user process\n");
 		argvdata_destroy(argdata);
 		kfree(prognamecpy);
@@ -304,7 +299,7 @@ int runprogram(char *progname, char **args, int nargs) {
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
 			  NULL /*userspace addr of environment*/,
-			  stackptr, entrypoint);
+			  curproc->p_stacktop, entrypoint);
 
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
@@ -321,7 +316,7 @@ curthread->t_stack isn't freed and then reallocated. If we do this, we need inte
 int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	struct addrspace *as;
 	struct vnode *v;
-	vaddr_t entrypoint, stackptr;
+	vaddr_t entrypoint;
 	int result;
 
 	if (curproc == kproc || curproc == kswapproc) {
@@ -355,12 +350,11 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 		return result;
 	}
 	/* Define the user stack in the address space */
-	result = as_define_stack(as, &stackptr);
-	if (result != 0) {
-		as_destroy(as);
-		return result;
+	if (curproc->p_stacksize == 0 || curproc->p_stacktop == 0) {
+		proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * STACK_SIZE);
 	}
-	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &stackptr);
+
+	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &curproc->p_stacktop);
 	if (copyout_res != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
 		if (copyout_res)
@@ -385,7 +379,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
 				NULL /*userspace addr of environment*/,
-				stackptr, entrypoint);
+				curproc->p_stacktop, entrypoint);
 
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");

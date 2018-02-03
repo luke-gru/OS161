@@ -677,7 +677,6 @@ struct proc *proc_create(const char *name) {
 	}
 
 	proc->p_numthreads = 0;
-	spinlock_init(&proc->p_lock);
 
 	/* VM fields */
 	proc->p_addrspace = NULL;
@@ -686,7 +685,15 @@ struct proc *proc_create(const char *name) {
 	proc->p_cwd = NULL;
 
 	proc->pid = INVALID_PID;
+	proc->file_table = kmalloc(FILE_TABLE_LIMIT * sizeof(struct filedes*));
+	if (proc->file_table == NULL) {
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
 	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
+	proc->file_table_refcount = 1;
+	spinlock_init(&proc->p_lock);
 	proc->p_mutex = lock_create("proc mutex");
 
 	return proc;
@@ -725,12 +732,18 @@ void proc_destroy(struct proc *proc) {
 		VOP_DECREF(proc->p_cwd);
 		proc->p_cwd = NULL;
 	}
-	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
-		struct filedes *file_des;
-		if ((file_des = filetable_get(proc, i)) != NULL) {
-			filedes_close(proc, file_des);
+
+	proc->file_table_refcount--;
+	if (proc->file_table_refcount == 0) {
+		for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
+			struct filedes *file_des;
+			if ((file_des = filetable_get(proc, i)) != NULL) {
+				filedes_close(proc, file_des);
+			}
 		}
+		bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
 	}
+
 
 	/* VM fields */
 	if (proc->p_addrspace) {
@@ -796,7 +809,6 @@ void proc_destroy(struct proc *proc) {
 
 	kfree(proc->p_name);
 	lock_destroy(proc->p_mutex);
-	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
 	kfree(proc);
 }
 
@@ -1079,6 +1091,8 @@ struct proc *proc_create_runprogram(const char *name) {
 	/* VM fields */
 
 	newproc->p_addrspace = NULL;
+	newproc->p_stacktop = USERSTACK;
+	newproc->p_stacksize = VM_STACKPAGES * PAGE_SIZE;
 
 	/* VFS fields */
 	res = proc_init_filetable(newproc);
@@ -1103,6 +1117,60 @@ struct proc *proc_create_runprogram(const char *name) {
 	spinlock_release(&curproc->p_lock);
 
 	return newproc;
+}
+
+// Clones a process, which means creating a new process using the same address space as
+// the passed in process, and a separate stack inside this address space.
+// See clone(2) (and the CLONE_VM flag) for details.
+struct proc *proc_clone(struct proc *old, vaddr_t new_stacktop, size_t new_stacksize, int flags, int *err) {
+	DEBUGASSERT(old->p_addrspace != NULL);
+	KASSERT(is_current_userspace_proc(old));
+	(void)flags;
+	vaddr_t old_stacktop = old->p_stacktop;
+	vaddr_t old_stackbottom = old->p_stacktop - old->p_stacksize;
+	vaddr_t new_stackbottom = new_stacktop - new_stacksize;
+	if (vm_regions_overlap(old_stackbottom, old_stacktop, new_stackbottom, new_stacktop)) {
+		DEBUG(DB_SYSCALL, "proc_clone failed, stacks overlap!\n");
+		*err = EINVAL;
+		return NULL;
+	}
+	if (!as_heap_region_exists(old->p_addrspace, new_stackbottom, new_stacktop)) {
+		DEBUG(DB_SYSCALL, "proc_clone failed, new stack space is invalid heap for addrspace!\n");
+		*err = EINVAL;
+		return NULL;
+	}
+	size_t name_size = strlen(old->p_name)+1+8;
+	char *clone_name = kmalloc(name_size); // ' (clone)'
+	snprintf(clone_name, name_size, "%s (clone)", old->p_name);
+	struct proc *clone = proc_create(clone_name);
+	if (!clone) {
+		DEBUG(DB_SYSCALL, "proc_clone failed: proc_create failure\n");
+		kfree(clone_name);
+		*err = ENOMEM;
+		return NULL;
+	}
+	kfree(clone_name); // proc_create() kstrdup's the name, so we can free it here
+	clone->p_addrspace = old->p_addrspace; // share address space with old process
+	clone->p_addrspace->refcount++;
+	clone->file_table_refcount++;
+	old->file_table_refcount++;
+	kfree(clone->file_table); // share file_table with old process
+	clone->file_table = old->file_table;
+	clone->p_parent = old->p_parent;
+	clone->p_cwd = old->p_cwd;
+	clone->pid = INVALID_PID; // given in thread_fork
+	clone->p_stacktop = new_stacktop;
+	clone->p_stacksize = new_stacksize;
+	return clone;
+}
+
+bool proc_is_clone(struct proc *p) {
+	if (!p->p_addrspace || p->p_stacktop == 0 || p->p_stacksize == 0) {
+		return false;
+	}
+	vaddr_t stacktop = p->p_stacktop;
+	vaddr_t stackbtm = p->p_stacktop - p->p_stacksize;
+	return as_heap_region_exists(p->p_addrspace, stackbtm, stacktop);
 }
 
 
@@ -1202,6 +1270,13 @@ struct addrspace *proc_setas(struct addrspace *newas) {
 		newas->pid = p->pid;
 	spinlock_release(&p->p_lock);
 	return oldas;
+}
+
+void proc_define_stack(struct proc *p, vaddr_t stacktop, size_t stacksize) {
+	KASSERT(stacksize % PAGE_SIZE == 0);
+	KASSERT(stacksize >= PAGE_SIZE);
+	p->p_stacktop = stacktop;
+	p->p_stacksize = stacksize;
 }
 
 int proc_waitpid_sleep(pid_t child_pid, int *errcode) {

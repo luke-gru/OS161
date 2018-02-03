@@ -384,15 +384,6 @@ as_complete_load(struct addrspace *as)
 }
 
 int
-as_define_stack(struct addrspace *as, vaddr_t *stackptr)
-{
-	KASSERT(as->as_stackpbase != 0);
-
-	*stackptr = USERSTACK;
-	return 0;
-}
-
-int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	struct addrspace *new;
