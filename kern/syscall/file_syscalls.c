@@ -37,6 +37,7 @@
 #include <stat.h>
 #include <kern/errno.h>
 #include <kern/stat.h>
+#include <kern/fcntl.h>
 #include <current.h>
 #include <vnode.h>
 #include <spl.h>
@@ -100,6 +101,25 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
   copyout(&st, stat_buf, sizeof(struct stat));
   *retval = 0;
   return 0;
+}
+
+int sys_fcntl(int fd, int cmd, int flags, int *retval) {
+  int errcode = 0;
+  struct filedes *file_des = filetable_get(curproc, fd);
+  if (!file_des) {
+    DEBUG(DB_SYSCALL, "Error in sys_fcntl: fd %d for process %d: file not open\n",
+      fd, curproc->pid);
+    *retval = -1;
+    return EBADF;
+  }
+  int res = filedes_fcntl(file_des, cmd, flags, &errcode);
+  if (res == -1) {
+    *retval = -1;
+    return errcode;
+  } else {
+    *retval = res;
+    return 0;
+  }
 }
 
 int sys_lseek(int fd, int32_t offset, int whence, int *retval) {

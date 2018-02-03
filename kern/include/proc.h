@@ -104,6 +104,7 @@ void filedes_close(struct proc *p, struct filedes *file_des);
 
 off_t filedes_size(struct filedes *file_des, int *errcode);
 int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode);
+int filedes_fcntl(struct filedes *file_des, int cmd, int flags, int *errcode);
 
 bool filedes_is_open(struct filedes *file_des);
 bool filedes_is_writable(struct filedes *file_des);
@@ -204,6 +205,7 @@ void proc_remthread(struct thread *t);
 int proc_waitpid_sleep(pid_t pid, int *errcode);
 int proc_fork(struct proc *parent, struct thread *th, struct trapframe *tf, int *errcode);
 int proc_pre_exec(struct proc *p, char *progname);
+int proc_close_cloexec_files(struct proc *p);
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

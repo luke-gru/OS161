@@ -9,7 +9,13 @@
   I'll add the memory pinning and unpinning calls.
 * Idea: add a new syscall that pages out a region, to facilitate testing so we don't have to rely
   solely on sleep() and page aging. [DONE]
-* Get pipes working (pipe(2)), with blocking and non-blocking reads and buffering
+* Get pipes working (pipe(2)), with blocking and non-blocking reads and buffering [DONE, mostly. Needs testing]
 * Get shared memory regions working
 * Get mmap working
-* Implement O_CLOEXEC on file descriptors
+* Implement O_CLOEXEC on file descriptors [DONE]
+* Implement vfork
+* Implement copy on write for forked processes
+* Implement clone() for user-level thread
+* Implement signals
+* allow lseeking for sparse files (files with holes in them, see lseek(2)
+* Implement fcntl to set fd flags [DONE] (for O_CLOEXEC)

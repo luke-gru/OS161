@@ -378,6 +378,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 		as_destroy(as);
 		return pre_exec_res;
 	}
+	proc_close_cloexec_files(curproc);
 
 	// DEBUG(DB_SYSCALL, "sys_execv entering new process %d\n", curproc->pid);
 	spl0();

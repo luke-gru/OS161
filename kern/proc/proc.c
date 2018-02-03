@@ -206,7 +206,8 @@ struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_
 	file_des->node = NULL;
 	file_des->pipe = kmalloc(sizeof(struct pipe));
 	KASSERT(file_des->pipe);
-	init_pipe(file_des->pipe, buflen > 0, buflen);
+	bool is_writer = (buflen > 0);
+	init_pipe(file_des->pipe, is_writer, buflen);
 	file_des->flags = flags;
 	file_des->offset = 0; // not used for pipes
 	file_des->refcount = 1;
@@ -403,6 +404,29 @@ int filedes_stat(struct filedes *file_des, struct stat *st, int *errcode) {
 		return -1;
 	}
 	return 0;
+}
+
+int filedes_fcntl(struct filedes *file_des, int cmd, int flag, int *errcode) {
+	switch (cmd) {
+		case F_SETFD:
+			switch (flag) {
+				case O_CLOEXEC:
+					file_des->flags |= O_CLOEXEC;
+					KASSERT(file_des->flags & O_CLOEXEC);
+					return 0;
+				default:
+					*errcode = EINVAL;
+					return -1;
+			}
+			*errcode = EINVAL;
+			return -1;
+		case F_GETFD:
+			(void)flag;
+			return file_des->flags;
+		default:
+			*errcode = EINVAL;
+			return -1;
+	}
 }
 
 bool file_is_open(int fd) {
@@ -603,11 +627,11 @@ int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen) {
 		return ENOMEM;
 	}
 	int errcode = 0;
-	struct filedes *reader = pipe_create(curproc, 0, 0, -1, &errcode);
+	struct filedes *reader = pipe_create(curproc, O_RDONLY, 0, -1, &errcode);
 	if (!reader) {
 		return errcode;
 	}
-	struct filedes *writer = pipe_create(curproc, 0, buflen, -1, &errcode);
+	struct filedes *writer = pipe_create(curproc, O_WRONLY, buflen, -1, &errcode);
 	if (!writer) {
 		reader->pipe->is_closed = true;
 		filedes_close(curproc, reader);
@@ -819,6 +843,22 @@ int proc_pre_exec(struct proc *p, char *progname) {
 	p->p_numthreads = 1;
 	spinlock_release(&p->p_lock);
 	return 0;
+}
+
+int proc_close_cloexec_files(struct proc *p) {
+	int num_closed = 0;
+	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
+		struct filedes *des = filetable_get(p, i);
+		if (!des) {
+			continue;
+		}
+		if (des->flags & O_CLOEXEC) {
+			filedes_close(p, des);
+			filetable_put(p, NULL, i);
+			num_closed++;
+		}
+	}
+	return num_closed;
 }
 
 // TODO: lock userprocs access

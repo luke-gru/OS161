@@ -153,6 +153,7 @@ ssize_t __getcwd(char *buf, size_t buflen);
 /* lstat - see sys/stat.h */
 
 int sleep(int seconds);
+int fcntl(int filehandle, int cmd, int flag);
 
 int pageout_region(__u32 startaddr, size_t nbytes);
 int lock_region(__u32 startaddr, size_t nbytes);

@@ -4,13 +4,53 @@
 #include <stdio.h>
 #include <err.h>
 #include <sys/stat.h>
+#include <errno.h>
 
-static void pipe_test(char **argv) {
+static void fcntl_test(int argc, char **argv) {
+  if (argc == 3) { // luketest fcntl existingfile.txt
+    int fd = open(argv[2], O_RDONLY, 0);
+    if (fd < 3) {
+      errx(1, "Unable to open file %s\n", argv[2]);
+    }
+    int res = fcntl(fd, F_SETFD, O_CLOEXEC);
+    if (res != 0) {
+      errx(1, "Unable to SETFD CLOEXEC the file\n");
+    }
+    char *args[4];
+    for (int i = 0; i < 4; i++) {
+      if (i < 2) {
+        args[i] = argv[i];
+      } else if (i == 2) {
+        char fd_string[3]; memset(fd_string, 0, 3);
+        snprintf(fd_string, 3, "%d", fd);
+        args[i] = fd_string;
+      } else if (i == 3) {
+        args[i] = (char*)"INEXEC";
+      }
+    }
+    execv(argv[0], args);
+  } else if (argc == 4) { // luketest fcntl FD INEXEC (called from above case)
+    struct stat st;
+    int fd = atoi(argv[2]);
+    if (fd < 3) {
+      errx(1, "Invalid fd given to luketest fcntl FD INEXEC\n");
+    }
+    int fstat_res = fstat(fd, &st);
+    if (fstat_res != -1) {
+      errx(1, "Should not allow fstat for fd %d: FD should not be open after exec\n", fd);
+    }
+  } else {
+    errx(1, "Usage: luketest fcntl MYFILE (INEXEC)\n");
+  }
+}
+
+static void pipe_test(int argc, char **argv) {
+  (void)argc; (void)argv;
   int pipefd[2];
   pid_t cpid;
   char buf;
 
-  if (pipe(pipefd, 100) == -1) {
+  if (pipe(pipefd, 1) == -1) {
     errx(1, "pipe() failed");
   }
 
@@ -48,15 +88,13 @@ static void pipe_test(char **argv) {
   }
 }
 
-int main(int argc, char *argv[]) {
-  pipe_test(argv);
-  exit(0);
-  if (argc != 2) {
+static void files_test(int argc, char **argv) {
+  if (argc != 3) {
     errx(1, "must give file to write to");
   }
-  int fd = open(argv[1], O_RDONLY, 0644);
+  int fd = open(argv[2], O_RDONLY, 0644);
   if (fd < 3) {
-    errx(1, "Error opening file: %s", argv[1]);
+    errx(1, "Error opening file: %s", argv[2]);
   }
   struct stat *st = malloc(sizeof(struct stat));
   int page_res = pageout_region((__u32)st, sizeof(struct stat));
@@ -110,12 +148,12 @@ int main(int argc, char *argv[]) {
   if (res != 0) {
     errx(1, "closing newfd failed");
   }
-  newfd = open(argv[1], O_RDONLY, 0644); // reopen with new fd
+  newfd = open(argv[2], O_RDONLY, 0644); // reopen with new fd
   if (newfd < 3) {
     errx(1, "error opening file in RDONLY: %d", newfd);
   }
 
-  int newopenfd = open(argv[1], O_WRONLY, 0644);
+  int newopenfd = open(argv[2], O_WRONLY, 0644);
   if (newopenfd < 3) {
     errx(1, "should be able to open same file twice, creating new fd, got: %d", newopenfd);
   }
@@ -172,6 +210,19 @@ int main(int argc, char *argv[]) {
     errx(1, "error reading file from dup2'd fd, got: %d", readsize);
   }
   printf("full buf: %s\n", longerbuf);
+}
 
-  exit(0);
+int main(int argc, char *argv[]) {
+  if (strcmp(argv[1], "fcntl") == 0) {
+    fcntl_test(argc, argv);
+    exit(0);
+  } else if (strcmp(argv[1], "pipe") == 0) {
+    pipe_test(argc, argv);
+    exit(0);
+  } else if (strcmp(argv[1], "files") == 0) {
+    files_test(argc, argv);
+    exit(0);
+  } else {
+    errx(1, "Usage error! luketest fcntl|pipe|files OPTIONS\n");
+  }
 }

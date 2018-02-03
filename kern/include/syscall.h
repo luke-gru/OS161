@@ -66,6 +66,7 @@ int sys_open(userptr_t path, int openflags, mode_t mode, int *retval);
 int sys_close(int fd, int *retval);
 int sys_read(int fd, userptr_t buf, size_t count, int *retval);
 int sys_fstat(int fd, userptr_t stat_buf, int *retval);
+int sys_fcntl(int fd, int cmd, int flags, int *retval);
 int sys_lseek(int fd, int32_t offset, int whence, int *retval);
 int sys_remove(userptr_t filename, int *retval);
 int sys_mkdir(userptr_t pathname, mode_t mode, int *retval);

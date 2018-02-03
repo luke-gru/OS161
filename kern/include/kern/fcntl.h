@@ -49,6 +49,7 @@
 #define O_TRUNC      16      /* Truncate file upon open */
 #define O_APPEND     32      /* All writes happen at EOF (optional feature) */
 #define O_NOCTTY     64      /* Required by POSIX, != 0, but does nothing */
+#define O_CLOEXEC    128     /* same as fcntl(fd, F_SETFL, FD_CLOEXEC) */
 
 /* Additional related definition */
 #define O_ACCMODE     3      /* mask for O_RDONLY/O_WRONLY/O_RDWR */
