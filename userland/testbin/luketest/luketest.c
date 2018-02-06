@@ -6,6 +6,34 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+// mmap shareable with child with MAP_SHARED
+static int mmap_test5(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *startaddr = mmap(2000, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
+  if (startaddr == MAP_FAILED) {
+    errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  memset(startaddr, 'A', 10);
+  ((char*)startaddr)[10] = '\0';
+  printf("10 A's:\n");
+  printf("  %s\n", (char*)startaddr);
+
+  pid_t pid = fork();
+  if (pid == 0) { // child, shouldn't have access
+    printf("map private should fault on %s\n", (char*)startaddr);
+    errx(1, "Previous line should have faulted!");
+  } else { // parent
+    int exitstatus;
+    waitpid(pid, &exitstatus, 0);
+    if (exitstatus == 0) {
+      errx(1, "Child should have exited with non-zero exitstatus");
+    }
+    printf("  in parent, still A: %s\n", (char*)startaddr);
+  }
+  return 0;
+}
+
 // accessing munmapped memory results in a fault
 static int mmap_test4(int argc, char **argv) {
   (void)argc;
@@ -384,6 +412,8 @@ int main(int argc, char *argv[]) {
     mmap_test3(argc, argv);
   } else if (strcmp(argv[1], "mmap4") == 0) {
     mmap_test4(argc, argv);
+  } else if (strcmp(argv[1], "mmap5") == 0) {
+    mmap_test5(argc, argv);
   } else {
     errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep OPTIONS\n");
   }
