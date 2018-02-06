@@ -6,11 +6,48 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+// accessing munmapped memory results in a fault
+static int mmap_test4(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *startaddr = mmap(2000, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
+  if (startaddr == MAP_FAILED) {
+    errx(1, "mmap (MAP_PRIVATE) call failed: %d (%s)", errno, strerror(errno));
+  }
+  memset(startaddr, 'C', 10);
+  ((char*)startaddr)[10] = '\0';
+  printf("map private should work, have 10 C's: %s\n", (char*)startaddr);
+  int res = munmap(startaddr);
+  if (res != 0) {
+    errx(1, "munmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  printf("map private should fault on %s\n", (char*)startaddr);
+  errx(1, "Shouldn't get here, should have faulted on previous line!");
+
+  return 0;
+}
+
+// munmap works (return value)
+static int mmap_test3(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *startaddr = mmap(2000, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_SHARED, 0, 0);
+  if (startaddr == MAP_FAILED) {
+    errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  int res = munmap(startaddr);
+  if (res != 0) {
+    errx(1, "munmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  return 0;
+}
+
+// mmap physically unmapped by creator's exit, even if shared with alive child
 static int mmap_test2(int argc, char **argv) {
   (void)argc;
   (void)argv;
   void *startaddr = mmap(2000, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_SHARED, 0, 0);
-  if (startaddr == MMAP_FAILED) {
+  if (startaddr == MAP_FAILED) {
     errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
   }
   memset(startaddr, 'A', 20);
@@ -29,11 +66,12 @@ static int mmap_test2(int argc, char **argv) {
   return 0;
 }
 
+// mmap shareable with child with MAP_SHARED
 static int mmap_test1(int argc, char **argv) {
   (void)argc;
   (void)argv;
   void *startaddr = mmap(2000, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_SHARED, 0, 0);
-  if (startaddr == MMAP_FAILED) {
+  if (startaddr == MAP_FAILED) {
     errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
   }
   memset(startaddr, 'A', 20);
@@ -342,6 +380,10 @@ int main(int argc, char *argv[]) {
     mmap_test1(argc, argv);
   } else if (strcmp(argv[1], "mmap2") == 0) {
     mmap_test2(argc, argv);
+  } else if (strcmp(argv[1], "mmap3") == 0) {
+    mmap_test3(argc, argv);
+  } else if (strcmp(argv[1], "mmap4") == 0) {
+    mmap_test4(argc, argv);
   } else {
     errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep OPTIONS\n");
   }

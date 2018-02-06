@@ -40,8 +40,8 @@
 #include <addrspace.h>
 #include <argvdata.h>
 #include <clock.h>
-
 #include <lib.h>
+#include <kern/errno.h>
 
 void sys_exit(int status) {
   // Detaches current thread from process, and turns it into zombie, then exits
@@ -194,6 +194,47 @@ int sys_mmap(size_t nbytes, int prot, int flags, int fd, off_t offset, int *retv
     return 0;
   } else {
     *retval = -1; // MAP_FAILED value in userland
+    return errcode;
+  }
+}
+
+int sys_munmap(uint32_t startaddr, int *retval) {
+  int errcode = 0;
+  struct addrspace *as = curproc->p_addrspace;
+  struct mmap_reg *reg = as->mmaps;
+  bool created_map = false;
+  int res = 0;
+  while (reg && reg->start_addr != startaddr) {
+    reg = reg->next;
+  }
+  if (!reg) {
+    *retval = -1;
+    return EINVAL;
+  }
+  created_map = reg->opened_by == curproc->pid;
+  if (created_map) {
+    DEBUG(DB_SYSCALL, "Removing mmap from process %d (as_rm_mmap)\n", (int)curproc->pid);
+    lock_pagetable();
+    res = as_rm_mmap(as, reg);
+    unlock_pagetable();
+    if (res == 0) {
+      as_free_mmap(as, reg);
+    } else {
+      DEBUG(DB_SYSCALL, "Error trying to free mmapped physical pages: %d (%s)\n", res, strerror(res));
+    }
+  } else {
+    DEBUG(DB_SYSCALL, "Removing mmap from process %d (as_free_mmap)\n", (int)curproc->pid);
+    res = as_free_mmap(as, reg);
+    if (res != 0) {
+      DEBUG(DB_SYSCALL, "Error trying to remove mmap page table entries: %d (%s)\n", res, strerror(res));
+    }
+  }
+  if (res == 0) {
+    *retval = 0;
+    return 0;
+  } else {
+    errcode = res;
+    *retval = -1;
     return errcode;
   }
 }

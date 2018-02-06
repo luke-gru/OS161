@@ -866,7 +866,7 @@ static int as_unlink_mmapped_pages(struct addrspace *as, vaddr_t start_addr, uns
 
 // frees the mmap and the page table entries, and unlinks the mmap_reg from as->mmaps,
 // as well as the ptes from as->pages
-static void as_free_mmap(struct addrspace *as, struct mmap_reg *reg) {
+int as_free_mmap(struct addrspace *as, struct mmap_reg *reg) {
 	struct mmap_reg *cur = as->mmaps;
 	struct mmap_reg *prev = as->mmaps;
 	if (cur == reg) {
@@ -878,7 +878,10 @@ static void as_free_mmap(struct addrspace *as, struct mmap_reg *reg) {
 		KASSERT(prev->next == reg);
 		prev->next = reg->next;
 	}
+	unsigned old_num_pages = (unsigned)as_num_pages(as);
 	KASSERT(as_unlink_mmapped_pages(as, reg->start_addr, reg->num_pages) == 0);
+	unsigned new_num_pages = (unsigned)as_num_pages(as);
+	DEBUGASSERT(new_num_pages == old_num_pages - reg->num_pages);
 	struct page_table_entry *pte = reg->ptes;
 	struct page_table_entry *next;
 	for (unsigned i = 0; i < reg->num_pages; i++) {
@@ -887,10 +890,11 @@ static void as_free_mmap(struct addrspace *as, struct mmap_reg *reg) {
 		pte = next;
 	}
 	kfree(reg);
+	return 0;
 }
 
 // release the physical pages from the mmapped region, and remove the region and all page references
-// from the processes that share this region, if applicable
+// from the processes that share this region, if applicable. NOTE: pagetable should be locked.
 int as_rm_mmap(struct addrspace *as, struct mmap_reg *reg) {
 	struct page_table_entry *pte = reg->ptes;
 	if (reg->flags & MAP_SHARED) {

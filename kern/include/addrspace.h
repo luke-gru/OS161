@@ -219,6 +219,7 @@ int as_add_mmap(
   int flags, int fd, off_t file_offset, vaddr_t *mmap_startaddr, int *errcode
 );
 int as_rm_mmap(struct addrspace *as, struct mmap_reg *reg);
+int as_free_mmap(struct addrspace *as, struct mmap_reg *reg);
 void mmap_add_shared_pid(struct mmap_reg *mmap, pid_t pid);
 
 /*
