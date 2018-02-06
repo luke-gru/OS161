@@ -209,6 +209,7 @@ static struct thread * thread_create(const char *name) {
 	/* If you add to struct thread, be sure to initialize here */
 	thread->t_pid = INVALID_PID;
 	bzero(thread->t_pending_signals, sizeof(thread->t_pending_signals));
+	thread->t_is_stopped = false;
 
 	spinlock_acquire(&allthreads_lock);
 	threadarray_add(&allthreads, thread, NULL);
@@ -354,6 +355,17 @@ thread_destroy(struct thread *thread)
 	spinlock_acquire(&allthreads_lock);
 	threadarray_remove(&allthreads, (unsigned)allthreads_index);
 	spinlock_release(&allthreads_lock);
+
+	// free pending unhandled signals
+	int sig_idx;
+	while ((sig_idx = thread_has_pending_signal()) != -1) {
+		struct siginfo *siginf;
+		int res = thread_remove_pending_signal(sig_idx, &siginf);
+		if (res == 0) {
+			kfree(siginf);
+		}
+	}
+
 	kfree(thread);
 }
 
@@ -1554,7 +1566,19 @@ static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
 	return -1;
 }
 
+// NOTE: thread must belong to a threadlist
+static void thread_remove_from_threadlist(struct thread *t) {
+	struct threadlistnode *node = &t->t_listnode;
+	DEBUGASSERT(node->tln_prev != NULL);
+	DEBUGASSERT(node->tln_next != NULL);
+	node->tln_prev->tln_next = node->tln_next;
+	node->tln_next->tln_prev = node->tln_prev;
+	node->tln_next = NULL;
+	node->tln_prev = NULL;
+}
+
 int thread_send_signal(struct thread *t, int sig) {
+	DEBUGASSERT(sig > 0 && sig <= NSIG);
 	struct siginfo *si = kmalloc(sizeof(struct siginfo));
 	KASSERT(si);
 	si->sig = sig;
@@ -1564,14 +1588,18 @@ int thread_send_signal(struct thread *t, int sig) {
 		kfree(si);
 		return 0;
 	} else {
+		DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
 		int add_res = thread_add_pending_signal(t, si);
 		if (add_res == -1) {
 			kfree(si);
 			return -1;
 		}
-		// if (t->t_state == S_SLEEP) {
-		// 	thread_remove_sleeper(t);
-		// }
+		// make the thread runnable so it can handle its signal
+		if (t->t_state == S_SLEEP) {
+			DEBUG(DB_SIG, "Removing thread %d from sleep wchan %s threadlist due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
+			thread_remove_from_threadlist(t);
+			t->t_wchan_name = NULL;
+		}
 		if (t->t_state != S_RUN && t->t_state != S_READY) {
 			thread_make_runnable(t, false);
 		}
@@ -1601,6 +1629,9 @@ int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out) 
 }
 
 static void thread_stop() {
+	DEBUG(DB_SIG, "Stopping curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGSTOP]);
+	curthread->t_is_stopped = true;
+	spinlock_acquire(&threads_stopped_lock);
 	thread_switch(S_SLEEP, threads_stopped_wchan, &threads_stopped_lock);
 }
 
@@ -1608,12 +1639,19 @@ int thread_handle_signal(struct siginfo siginf) {
 	switch (siginf.sig) {
 		case SIGSTOP:
 			thread_stop();
-			return 0;
+			break;
 		case SIGCONT:
-			return 0;
+			DEBUG(DB_SIG, "Continuing curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGCONT]);
+			curthread->t_is_stopped = false;
 			/* continue as normal, curthread is awake now */
+			break;
+		case SIGKILL:
+			DEBUG(DB_SIG, "Exiting curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGKILL]);
+			thread_exit(1);
+			panic("unreachable");
 		default:
 			panic("not implemented");
 			return -1;
 	}
+	return 0;
 }

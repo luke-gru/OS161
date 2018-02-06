@@ -216,6 +216,7 @@ bool proc_is_clone(struct proc *p);
 int proc_pre_exec(struct proc *p, char *progname);
 int proc_close_cloexec_files(struct proc *p);
 int proc_redir_standard_streams(struct proc *p, int redir_fd);
+void proc_list(void);
 
 /* Fetch the address space of the current process. */
 struct addrspace *proc_getas(void);

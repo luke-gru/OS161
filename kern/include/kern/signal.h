@@ -86,6 +86,7 @@
 #define SIGUSR2		31	/* Application-defined */
 #define SIGPWR		32	/* Power failure */
 #define _NSIG		32
+#define NSIG _NSIG
 
 #define PENDING_SIGNALS_MAX 10
 

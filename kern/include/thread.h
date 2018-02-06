@@ -127,6 +127,7 @@ struct thread {
 	 */
 
 	struct siginfo *t_pending_signals[PENDING_SIGNALS_MAX];
+	bool t_is_stopped; /* has been stopped by SIGSTOP */
 };
 
 /*

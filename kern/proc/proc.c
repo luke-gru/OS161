@@ -1190,11 +1190,31 @@ int proc_send_signal(struct proc *p, int sig, int *errcode) {
 	switch (sig) {
 	case SIGSTOP:
 	case SIGCONT:
-		thread_send_signal(t, sig);
+	case SIGKILL:
+		return thread_send_signal(t, sig);
 	// not yet implemented
 	default:
 		*errcode = EINVAL;
 		return -1;
+	}
+}
+
+// list user processes in the system
+void proc_list(void) {
+	struct proc *p = NULL;
+	struct thread *t = NULL;
+	for (int i = 0; i < MAX_USERPROCS; i++) {
+		p = userprocs[i];
+		if (p) {
+			t = thread_find_by_id(p->pid);
+			KASSERT(t);
+			if (t->t_state == S_ZOMBIE) { continue; }
+			const char *stopped = "";
+			if (t->t_is_stopped) {
+				stopped = " (STOPPED)";
+			}
+			kprintf("%s (%d)\t[%s%s]\n", p->p_name, (int)p->pid, threadstate_name(t->t_state), stopped);
+		}
 	}
 }
 

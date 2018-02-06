@@ -10,7 +10,7 @@
 * Idea: add a new syscall that pages out a region, to facilitate testing so we don't have to rely
   solely on sleep() and page aging. [DONE]
 * Get pipes working (pipe(2)), with blocking and non-blocking reads and buffering [DONE, mostly. Needs testing]
-* Get shared memory regions working
+* Get shared memory regions working [DONE, except for file-backed ones]
 * Get mmap working (MAP_PRIVATE and MAP_ANONYMOUS for shared memory regions)
 * Implement O_CLOEXEC on file descriptors [DONE]
 * Implement vfork (no copying of pages for new process, and wait for child to execv or exit before continuing)

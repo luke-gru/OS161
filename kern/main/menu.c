@@ -204,6 +204,8 @@ static int cmd_sig(int nargs, char **args) {
 		sig = SIGSTOP;
 	} else if (strcmp(args[1], "SIGCONT") == 0) {
 		sig = SIGCONT;
+	} else if (strcmp(args[1], "SIGKILL") == 0) {
+		sig = SIGKILL;
 	} else {
 		kprintf("Only SIGSTOP and SIGCONT are supported\n");
 		return EINVAL;
@@ -229,6 +231,16 @@ static int cmd_sig(int nargs, char **args) {
 		return errcode;
 	}
 	kprintf("Successfully sent signal\n");
+	return 0;
+}
+
+static int cmd_list_processes(int nargs, char **args) {
+	if (nargs != 1) {
+		kprintf("Usage: ps\n");
+		return EINVAL;
+	}
+	(void)args;
+	proc_list();
 	return 0;
 }
 
@@ -820,6 +832,7 @@ static struct {
 	{ "p",		cmd_prog },
 	{ "b",     cmd_prog_background },
 	{ "sig",   cmd_sig },
+	{ "ps",     cmd_list_processes },
 	{ "mount",	cmd_mount },
 	{ "unmount",	cmd_unmount },
 	{ "bootfs",	cmd_bootfs },
@@ -1031,7 +1044,7 @@ menu_execute(char *line, int isargs)
 void
 menu(char *args)
 {
-	dbflags = DB_SYSCALL;
+	dbflags = DB_SYSCALL|DB_SIG;
 	kswapproc->p_cwd = kproc->p_cwd; // necessary for opening swap file
 	char buf[64];
 	menu_execute(args, 1);
