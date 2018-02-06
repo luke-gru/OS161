@@ -185,8 +185,20 @@ int sys_sbrk(uint32_t increment, int *retval) {
   }
 }
 
-int sys_getpid(int *retval)
-{
+int sys_mmap(size_t nbytes, int prot, int flags, int fd, off_t offset, int *retval) {
+  int errcode = 0;
+  vaddr_t mmap_start = 0;
+  int mmap_res = as_add_mmap(curproc->p_addrspace, nbytes, prot, flags, fd, offset, &mmap_start, &errcode);
+  if (mmap_res == 0) { // success
+    *retval = (int)mmap_start;
+    return 0;
+  } else {
+    *retval = -1; // MAP_FAILED value in userland
+    return errcode;
+  }
+}
+
+int sys_getpid(int *retval) {
   *retval = (int)curproc->pid;
   return 0;
 }

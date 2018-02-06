@@ -261,6 +261,8 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
 	return addr; // physical address start (bottom addr of block of pages or page)
 }
 
+// Marks the page or pages that start at given addr as free. Doesn't zero out the page 
+// or pages, the caller has to do this if that's what's necessary.
 static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
   int pop = 0;
 	unsigned long i;

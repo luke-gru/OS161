@@ -11,11 +11,11 @@
   solely on sleep() and page aging. [DONE]
 * Get pipes working (pipe(2)), with blocking and non-blocking reads and buffering [DONE, mostly. Needs testing]
 * Get shared memory regions working
-* Get mmap working
+* Get mmap working (MAP_PRIVATE and MAP_ANONYMOUS for shared memory regions)
 * Implement O_CLOEXEC on file descriptors [DONE]
-* Implement vfork
+* Implement vfork (no copying of pages for new process, and wait for child to execv or exit before continuing)
 * Implement copy on write for forked processes
-* Implement clone() for user-level threads
+* Implement clone() for user-level threads [DONE, except for exitstatus of new threads]
 * Implement signals (hard!)
 * allow lseeking for sparse files (files with holes in them, see lseek(2)
 * Implement fcntl to set fd flags [DONE] (for O_CLOEXEC)
@@ -25,3 +25,4 @@
 * Implement process scheduling
 * Implement CPU thread migration
 * Add process accounting info, like CPU time, wall time, sleep time, etc.
+* Implement O_NONBLOCK for pipe reads

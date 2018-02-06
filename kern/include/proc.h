@@ -225,6 +225,9 @@ struct addrspace *proc_setas(struct addrspace *);
 
 bool is_current_userspace_proc(struct proc *p);
 
+// signals
+int proc_send_signal(struct proc *p, int sig, int *errcode);
+
 // pipes
 int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen);
 void pipe_signal_can_read(struct pipe *reader);

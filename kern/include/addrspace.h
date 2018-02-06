@@ -45,9 +45,10 @@ struct page;
 unsigned long last_addrspace_id;
 
 enum page_entry_type {
-  PAGE_ENTRY_TYPE_EXEC = 1, // page for memory loaded from executable
+  PAGE_ENTRY_TYPE_EXEC = 1, // page for memory loaded from executable (data and code)
   PAGE_ENTRY_TYPE_STACK = 2, // page for user stack
   PAGE_ENTRY_TYPE_HEAP = 3, // page for user heap
+  PAGE_ENTRY_TYPE_MMAP = 4 // page for mmapped regions
 };
 
 struct page_table_entry {
@@ -76,7 +77,27 @@ struct page_table_entry {
   //short swap_errors; // number of errors trying to swap
 
 	struct page_table_entry *next;
-	//struct page_table_entry *last;
+};
+
+// linked list of pids
+struct pidlist {
+  pid_t pid;
+  struct pidlist *next;
+};
+
+// linked list of memory-mapped regions
+struct mmap_reg {
+  int prot_flags; // protection flags (R/W/X)
+  int flags; // visibility flags (shared/private) and whether it's anonymous or not (not backed by file)
+  struct page_table_entry *ptes; // page table entries for mapping
+  unsigned num_pages;
+  int fd; // if this is a file-backed mmap call
+  vaddr_t start_addr;
+  vaddr_t end_addr;
+  vaddr_t valid_end_addr;
+  pid_t opened_by;
+  struct pidlist *pids_sharing; // only non-null if opened_by == curproc->pid and MAP_SHARED is given in flags
+  struct mmap_reg *next;
 };
 
 struct regionlist {
@@ -86,7 +107,6 @@ struct regionlist {
   struct regionlist *next;
   struct regionlist *last;
 };
-
 
 /*
  * Address space - data structure associated with the virtual memory
@@ -110,17 +130,20 @@ struct addrspace {
         struct page_table_entry *pages; // all pages in address space (including stack, heap and data and executable)
         struct page_table_entry *heap; // beginning of heap (bottom address, heap grows up)
         struct page_table_entry *stack; // top of stack (bottom address, stack grows down)
+        struct mmap_reg *mmaps; // memory mapped regions (see mmap syscall)
         struct regionlist *regions;
-        vaddr_t heap_start;
-        vaddr_t heap_end;
-        vaddr_t heap_brk;
+        vaddr_t heap_start; // start of heap, stays the same, never increases after executable load
+        vaddr_t heap_end; // end of heap pages, always divisible by PAGE_SIZE
+        vaddr_t heap_brk; // end of heap available to userspace, growable with sbrk()
+        vaddr_t heap_top; // top of heap, decreases if stack size increases or mmapped regions are added
         struct spinlock spinlock;
         time_t last_activation; // last time that this address space began its time slice
         bool destroying;
         bool is_active; // Doesn't mean it's currently running, just that it ran at least one time slice and hasn't exited
         bool no_heap_alloc; // For now, used for processes internal to the kernel that run in their own special "userspace"
         short running_cpu_idx; // If the address space's process is currently running, this is the cpu idx (0-3) of the CPU
-        short refcount;
+        short refcount; // address spaces are shared with the clone() syscall (used for userspace threads, which share a virtual address space)
+
 #endif
 };
 
@@ -191,6 +214,12 @@ void              as_unlock_all(void);
 bool              as_is_destroyed(struct addrspace *as);
 int               as_num_pages(struct addrspace *as);
 
+int as_add_mmap(
+  struct addrspace *as, size_t len, int prot,
+  int flags, int fd, off_t file_offset, vaddr_t *mmap_startaddr, int *errcode
+);
+int as_rm_mmap(struct addrspace *as, struct mmap_reg *reg);
+void mmap_add_shared_pid(struct mmap_reg *mmap, pid_t pid);
 
 /*
  * Functions in loadelf.c

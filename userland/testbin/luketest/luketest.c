@@ -6,6 +6,65 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+static int mmap_test2(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *startaddr = mmap(2000, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_SHARED, 0, 0);
+  if (startaddr == MMAP_FAILED) {
+    errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  memset(startaddr, 'A', 20);
+  ((char*)startaddr)[20] = '\0';
+  printf("20 A's:\n");
+  printf("  %s\n", (char*)startaddr);
+
+  pid_t pid = fork();
+  if (pid == 0) { // child
+    sleep(1);
+    memset(startaddr, 'B', 20); // should fail, region should be unmapped by parent's exit
+    printf("in child, mapping should be destroyed: %s\n", (char*)startaddr);
+  } else { // parent
+    exit(0);
+  }
+  return 0;
+}
+
+static int mmap_test1(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *startaddr = mmap(2000, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_SHARED, 0, 0);
+  if (startaddr == MMAP_FAILED) {
+    errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  memset(startaddr, 'A', 20);
+  ((char*)startaddr)[20] = '\0';
+  printf("20 A's:\n");
+  printf("  %s\n", (char*)startaddr);
+
+  pid_t pid = fork();
+  if (pid == 0) { // child
+    memset(startaddr, 'B', 20);
+    ((char*)startaddr)[20] = '\0';
+    printf("  in child, now B: %s\n", (char*)startaddr);
+
+  } else { // parent
+    int exitstatus;
+    waitpid(pid, &exitstatus, 0);
+    printf("  in parent, now B: %s\n", (char*)startaddr);
+  }
+  return 0;
+}
+
+static int sleep_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  while (1) {
+    sleep(5);
+    printf("Slept for 5 seconds, now up\n");
+  }
+  return 0;
+}
+
 static int clone_entry(void *data1) {
   (void)data1;
   printf("Clone entry!\n");
@@ -277,7 +336,13 @@ int main(int argc, char *argv[]) {
   } else if (strcmp(argv[1], "clone") == 0) {
     clone_test(argc, argv);
     exit(0);
+  } else if (strcmp(argv[1], "sleep") == 0) {
+    sleep_test(argc, argv);
+  } else if (strcmp(argv[1], "mmap1") == 0) {
+    mmap_test1(argc, argv);
+  } else if (strcmp(argv[1], "mmap2") == 0) {
+    mmap_test2(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep OPTIONS\n");
   }
 }

@@ -83,6 +83,7 @@ int sys_execv(userptr_t filename, userptr_t argv, int *retval);
 int sys_clone(userptr_t func, uint32_t child_stack_top, size_t stacksize, int flags, int *retval);
 
 int sys_sbrk(size_t increment, int *retval);
+int sys_mmap(size_t nbytes, int prot, int flags, int fd, off_t offset, int *retval);
 
 int sys_chdir(userptr_t dir, int *retval);
 int sys_getpid(int *retval);

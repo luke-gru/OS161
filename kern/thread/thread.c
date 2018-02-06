@@ -54,6 +54,7 @@
 #include <mips/trapframe.h>
 #include <syscall.h>
 #include <clock.h>
+#include <kern/unistd.h>
 
 
 /* Magic number used as a guard value on kernel thread stacks. */
@@ -71,6 +72,9 @@ DEFARRAY(cpu, static __UNUSED inline);
 static struct cpuarray allcpus;
 unsigned num_cpus;
 
+static struct threadarray allthreads;
+static struct spinlock allthreads_lock = SPINLOCK_INITIALIZER;
+
 /* Used to wait for secondary CPUs to come online. */
 static struct semaphore *cpu_startup_sem;
 
@@ -80,8 +84,12 @@ static struct spinlock thread_count_lock = SPINLOCK_INITIALIZER;
 static struct wchan *thread_count_wchan;
 
 /* Used for thread sleeping for specified amount of time */
-static struct wchan *thread_sleepers_wchan;
-static struct spinlock thread_sleepers_lock = SPINLOCK_INITIALIZER;
+static struct wchan *threads_sleeping_wchan;
+static struct spinlock threads_sleeping_lock = SPINLOCK_INITIALIZER;
+
+/* Used for threads that have been stopped by SIGSTOP (paused) */
+static struct wchan *threads_stopped_wchan;
+static struct spinlock threads_stopped_lock = SPINLOCK_INITIALIZER;
 
 static time_t timestamp() {
 	struct timespec tv;
@@ -92,6 +100,33 @@ static time_t timestamp() {
 struct cpu *thread_get_cpu(unsigned index) {
 	DEBUGASSERT(index < num_cpus);
 	return cpuarray_get(&allcpus, index);
+}
+
+static int threadarray_get_index(bool (*thread_find_func)(struct thread *t, void *data), void *data) {
+	spinlock_acquire(&allthreads_lock);
+	unsigned num = threadarray_num(&allthreads);
+	struct thread *t;
+	for (int i = 0; i < (int)num; i++) {
+		t = threadarray_get(&allthreads, i);
+		if (thread_find_func(t, data)) {
+			spinlock_release(&allthreads_lock);
+			return i;
+		}
+	}
+	spinlock_release(&allthreads_lock);
+	return -1;
+}
+
+static bool threadarray_find_by_pid_func(struct thread *t, void *pid) {
+	return t->t_pid == (pid_t)pid;
+}
+
+struct thread *thread_find_by_id(pid_t id) {
+	int index = threadarray_get_index(threadarray_find_by_pid_func, (void*)id);
+	if (index < 0) {
+		return NULL;
+	}
+	return threadarray_get(&allthreads, (unsigned)index);
 }
 
 ////////////////////////////////////////////////////////////
@@ -138,10 +173,7 @@ thread_checkstack(struct thread *thread)
  * Create a thread. This is used both to create a first thread
  * for each CPU and to create subsequent forked threads.
  */
-static
-struct thread *
-thread_create(const char *name)
-{
+static struct thread * thread_create(const char *name) {
 	struct thread *thread;
 
 	DEBUGASSERT(name != NULL);
@@ -176,7 +208,11 @@ thread_create(const char *name)
 
 	/* If you add to struct thread, be sure to initialize here */
 	thread->t_pid = INVALID_PID;
+	bzero(thread->t_pending_signals, sizeof(thread->t_pending_signals));
 
+	spinlock_acquire(&allthreads_lock);
+	threadarray_add(&allthreads, thread, NULL);
+	spinlock_release(&allthreads_lock);
 	return thread;
 }
 
@@ -313,6 +349,11 @@ thread_destroy(struct thread *thread)
 	/* sheer paranoia */
 	thread->t_wchan_name = "DESTROYED";
 
+	int allthreads_index = threadarray_get_index(threadarray_find_by_pid_func, (void*)thread->t_pid);
+	DEBUGASSERT(allthreads_index >= 0);
+	spinlock_acquire(&allthreads_lock);
+	threadarray_remove(&allthreads, (unsigned)allthreads_index);
+	spinlock_release(&allthreads_lock);
 	kfree(thread);
 }
 
@@ -406,6 +447,7 @@ void
 thread_bootstrap(void)
 {
 	cpuarray_init(&allcpus);
+	threadarray_init(&allthreads);
 
 	/*
 	 * Create the cpu structure for the bootup CPU, the one we're
@@ -419,7 +461,8 @@ thread_bootstrap(void)
 	(void)cpu_create(0);
 	KASSERT(CURCPU_EXISTS() == true);
 
-	thread_sleepers_wchan = wchan_create("thread_sleepers");
+	threads_sleeping_wchan = wchan_create("threads_sleeping");
+	threads_stopped_wchan = wchan_create("threads_stopped");
 
 	/* cpu_create() should also have set t_proc. */
 	KASSERT(curcpu != NULL);
@@ -667,6 +710,25 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 	KASSERT(is_valid_pid(parent_pid));
 	KASSERT(is_valid_pid(child_pid));
 
+	p->p_addrspace->pid = child_pid;
+	// now that this process has a pid, add the pid to the shared mmapped structures of the parent (or grandparent)
+	struct addrspace *as = p->p_addrspace;
+	struct mmap_reg *mmap = as->mmaps;
+	while (mmap) {
+		DEBUGASSERT(mmap->flags & MAP_SHARED);
+		struct proc *p = proc_lookup(mmap->opened_by);
+		if (p) {
+			struct mmap_reg *mmap_parent = p->p_addrspace->mmaps;
+			while (mmap_parent && mmap_parent->start_addr != mmap->start_addr) {
+				mmap_parent = mmap_parent->next;
+			}
+			if (mmap_parent) {
+				mmap_add_shared_pid(mmap_parent, child_pid);
+			}
+		}
+		mmap = mmap->next;
+	}
+
 	switchframe_init(newthread, enter_forked_process, tf, 0);
 	thread_make_runnable(newthread, false);
 	splx(spl);
@@ -743,12 +805,12 @@ static bool thread_find_ready_sleeper_cb(struct thread *t) {
 
 // NOTE: runs once a second
 void thread_add_ready_sleepers_to_runqueue(void) {
-	bool dolock = !spinlock_do_i_hold(&thread_sleepers_lock);
+	bool dolock = !spinlock_do_i_hold(&threads_sleeping_lock);
 	if (dolock)
-		spinlock_acquire(&thread_sleepers_lock);
+		spinlock_acquire(&threads_sleeping_lock);
 	struct thread *ready;
-	if (!wchan_isempty(thread_sleepers_wchan, &thread_sleepers_lock)) {
-		while ((ready = threadlist_remove_if(&thread_sleepers_wchan->wc_threads, thread_find_ready_sleeper_cb)) != NULL) {
+	if (!wchan_isempty(threads_sleeping_wchan, &threads_sleeping_lock)) {
+		while ((ready = threadlist_remove_if(&threads_sleeping_wchan->wc_threads, thread_find_ready_sleeper_cb)) != NULL) {
 			bool already_have_lock = spinlock_do_i_hold(&ready->t_cpu->c_runqueue_lock);
 			ready->wakeup_at = 0;
 			ready->t_wchan_name = NULL;
@@ -756,7 +818,7 @@ void thread_add_ready_sleepers_to_runqueue(void) {
 		}
 	}
 	if (dolock)
-		spinlock_release(&thread_sleepers_lock);
+		spinlock_release(&threads_sleeping_lock);
 }
 
 /*
@@ -769,8 +831,7 @@ void thread_add_ready_sleepers_to_runqueue(void) {
  * WC, protected by the spinlock LK. Otherwise WC and LK should be
  * NULL.
  */
-static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk)
-{
+static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinlock *lk) {
 	struct thread *cur, *next;
 	int spl;
 
@@ -834,7 +895,10 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 		 * caller of wchan_sleep locked it until the thread is
 		 * on the list.
 		 */
+		 	//DEBUGASSERT(cur->t_wchan == NULL);
 			threadlist_addtail(&wc->wc_threads, cur);
+			//cur->t_wchan = wc;
+			//cur->t_wchan_lk = lk;
 			spinlock_release(lk);
 			break;
 	  case S_ZOMBIE:
@@ -945,6 +1009,15 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 	as_activate();
 	exorcise();
 	splx(spl);
+	int sig_idx = thread_has_pending_signal();
+	if (sig_idx != -1) {
+		struct siginfo *siginf;
+		KASSERT(thread_remove_pending_signal(sig_idx, &siginf) == 0);
+		DEBUG(DB_SIG, "handling pending signal %s\n", sys_signame[siginf->sig]);
+		KASSERT(siginf->pid == curproc->pid);
+		thread_handle_signal(*siginf);
+		kfree(siginf);
+	}
 }
 
 /*
@@ -1198,12 +1271,12 @@ thread_consider_migration(void)
 }
 
 void thread_sleep_n_seconds(int seconds) {
-	spinlock_acquire(&thread_sleepers_lock);
+	spinlock_acquire(&threads_sleeping_lock);
 	struct thread *t = curthread;
 	t->wakeup_at = timestamp() + seconds;
-	// puts curthread on wait channel threadlist and sleeps the thread
-	wchan_sleep(thread_sleepers_wchan, &thread_sleepers_lock); // unlocks and then locks spinlock
-	spinlock_release(&thread_sleepers_lock);
+	// puts curthread on the wait channel threadslist
+	wchan_sleep(threads_sleeping_wchan, &threads_sleeping_lock); // unlocks and then locks spinlock
+	spinlock_release(&threads_sleeping_lock);
 }
 
 ////////////////////////////////////////////////////////////
@@ -1264,7 +1337,6 @@ wchan_sleep(struct wchan *wc, struct spinlock *lk)
 
 	/* must not hold other spinlocks */
 	KASSERT(curcpu->c_spinlocks == 1);
-
 	thread_switch(S_SLEEP, wc, lk);
 	spinlock_acquire(lk);
 }
@@ -1469,5 +1541,79 @@ const char *threadstate_name(threadstate_t state) {
 		case S_ZOMBIE: return "ZOMBIE";
 		default:
 			panic("invalid thread state: %d", (int)state);
+	}
+}
+
+static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
+	for (int i = 0; i < PENDING_SIGNALS_MAX; i++) {
+		if (!t->t_pending_signals[i]) {
+			t->t_pending_signals[i] = si;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+int thread_send_signal(struct thread *t, int sig) {
+	struct siginfo *si = kmalloc(sizeof(struct siginfo));
+	KASSERT(si);
+	si->sig = sig;
+	si->pid = t->t_pid;
+	if (curthread == t) {
+		thread_handle_signal(*si);
+		kfree(si);
+		return 0;
+	} else {
+		int add_res = thread_add_pending_signal(t, si);
+		if (add_res == -1) {
+			kfree(si);
+			return -1;
+		}
+		// if (t->t_state == S_SLEEP) {
+		// 	thread_remove_sleeper(t);
+		// }
+		if (t->t_state != S_RUN && t->t_state != S_READY) {
+			thread_make_runnable(t, false);
+		}
+		return 0;
+	}
+}
+
+// does the current thread have a pending signal? If so, returns its index
+// in the pending signals array
+int thread_has_pending_signal(void) {
+	struct thread *t = curthread;
+	for (int i = 0; i < PENDING_SIGNALS_MAX; i++) {
+		if (t->t_pending_signals[i]) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out) {
+	KASSERT(sigidx < PENDING_SIGNALS_MAX);
+	struct siginfo *inf = curthread->t_pending_signals[sigidx];
+	if (!inf) return -1;
+	*siginfo_out = inf;
+	curthread->t_pending_signals[sigidx] = NULL;
+	return 0;
+}
+
+static void thread_stop() {
+	thread_switch(S_SLEEP, threads_stopped_wchan, &threads_stopped_lock);
+}
+
+int thread_handle_signal(struct siginfo siginf) {
+	switch (siginf.sig) {
+		case SIGSTOP:
+			thread_stop();
+			return 0;
+		case SIGCONT:
+			return 0;
+			/* continue as normal, curthread is awake now */
+		default:
+			panic("not implemented");
+			return -1;
 	}
 }

@@ -43,6 +43,7 @@
 #include <vfs.h>
 #include <vnode.h>
 #include <kern/stat.h>
+#include <kern/unistd.h>
 
 static time_t as_timestamp(void) {
 	struct timespec tv;
@@ -68,9 +69,11 @@ struct addrspace *as_create(char *name) {
 	as->regions = NULL;
 	as->stack = NULL;
 	as->heap = NULL;
+	as->mmaps = NULL;
 	as->heap_end = (vaddr_t)0;
 	as->heap_start = (vaddr_t)0;
 	as->heap_brk = (vaddr_t)0;
+  as->heap_top = (vaddr_t)(USERSTACK - (VM_STACKPAGES * PAGE_SIZE));
 	as->destroying = false;
 	as->last_activation = (time_t)0;
 	as->is_active = false;
@@ -98,6 +101,18 @@ static int as_num_pages_of_type(struct addrspace *as, enum page_entry_type type)
 	int i = 0;
 	while (pte != NULL) {
 		if (pte->page_entry_type == type) {
+			i++;
+		}
+		pte = pte->next;
+	}
+	return i;
+}
+
+static int as_num_pages_excluding_type(struct addrspace *as, enum page_entry_type type) {
+	struct page_table_entry *pte = as->pages;
+	int i = 0;
+	while (pte != NULL) {
+		if (pte->page_entry_type != type) {
 			i++;
 		}
 		pte = pte->next;
@@ -150,6 +165,48 @@ void as_debug(struct addrspace *as) {
 	);
 }
 
+static struct page_table_entry *as_copy_pte(struct addrspace *old, struct addrspace *new, struct page_table_entry *pte) {
+	KASSERT(pte);
+	(void)old;
+	struct page_table_entry *new_pte = kmalloc(sizeof(*new_pte));
+	KASSERT(new_pte);
+	memcpy(new_pte, pte, sizeof(struct page_table_entry));
+	new_pte->as = new;
+	new_pte->debug_name = new->name;
+	new_pte->is_swapped = false;
+	new_pte->num_swaps = 0;
+	new_pte->swap_offset = 0;
+	new_pte->is_dirty = true;
+	new_pte->tlb_idx = -1;
+	new_pte->page_age = 0;
+	new_pte->cpu_idx = curcpu->c_number;
+	new_pte->next = NULL;
+	return new_pte;
+}
+
+static struct mmap_reg *as_copy_mmap_region(struct addrspace *old, struct addrspace *new, struct mmap_reg *reg) {
+	struct mmap_reg *new_reg = kmalloc(sizeof(*new_reg));
+	KASSERT(new_reg);
+	DEBUG(DB_SYSCALL, "Copying mmap region\n");
+	memcpy(new_reg, reg, sizeof(struct mmap_reg));
+	new_reg->next = NULL;
+	new_reg->pids_sharing = NULL;
+	struct page_table_entry *old_pte, *last, *first;
+	last = NULL;
+	for (old_pte = reg->ptes; old_pte != NULL; old_pte = old_pte->next) {
+		struct page_table_entry *pte = as_copy_pte(old, new, old_pte);
+		KASSERT(pte);
+		if (last) {
+			last->next = pte;
+		} else {
+			first = pte;
+		}
+		last = pte;
+	}
+	new_reg->ptes = first;
+	return new_reg;
+}
+
 int as_copy(struct addrspace *old, struct addrspace **ret) {
 	struct addrspace *new;
 
@@ -169,7 +226,7 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 			new->regions->next = NULL;
 			newitr = new->regions;
 		} else {
-			for (tmp=new->regions; tmp->next!=NULL; tmp=tmp->next); // get last
+			for (tmp=new->regions; tmp->next!=NULL; tmp=tmp->next) {} // get last
 			newitr = (struct regionlist *) kmalloc(sizeof(*itr));
 			tmp->next = newitr;
 		}
@@ -194,6 +251,11 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 	struct page_table_entry *last_new_heappage = new->heap;
 
 	while (old_heappage) {
+		// shared mmapped region structures are copied below
+		if (old_heappage && old_heappage->page_entry_type == PAGE_ENTRY_TYPE_MMAP) {
+			old_heappage = old_heappage->next;
+			continue;
+		}
 		new_heappage = kmalloc(sizeof(*new_heappage));
 		if (!new_heappage) {
 			as_destroy(new);
@@ -213,19 +275,53 @@ int as_copy(struct addrspace *old, struct addrspace **ret) {
 		old_heappage = old_heappage->next;
 	}
 
-	KASSERT(as_num_pages(old) == as_num_pages(new));
+	KASSERT(
+		as_num_pages_excluding_type(old, PAGE_ENTRY_TYPE_MMAP) ==
+		as_num_pages_excluding_type(new, PAGE_ENTRY_TYPE_MMAP)
+	);
 
 	// Copy the data from old to new
 	struct page_table_entry *iterate1 = old->pages;
 	struct page_table_entry *iterate2 = new->pages;
 	 // copy heap, stack and executable memory regions
 	while (iterate1 != NULL && iterate2 != NULL) {
+		if (iterate1->page_entry_type == PAGE_ENTRY_TYPE_MMAP) {
+			iterate1 = iterate1->next;
+			continue;
+		}
 		DEBUGASSERT(iterate1->page_entry_type == iterate2->page_entry_type);
 		memcpy((void *)PADDR_TO_KVADDR(iterate2->paddr),
 			(const void *)PADDR_TO_KVADDR(iterate1->paddr), PAGE_SIZE);
 		iterate1 = iterate1->next;
 		iterate2 = iterate2->next;
 	}
+
+	// copy over structures for shared (MAP_SHARED) memory regions
+	struct mmap_reg *mmap_region;
+	struct mmap_reg *new_region, *last_region;
+	last_region = NULL;
+	for (mmap_region = old->mmaps; mmap_region != NULL; mmap_region = mmap_region->next) {
+		if (mmap_region->flags & MAP_PRIVATE) {
+			continue;
+		}
+		DEBUGASSERT(mmap_region->flags & MAP_SHARED);
+		new_region = as_copy_mmap_region(old, new, mmap_region);
+		if (last_region) {
+			last_region->next = new_region;
+		} else {
+			new->mmaps = new_region;
+		}
+		last_region = new_region;
+		struct page_table_entry *last_page;
+		// link mmapped pages into new->pages
+		for (last_page = new->pages; last_page->next != NULL; last_page = last_page->next) {}
+		last_page->next = new_region->ptes;
+	}
+
+	new->heap_start = old->heap_start;
+	new->heap_end = old->heap_end;
+	new->heap_brk = old->heap_brk;
+	new->heap_top = old->heap_top; // FIXME: this could be different if there are private mmapped regions!
 
 	*ret = new;
 	return 0;
@@ -259,7 +355,13 @@ void as_destroy(struct addrspace *as) {
 
 	struct page_table_entry *pte = as->pages;
 	struct page_table_entry *pagetemp;
+	// free heap pages, data and code pages and stack pages
 	while (pte) {
+		// memory-mapped pages are freed below
+		if (pte->page_entry_type == PAGE_ENTRY_TYPE_MMAP) {
+			pte = pte->next;
+			continue;
+		}
 		if (pte->coremap_idx > 0) {
 			struct page *core = &coremap[pte->coremap_idx];
 			//DEBUGASSERT(core->entry == pte);
@@ -271,6 +373,33 @@ void as_destroy(struct addrspace *as) {
 		pte = pte->next;
 		kfree(pagetemp);
 	}
+
+	struct mmap_reg *mmap_region = as->mmaps;
+	struct mmap_reg *cur_reg;
+	while (mmap_region) {
+		if ((mmap_region->flags & MAP_SHARED) && mmap_region->opened_by != as->pid) {
+			pte = mmap_region->ptes;
+			struct page_table_entry *next;
+			for (unsigned i = 0; i < mmap_region->num_pages; i++) {
+				next = pte->next;
+				kfree(pte);
+				pte = next;
+			}
+		} else {
+			as_rm_mmap(as, mmap_region); // actually release the underlying physical pages
+			pte = mmap_region->ptes;
+			struct page_table_entry *next;
+			for (unsigned i = 0; i < mmap_region->num_pages; i++) {
+				next = pte->next;
+				kfree(pte);
+				pte = next;
+			}
+		}
+		cur_reg = mmap_region;
+		mmap_region = mmap_region->next;
+		kfree(cur_reg);
+	}
+
 	spinlock_cleanup(&as->spinlock);
 	kfree(as->name);
 	kfree(as);
@@ -471,8 +600,12 @@ vaddr_t as_heapend(struct addrspace *as) {
 	return as->heap_end;
 }
 
-static vaddr_t as_stackbottom(struct addrspace *as) {
-	return as->stack->vaddr;
+// static vaddr_t as_stackbottom(struct addrspace *as) {
+// 	return as->stack->vaddr;
+// }
+
+static vaddr_t as_heaptop(struct addrspace *as) {
+	return as->heap_top;
 }
 
 static void dealloc_page_entries(struct page_table_entry *pte, bool dolock) {
@@ -500,14 +633,15 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 		as->heap_brk += bytes;
 		return 0;
 	}
+	if (as->heap_end + nbytes >= as_heaptop(as)) {
+		return ENOMEM;
+	}
 	lock_pagetable();
-	if (as->heap_end + nbytes >= as_stackbottom(as)) {
-		return ENOMEM;
-	}
 	if (corefree() < npages) {
+		unlock_pagetable();
 		return ENOMEM;
 	}
-	struct page_table_entry *first_heap_pte;
+	struct page_table_entry *first_heap_pte = NULL;
 	struct page_table_entry *last = NULL;
 	vaddr_t old_heapbrk = as->heap_brk;
 	vaddr_t vaddr = as->heap_end;
@@ -522,6 +656,7 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 		pte->vaddr = vaddr;
 		paddr_t paddr = find_upage_for_entry(pte, VM_PIN_PAGE, false);
 		if (paddr == 0) {
+			if (i > 0) kfree(pte);
 			goto nomem;
 		}
 		pte->as = as;
@@ -554,10 +689,246 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 	unlock_pagetable();
 	return 0;
 	nomem: {
-		dealloc_page_entries(first_heap_pte, false);
+		if (first_heap_pte) {
+			dealloc_page_entries(first_heap_pte, false);
+		}
 		unlock_pagetable();
 		return ENOMEM;
 	}
+}
+
+int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
+  							int flags, int fd, off_t file_offset, vaddr_t *mmap_startaddr,
+								int *errcode) {
+	(void)file_offset;
+	struct mmap_reg *reg = NULL;
+	size_t npages;
+	DEBUGASSERT(as != NULL);
+	if (nbytes == 0) {
+		*errcode = EINVAL;
+		return -1;
+	}
+	if (fd < 3 && (flags & MAP_ANONYMOUS) == 0) {
+		*errcode = EINVAL;
+		return -1;
+	}
+	if (prot != PROT_NONE && (prot & PROT_READ) == 0 &&
+													 (prot & PROT_WRITE) == 0 &&
+													 (prot & PROT_EXEC) == 0) {
+		*errcode = EINVAL;
+		return -1;
+	}
+	// must be one of the following
+	if ((flags & MAP_PRIVATE) == 0 && (flags & MAP_SHARED) == 0) {
+		*errcode = EINVAL;
+		return -1;
+	}
+	nbytes = ROUNDUP(nbytes, PAGE_SIZE);
+	npages = nbytes / PAGE_SIZE;
+	DEBUGASSERT(npages > 0);
+	lock_pagetable();
+	if (corefree() < npages || (as->heap_end + nbytes) >= as_heaptop(as)) {
+		unlock_pagetable();
+		*errcode = ENOMEM;
+		return -1;
+	}
+	reg = kmalloc(sizeof(*reg));
+	KASSERT(reg);
+	if (fd < 3 && (flags & MAP_ANONYMOUS) == 0) {
+		unlock_pagetable();
+		*errcode = EINVAL;
+		return -1;
+	}
+	reg->prot_flags = prot;
+	reg->flags = flags;
+	reg->fd = fd;
+	reg->next = NULL;
+	vaddr_t reg_btm = as->heap_top - (npages * PAGE_SIZE);
+	DEBUGASSERT(reg_btm % PAGE_SIZE == 0);
+	vaddr_t reg_top = as->heap_top;
+	reg->start_addr = reg_btm;
+	reg->end_addr = reg_top;
+	reg->valid_end_addr = reg_btm + nbytes;
+	reg->opened_by = curproc->pid;
+	reg->num_pages = npages;
+	vaddr_t pte_vaddr;
+	struct page_table_entry *first_pte = NULL;
+	struct page_table_entry *last = NULL;
+
+	for (size_t i = 0; i < npages; i++) {
+		pte_vaddr = reg_btm + (i * PAGE_SIZE);
+		struct page_table_entry *pte = kmalloc(sizeof(*pte));
+		DEBUGASSERT(pte);
+		memset(pte, 0, sizeof(*pte));
+		if (i == 0) {
+			first_pte = pte; // to free allocated pages if we get an error
+		}
+		pte->vaddr = pte_vaddr;
+		paddr_t paddr = find_upage_for_entry(pte, 0, false);
+		if (paddr == 0) {
+			if (i > 0) kfree(pte);
+			goto nomem;
+		}
+		// zero out page if MAP_ANONYMOUS is given
+		if (flags & MAP_ANONYMOUS) {
+			memset((void*)PADDR_TO_KVADDR(paddr), 0, PAGE_SIZE);
+		}
+		pte->as = as;
+		pte->paddr = paddr;
+		pte->permissions = prot;
+		pte->page_entry_type = PAGE_ENTRY_TYPE_MMAP;
+		pte->next = NULL;
+		pte->tlb_idx = -1;
+		pte->cpu_idx = curcpu->c_number;
+		pte->is_dirty = true;
+		pte->is_swapped = false;
+		pte->debug_name = as->name;
+		pte->num_swaps = 0;
+		if (last) {
+			last->next = pte;
+		}
+		last = pte;
+	}
+
+	// link region into as->mmaps
+	struct mmap_reg *last_reg;
+	if (!as->mmaps) {
+		as->mmaps = reg;
+	} else {
+		for (last_reg = as->mmaps; last_reg->next != NULL; last_reg = last_reg->next) {}
+		last_reg->next = reg;
+	}
+
+	reg->ptes = first_pte;
+
+	// link ptes into as->pages
+	struct page_table_entry *last_pte = NULL;
+	for (last_pte = as->pages; last_pte->next != NULL; last_pte = last_pte->next) {}
+	last_pte->next = first_pte;
+
+	as->heap_top = reg_btm;
+	*mmap_startaddr = reg->start_addr;
+	unlock_pagetable();
+	return 0;
+	nomem: {
+		if (reg) {
+			kfree(reg);
+		}
+		if (first_pte) {
+			dealloc_page_entries(first_pte, false);
+		}
+		unlock_pagetable();
+		*errcode = ENOMEM;
+		return -1;
+	}
+}
+
+// Adds a pidlink (pidlist entry) to the given mmap, for use when a process
+// shares the mapping. Currently this gets run on proc_fork when the parent
+// has shared mappings.
+void mmap_add_shared_pid(struct mmap_reg *mmap, pid_t pid) {
+	KASSERT(mmap->flags & MAP_SHARED);
+	struct pidlist *pidlink = kmalloc(sizeof(*pidlink));
+	KASSERT(pidlink);
+	pidlink->pid = pid;
+	pidlink->next = NULL;
+
+	struct pidlist *curlink = mmap->pids_sharing;
+	if (curlink) {
+		while (curlink->next) { curlink = curlink->next; }
+		curlink->next = pidlink;
+	} else {
+		mmap->pids_sharing = pidlink;
+	}
+}
+
+// unlinks the page table entries from as->pages that belong to the mmap with start address start_addr
+static int as_unlink_mmapped_pages(struct addrspace *as, vaddr_t start_addr, unsigned num_pages) {
+	struct page_table_entry *prev, *cur, *next_after_reg;
+	prev = NULL;
+	cur = as->pages;
+	while (cur) {
+		if (cur->page_entry_type == PAGE_ENTRY_TYPE_MMAP && cur->vaddr == start_addr) {
+			next_after_reg = cur;
+			while (num_pages > 0) {
+				next_after_reg = next_after_reg->next;
+				num_pages--;
+			}
+			DEBUGASSERT(prev);
+			prev->next = next_after_reg;
+			return 0;
+		}
+		prev = cur;
+		cur = cur->next;
+	}
+	return -1;
+}
+
+// frees the mmap and the page table entries, and unlinks the mmap_reg from as->mmaps,
+// as well as the ptes from as->pages
+static void as_free_mmap(struct addrspace *as, struct mmap_reg *reg) {
+	struct mmap_reg *cur = as->mmaps;
+	struct mmap_reg *prev = as->mmaps;
+	if (cur == reg) {
+		as->mmaps = cur->next;
+	} else {
+		while (prev->next != reg) {
+			prev = prev->next;
+		}
+		KASSERT(prev->next == reg);
+		prev->next = reg->next;
+	}
+	KASSERT(as_unlink_mmapped_pages(as, reg->start_addr, reg->num_pages) == 0);
+	struct page_table_entry *pte = reg->ptes;
+	struct page_table_entry *next;
+	for (unsigned i = 0; i < reg->num_pages; i++) {
+		next = pte->next;
+		kfree(pte);
+		pte = next;
+	}
+	kfree(reg);
+}
+
+// release the physical pages from the mmapped region, and remove the region and all page references
+// from the processes that share this region, if applicable
+int as_rm_mmap(struct addrspace *as, struct mmap_reg *reg) {
+	struct page_table_entry *pte = reg->ptes;
+	if (reg->flags & MAP_SHARED) {
+		DEBUGASSERT(reg->opened_by == as->pid);
+		DEBUG(DB_SYSCALL, "Removing shared mapping from as %s\n", as->name);
+	}
+	for (unsigned i = 0; i < reg->num_pages; i++) {
+		DEBUGASSERT(pte);
+		DEBUGASSERT(pte->page_entry_type == PAGE_ENTRY_TYPE_MMAP);
+		if (pte->coremap_idx > 0) {
+			struct page *core = &coremap[pte->coremap_idx];
+			DEBUG(DB_SYSCALL, "Removing physical page for shared mapping\n");
+			free_upages(pte->paddr, false);
+			DEBUGASSERT(core->entry == NULL);
+			memset((void*)PADDR_TO_KVADDR(pte->paddr), 0, PAGE_SIZE);
+		}
+		pte = pte->next;
+	}
+
+	if (reg->flags & MAP_SHARED) {
+		struct pidlist *pidlink = reg->pids_sharing;
+		while (pidlink) {
+			pid_t pid = pidlink->pid;
+			struct proc *p = proc_lookup(pid);
+			if (p) {
+				struct addrspace *child_as = p->p_addrspace;
+				struct mmap_reg *child_mmap = child_as->mmaps;
+				while (child_mmap && child_mmap->start_addr != reg->start_addr) {
+					child_mmap = child_mmap->next;
+				}
+				if (child_mmap) {
+					as_free_mmap(p->p_addrspace, child_mmap);
+				}
+			}
+			pidlink = pidlink->next;
+		}
+	}
+	return 0;
 }
 
 bool pte_can_handle_fault_type(struct page_table_entry *pte, int faulttype) {

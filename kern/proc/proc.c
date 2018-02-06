@@ -58,6 +58,7 @@
 #include <syscall.h>
 #include <wchan.h>
 #include <copyinout.h>
+#include <signal.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -1164,6 +1165,9 @@ struct proc *proc_clone(struct proc *old, vaddr_t new_stacktop, size_t new_stack
 	return clone;
 }
 
+// Is this a process created by the clone() syscall? If so, it shares an address space
+// with the calling process, and its userspace stack is located inside this address space's
+// heap.
 bool proc_is_clone(struct proc *p) {
 	if (!p->p_addrspace || p->p_stacktop == 0 || p->p_stacksize == 0) {
 		return false;
@@ -1171,6 +1175,27 @@ bool proc_is_clone(struct proc *p) {
 	vaddr_t stacktop = p->p_stacktop;
 	vaddr_t stackbtm = p->p_stacktop - p->p_stacksize;
 	return as_heap_region_exists(p->p_addrspace, stackbtm, stacktop);
+}
+
+int proc_send_signal(struct proc *p, int sig, int *errcode) {
+	struct thread *t = thread_find_by_id(p->pid);
+	if (!t) {
+		*errcode = ESRCH;
+		return -1;
+	}
+	if (t->t_state == S_ZOMBIE) {
+		*errcode = ESRCH;
+		return -1;
+	}
+	switch (sig) {
+	case SIGSTOP:
+	case SIGCONT:
+		thread_send_signal(t, sig);
+	// not yet implemented
+	default:
+		*errcode = EINVAL;
+		return -1;
+	}
 }
 
 

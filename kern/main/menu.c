@@ -113,7 +113,7 @@ common_prog(int nargs, char **args, bool wait_for_exit)
 	}
 
 	if (!wait_for_exit) {
-		proc_redir_standard_streams(proc, FD_DEV_NULL);
+		//proc_redir_standard_streams(proc, FD_DEV_NULL);
 	}
 
 	pid_t child_pid = 0;
@@ -190,6 +190,45 @@ cmd_prog_background(int nargs, char **args)
 		return -1;
 	}
 	kprintf("pid: %d\n", pid);
+	return 0;
+}
+
+static int cmd_sig(int nargs, char **args) {
+	if (nargs < 3) {
+		kprintf("Usage: sig SIGNAME PID\n");
+		return EINVAL;
+	}
+	int sig;
+	int pid;
+	if (strcmp(args[1], "SIGSTOP") == 0) {
+		sig = SIGSTOP;
+	} else if (strcmp(args[1], "SIGCONT") == 0) {
+		sig = SIGCONT;
+	} else {
+		kprintf("Only SIGSTOP and SIGCONT are supported\n");
+		return EINVAL;
+	}
+	pid = atoi(args[2]);
+	if (pid <= 2) {
+		kprintf("Invalid PID\n");
+		return EINVAL;
+	}
+	if (pid == (int)curproc->pid) {
+		kprintf("Can't send signal to shell process\n");
+		return EINVAL;
+	}
+	int errcode = 0;
+	struct proc *p = proc_lookup((pid_t)pid);
+	if (!p) {
+		kprintf("Process %d not found\n", pid);
+		return ESRCH;
+	}
+	int res = proc_send_signal(p, sig, &errcode);
+	if (res == -1) {
+		kprintf("Error sending signal\n");
+		return errcode;
+	}
+	kprintf("Successfully sent signal\n");
 	return 0;
 }
 
@@ -780,6 +819,7 @@ static struct {
 	{ "s",		cmd_shell },
 	{ "p",		cmd_prog },
 	{ "b",     cmd_prog_background },
+	{ "sig",   cmd_sig },
 	{ "mount",	cmd_mount },
 	{ "unmount",	cmd_unmount },
 	{ "bootfs",	cmd_bootfs },

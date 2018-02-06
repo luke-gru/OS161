@@ -39,6 +39,7 @@
 #include <array.h>
 #include <spinlock.h>
 #include <threadlist.h>
+#include <signal.h>
 
 struct cpu;
 struct trapframe;
@@ -62,7 +63,7 @@ struct trapframe;
 typedef enum {
 	S_RUN,		/* running */
 	S_READY,	/* ready to run */
-	S_SLEEP,	/* sleeping */
+	S_SLEEP,	/* sleeping, blocked, or stopped */
 	S_ZOMBIE,	/* zombie; exited but not yet deleted */
 } threadstate_t;
 
@@ -75,29 +76,33 @@ struct thread {
 	 * debugger is messed up.
 	 */
 
-	/*
-	 * Name of this thread. Used to be dynamically allocated using kmalloc, but
-	 * this can cause small changes in the amount of available memory due to the
-	 * fact that it was cleaned up in exorcise. This produces more predictable
-	 * behavior at the cost of a small amount of memory overhead and the
-	 * inability to give threads huge names.
-	 */
-
 	char t_name[MAX_NAME_LENGTH];
 	const char *t_wchan_name;	/* Name of wait channel, if sleeping. Useful when debugging */
+	// struct wchan *t_wchan;
+	// struct spinlock *t_wchan_lk;
 	threadstate_t t_state;		/* State this thread is in */
+	/* when running a signal handler, we sometimes need to save the previous threadstate
+	 * For instance, when we send a SIGSTOP to a process that's currently sleeping,
+	 * t_state becomes S_STOPPED and t_prevstate becomes S_SLEEP
+	 */
+	//threadstate_t t_prevstate;
+
 
 	/*
 	 * Thread subsystem internal fields.
 	 */
 	struct thread_machdep t_machdep; /* Any machine-dependent goo */
 	struct threadlistnode t_listnode; /* Link for run/sleep/zombie lists. Can only be on 1 of these lists at a time! */
-	void *t_stack;			/* Kernel-level stack */
+	void *t_stack;			/* Kernel-level stack for thread */
 	struct switchframe *t_context;	/* Saved register context from context switch (on stack) */
-	struct cpu *t_cpu;		/* CPU thread runs on */
-	struct proc *t_proc;		/* Process thread belongs to */
-	time_t wakeup_at; /* for timed wakeup */
-	pid_t t_pid; /* Same as t_proc->pid, but proc might be destroyed before thread is cleaned up, so we store it here too */
+	struct cpu *t_cpu;		/* CPU thread runs on. NOTE: threads can migrate between CPUs (see thread_consider_migration) */
+	struct proc *t_proc;		/* Process thread belongs to. Aside from kernel threads that don't have processes and kswapd, these are userspace processes */
+	time_t wakeup_at; /* for timed wakeup (userland sleep(2) syscall) */
+	/* Same as t_proc->pid, but proc might be destroyed before thread is cleaned up, so we store it here too.
+	 * Right now, all userspace processes run in their own threads, and new userspace threads (using clone() syscall)
+	 * also create new processes with their pids and their own thread structure.
+	 */
+	pid_t t_pid;
 	HANGMAN_ACTOR(t_hangman);	/* Deadlock detector hook */
 
 	/*
@@ -121,7 +126,7 @@ struct thread {
 	 * Public fields
 	 */
 
-	/* add more here as needed */
+	struct siginfo *t_pending_signals[PENDING_SIGNALS_MAX];
 };
 
 /*
@@ -169,6 +174,11 @@ int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
 struct cpu *thread_get_cpu(unsigned index);
 int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *tf, int *errcode);
 
+struct thread *thread_find_by_id(pid_t id);
+int thread_send_signal(struct thread *t, int sig);
+int thread_has_pending_signal(void);
+int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out);
+int thread_handle_signal(struct siginfo siginf);
 /*
  * Cause the current thread to exit.
  * Interrupts need not be disabled.

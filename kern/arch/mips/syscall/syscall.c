@@ -179,6 +179,9 @@ syscall(struct trapframe *tf)
 		case SYS_sbrk:
 			err = sys_sbrk((size_t)tf->tf_a0, &retval);
 			break;
+		case SYS_mmap:
+			err = sys_mmap((size_t)tf->tf_a0, (int)tf->tf_a1, (int)tf->tf_a2, (int)tf->tf_a3, (off_t)tf->tf_v1, &retval);
+			break;
 		case SYS__exit:
 			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread
 			panic("shouldn't return from exit");

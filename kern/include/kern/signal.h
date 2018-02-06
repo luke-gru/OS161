@@ -87,6 +87,10 @@
 #define SIGPWR		32	/* Power failure */
 #define _NSIG		32
 
+#define PENDING_SIGNALS_MAX 10
+
+const char *sys_signame[34]; // begins and ends with NULL
+
 
 /* Type for a set of signals; used by e.g. sigprocmask(). */
 typedef __u32 sigset_t;
@@ -125,6 +129,11 @@ struct sigaltstack {
 	void *ss_sp;
 	size_t ss_size;
 	unsigned ss_flags;
+};
+
+struct siginfo {
+	pid_t pid;
+	int sig;
 };
 
 

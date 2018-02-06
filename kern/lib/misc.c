@@ -30,6 +30,44 @@
 #include <types.h>
 #include <kern/errmsg.h>
 #include <lib.h>
+#include <signal.h>
+
+const char *sys_signame[34] = {
+	NULL,
+	"SIGHUP",
+	"SIGINT",
+	"SIGQUIT",
+	"SIGILL",
+	"SIGTRAP",
+	"SIGABRT",
+	"SIGEMT",
+	"SIGFPE",
+	"SIGKILL",
+	"SIGBUS",
+	"SIGSEGV",
+	"SIGSYS",
+	"SIGPIPE",
+	"SIGALRM",
+	"SIGTERM",
+	"SIGURG",
+	"SIGSTOP",
+	"SIGTSTP",
+	"SIGCONT",
+	"SIGCHLD",
+	"SIGTTIN",
+	"SIGTTOU",
+	"SIGIO",
+	"SIGXCPU",
+	"SIGXFSZ",
+	"SIGVTALRM",
+	"SIGPROF",
+	"SIGWINCH",
+	"SIGINFO",
+	"SIGUSR1",
+	"SIGUSR2",
+	"SIGPWR",
+	NULL
+};
 
 /*
  * Like strdup, but calls kmalloc.

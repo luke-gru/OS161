@@ -35,5 +35,15 @@
 #define STDOUT_FILENO 1      /* Standard output */
 #define STDERR_FILENO 2      /* Standard error */
 
+/* constants for mmap regions */
+// NOTE: these memory protection constants need to correspond with PF_R/PF_W/PF_X in elf.h
+#define PROT_EXEC 1
+#define PROT_READ 4
+#define PROT_WRITE 2
+#define PROT_NONE 0
+#define MAP_SHARED 1
+#define MAP_PRIVATE 2
+#define MAP_ANONYMOUS 4
+
 
 #endif /* _KERN_UNISTD_H_ */

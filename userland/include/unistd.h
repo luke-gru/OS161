@@ -141,6 +141,10 @@ int chdir(const char *path);
 
 /* Optional. */
 void *sbrk(__intptr_t change);
+void *mmap(size_t len, int prot, int flags, int fd, off_t offset);
+// always check return value of mmap() against MMAP_FAILED
+#define MMAP_FAILED ((void*)-1)
+int munmap(void *addr, size_t length);
 ssize_t getdirentry(int filehandle, char *buf, size_t buflen);
 int symlink(const char *target, const char *linkname);
 ssize_t readlink(const char *path, char *buf, size_t buflen);
