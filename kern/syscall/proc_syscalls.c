@@ -239,6 +239,18 @@ int sys_munmap(uint32_t startaddr, int *retval) {
   }
 }
 
+// set user-supplied signal handler for given signal
+int sys_signal(int signo, vaddr_t user_handler, int *retval) {
+  if (signo < 1 || signo > NSIG || user_handler == 0) {
+    *retval = -1;
+    return EINVAL;
+  }
+  vaddr_t prev_handler = curproc->p_sigdescrs[signo]->user_handler;
+  curproc->p_sigdescrs[signo]->user_handler = user_handler;
+  *retval = (int)prev_handler;
+  return 0;
+}
+
 int sys_getpid(int *retval) {
   *retval = (int)curproc->pid;
   return 0;

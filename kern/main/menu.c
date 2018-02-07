@@ -194,7 +194,7 @@ cmd_prog_background(int nargs, char **args)
 }
 
 static int cmd_sig(int nargs, char **args) {
-	if (nargs < 3) {
+	if (nargs != 3) {
 		kprintf("Usage: sig SIGNAME PID\n");
 		return EINVAL;
 	}
@@ -206,8 +206,10 @@ static int cmd_sig(int nargs, char **args) {
 		sig = SIGCONT;
 	} else if (strcmp(args[1], "SIGKILL") == 0) {
 		sig = SIGKILL;
+	} else if (strcmp(args[1], "SIGUSR1") == 0) {
+		sig = SIGUSR1;
 	} else {
-		kprintf("Only SIGSTOP and SIGCONT are supported\n");
+		kprintf("Only SIGSTOP, SIGCONT, SIGKILL, SIGUSR1 are supported\n");
 		return EINVAL;
 	}
 	pid = atoi(args[2]);

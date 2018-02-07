@@ -75,17 +75,17 @@
 #define SIGCHLD		20	/* Child process exited */
 #define SIGTTIN		21	/* Stop on tty read while in background */
 #define SIGTTOU		22	/* Stop on tty write while in background */
-#define SIGIO		23	/* Nonblocking or async I/O is now ready */
+#define SIGIO			23	/* Nonblocking or async I/O is now ready */
 #define SIGXCPU		24	/* CPU time resource limit exceeded */
 #define SIGXFSZ		25	/* File size resource limit exceeded */
 #define SIGVTALRM	26	/* Like SIGALRM but in virtual time */
 #define SIGPROF		27	/* Profiling timer */
 #define SIGWINCH	28	/* Window size change on tty */
 #define SIGINFO		29	/* Information request (typically ^T) */
-#define SIGUSR1		20	/* Application-defined */
+#define SIGUSR1		30	/* Application-defined */
 #define SIGUSR2		31	/* Application-defined */
 #define SIGPWR		32	/* Power failure */
-#define _NSIG		32
+#define _NSIG			32
 #define NSIG _NSIG
 
 #define PENDING_SIGNALS_MAX 10

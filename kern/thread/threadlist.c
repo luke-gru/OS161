@@ -159,7 +159,7 @@ threadlist_removenode(struct threadlistnode *tln)
 ////////////////////////////////////////////////////////////
 // public
 
-struct thread *threadlist_remove_if(struct threadlist *tl, bool (*callback)(struct thread *t)) {
+struct thread *threadlist_remove_if(struct threadlist *tl, bool (*callback)(struct thread *t, void *data), void *data) {
 	struct threadlistnode *cur = tl->tl_head.tln_next;
 	struct thread *found = NULL;
 	while (cur) {
@@ -167,7 +167,7 @@ struct thread *threadlist_remove_if(struct threadlist *tl, bool (*callback)(stru
 			cur = cur->tln_next;
 			continue;
 		}
-		if (callback(cur->tln_self)) {
+		if (callback(cur->tln_self, data)) {
 			found = cur->tln_self;
 			break;
 		}

@@ -44,6 +44,7 @@
 #include <pid.h>
 #include <synch.h>
 #include <limits.h>
+#include <kern/signal.h>
 
 struct addrspace;
 struct thread;
@@ -148,6 +149,13 @@ int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode
 #define MAX_USERPROCS (PID_MAX-1)
 struct proc *userprocs[MAX_USERPROCS]; // current userspace processes
 
+//typedef void (*sig_handler)(int signo);
+struct sigdescr {
+	vaddr_t user_handler;
+	int signo;
+	bool is_blocked;
+};
+
 struct proc {
 	char *p_name;			/* Name of this process */
 	struct spinlock p_lock;		  /* Lock for this structure to be used for very fine-grained locking */
@@ -170,7 +178,9 @@ struct proc {
 	struct filedes **file_table;
 	short file_table_refcount;
 
-	/* add more material here as needed */
+	struct sigdescr *p_sigdescrs[NSIG+1]; // +1 because p_sigdescrs[0] is NULL
+	vaddr_t current_sig_handler;
+	int current_signo;
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */

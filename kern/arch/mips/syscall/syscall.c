@@ -106,12 +106,9 @@ syscall(struct trapframe *tf)
 		case SYS_reboot:
 			err = sys_reboot(tf->tf_a0);
 			break;
-
 	  case SYS___time:
-			err = sys___time((userptr_t)tf->tf_a0,
-				(userptr_t)tf->tf_a1);
+			err = sys___time((userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1);
 			break;
-
 	    /* Add stuff here */
 		case SYS_open:
 			err = sys_open((userptr_t)tf->tf_a0, (int)tf->tf_a1, (mode_t)tf->tf_a2, &retval);
@@ -184,6 +181,9 @@ syscall(struct trapframe *tf)
 			break;
 		case SYS_munmap:
 			err = sys_munmap((uint32_t)tf->tf_a0, &retval);
+			break;
+		case SYS_signal:
+			err = sys_signal((int)tf->tf_a0, (vaddr_t)tf->tf_a1, &retval);
 			break;
 		case SYS__exit:
 			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread

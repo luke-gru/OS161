@@ -567,6 +567,8 @@ thread_make_runnable(struct thread *target, bool already_have_lock)
 		spinlock_acquire(&targetcpu->c_runqueue_lock);
 	}
 
+	target->t_wchan = NULL;
+	target->t_wchan_lk = NULL;
 	/* Target thread is now ready to run; put it on the run queue. */
 	target->t_state = S_READY;
 	threadlist_addtail(&targetcpu->c_runqueue, target);
@@ -811,8 +813,14 @@ int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
 	return child_pid;
 }
 
-static bool thread_find_ready_sleeper_cb(struct thread *t) {
+static bool thread_find_ready_sleeper_cb(struct thread *t, void *data) {
+	(void)data;
 	return t->wakeup_at == 0 || t->wakeup_at <= timestamp();
+}
+
+static bool thread_find_by_pid_cb(struct thread *t, void *pid) {
+	KASSERT((pid_t)pid > 0);
+	return t->t_pid == (pid_t)pid;
 }
 
 // NOTE: runs once a second
@@ -822,7 +830,7 @@ void thread_add_ready_sleepers_to_runqueue(void) {
 		spinlock_acquire(&threads_sleeping_lock);
 	struct thread *ready;
 	if (!wchan_isempty(threads_sleeping_wchan, &threads_sleeping_lock)) {
-		while ((ready = threadlist_remove_if(&threads_sleeping_wchan->wc_threads, thread_find_ready_sleeper_cb)) != NULL) {
+		while ((ready = threadlist_remove_if(&threads_sleeping_wchan->wc_threads, thread_find_ready_sleeper_cb, NULL)) != NULL) {
 			bool already_have_lock = spinlock_do_i_hold(&ready->t_cpu->c_runqueue_lock);
 			ready->wakeup_at = 0;
 			ready->t_wchan_name = NULL;
@@ -907,10 +915,10 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 		 * caller of wchan_sleep locked it until the thread is
 		 * on the list.
 		 */
-		 	//DEBUGASSERT(cur->t_wchan == NULL);
+		 	DEBUGASSERT(cur->t_wchan == NULL);
 			threadlist_addtail(&wc->wc_threads, cur);
-			//cur->t_wchan = wc;
-			//cur->t_wchan_lk = lk;
+			cur->t_wchan = wc;
+			cur->t_wchan_lk = lk;
 			spinlock_release(lk);
 			break;
 	  case S_ZOMBIE:
@@ -1014,13 +1022,13 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 	 * thread_startup.
 	 */
 
-
+	cur->t_wchan = NULL;
+	cur->t_wchan_lk = NULL;
 	cur->t_wchan_name = NULL;
 	cur->t_state = S_RUN;
 	spinlock_release(&curcpu->c_runqueue_lock);
 	as_activate();
 	exorcise();
-	splx(spl);
 	int sig_idx = thread_has_pending_signal();
 	if (sig_idx != -1) {
 		struct siginfo *siginf;
@@ -1030,6 +1038,7 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 		thread_handle_signal(*siginf);
 		kfree(siginf);
 	}
+	splx(spl);
 }
 
 /*
@@ -1288,6 +1297,7 @@ void thread_sleep_n_seconds(int seconds) {
 	t->wakeup_at = timestamp() + seconds;
 	// puts curthread on the wait channel threadslist
 	wchan_sleep(threads_sleeping_wchan, &threads_sleeping_lock); // unlocks and then locks spinlock
+	t->wakeup_at = 0;
 	spinlock_release(&threads_sleeping_lock);
 }
 
@@ -1356,9 +1366,7 @@ wchan_sleep(struct wchan *wc, struct spinlock *lk)
 /*
  * Wake up one thread sleeping on a wait channel.
  */
-void
-wchan_wakeone(struct wchan *wc, struct spinlock *lk)
-{
+void wchan_wakeone(struct wchan *wc, struct spinlock *lk) {
 	struct thread *target;
 
 	KASSERT(spinlock_do_i_hold(lk));
@@ -1380,6 +1388,19 @@ wchan_wakeone(struct wchan *wc, struct spinlock *lk)
 	 */
 
 	thread_make_runnable(target, false);
+}
+
+/* Wake up specific thread sleeping on a wait channel */
+int wchan_wake_thread(struct wchan *wc, struct spinlock *lk, struct thread *t) {
+	KASSERT(spinlock_do_i_hold(lk));
+	struct thread *target;
+	target = threadlist_remove_if(&wc->wc_threads, thread_find_by_pid_cb, (void*)t->t_pid);
+	if (target) {
+		KASSERT(target == t);
+		thread_make_runnable(target, false);
+		return 0;
+	}
+	return -1;
 }
 
 /*
@@ -1566,15 +1587,14 @@ static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
 	return -1;
 }
 
-// NOTE: thread must belong to a threadlist
-static void thread_remove_from_threadlist(struct thread *t) {
-	struct threadlistnode *node = &t->t_listnode;
-	DEBUGASSERT(node->tln_prev != NULL);
-	DEBUGASSERT(node->tln_next != NULL);
-	node->tln_prev->tln_next = node->tln_next;
-	node->tln_next->tln_prev = node->tln_prev;
-	node->tln_next = NULL;
-	node->tln_prev = NULL;
+static void thread_wakeup(struct thread *t) {
+	struct spinlock *lk = t->t_wchan_lk;
+	KASSERT(lk != NULL);
+	spinlock_acquire(lk);
+	KASSERT(t->t_state == S_SLEEP);
+	KASSERT(t->t_wchan != NULL);
+	KASSERT(wchan_wake_thread(t->t_wchan, lk, t) == 0);
+	spinlock_release(lk);
 }
 
 int thread_send_signal(struct thread *t, int sig) {
@@ -1596,12 +1616,12 @@ int thread_send_signal(struct thread *t, int sig) {
 		}
 		// make the thread runnable so it can handle its signal
 		if (t->t_state == S_SLEEP) {
-			DEBUG(DB_SIG, "Removing thread %d from sleep wchan %s threadlist due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
-			thread_remove_from_threadlist(t);
-			t->t_wchan_name = NULL;
-		}
-		if (t->t_state != S_RUN && t->t_state != S_READY) {
-			thread_make_runnable(t, false);
+			DEBUG(DB_SIG, "Waking thread %d from sleep (wchan %s) due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
+			thread_wakeup(t);
+		} else {
+			if (t->t_state != S_RUN && t->t_state != S_READY) {
+				thread_make_runnable(t, false);
+			}
 		}
 		return 0;
 	}
@@ -1636,6 +1656,7 @@ static void thread_stop() {
 }
 
 int thread_handle_signal(struct siginfo siginf) {
+	vaddr_t handler;
 	switch (siginf.sig) {
 		case SIGSTOP:
 			thread_stop();
@@ -1649,6 +1670,13 @@ int thread_handle_signal(struct siginfo siginf) {
 			DEBUG(DB_SIG, "Exiting curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGKILL]);
 			thread_exit(1);
 			panic("unreachable");
+		case SIGUSR1:
+			handler = curthread->t_proc->p_sigdescrs[SIGUSR1]->user_handler;
+			if (handler > 0) {
+				curthread->t_proc->current_sig_handler = handler;
+				curthread->t_proc->current_signo = SIGUSR1;
+			}
+			break;
 		default:
 			panic("not implemented");
 			return -1;

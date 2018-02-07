@@ -78,8 +78,8 @@ struct thread {
 
 	char t_name[MAX_NAME_LENGTH];
 	const char *t_wchan_name;	/* Name of wait channel, if sleeping. Useful when debugging */
-	// struct wchan *t_wchan;
-	// struct spinlock *t_wchan_lk;
+	struct wchan *t_wchan;
+	struct spinlock *t_wchan_lk;
 	threadstate_t t_state;		/* State this thread is in */
 	/* when running a signal handler, we sometimes need to save the previous threadstate
 	 * For instance, when we send a SIGSTOP to a process that's currently sleeping,
@@ -211,5 +211,7 @@ void thread_wait_for_count(unsigned);
 
 void thread_sleep_n_seconds(int seconds);
 void thread_add_ready_sleepers_to_runqueue(void);
+
+int wchan_wake_thread(struct wchan *wc, struct spinlock *lk, struct thread *t);
 
 #endif /* _THREAD_H_ */

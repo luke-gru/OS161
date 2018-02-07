@@ -5,6 +5,31 @@
 #include <err.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <signal.h>
+
+int handled_sigusr1 = 0;
+static void my_sigusr1_handler(int signo) {
+  (void)signo;
+  printf("Got into my handler for sig!\n");
+  handled_sigusr1 = 1;
+}
+
+static int signal_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *res = signal(SIGUSR1, my_sigusr1_handler);
+  if (res == SIG_ERR) {
+    errx(1, "Error setting signal handler for SIGUSR1");
+  }
+  //pause(); TODO
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1, exiting\n");
+      exit(0);
+    }
+  }
+}
 
 // mmap shareable with child with MAP_SHARED
 static int mmap_test5(int argc, char **argv) {
@@ -414,7 +439,9 @@ int main(int argc, char *argv[]) {
     mmap_test4(argc, argv);
   } else if (strcmp(argv[1], "mmap5") == 0) {
     mmap_test5(argc, argv);
+  } else if (strcmp(argv[1], "signal") == 0) {
+    signal_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-5]|signal OPTIONS\n");
   }
 }

@@ -109,7 +109,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     if (dolock) {
       DEBUG_CONSOLE_LOCK(fd);
     } else {
-      spinlock_acquire(&kprintf_spinlock);
+      //spinlock_acquire(&kprintf_spinlock);
     }
   }
 
@@ -120,7 +120,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
       if (dolock) {
         DEBUG_CONSOLE_UNLOCK();
       } else {
-        spinlock_release(&kprintf_spinlock);
+        //spinlock_release(&kprintf_spinlock);
       }
     }
     *count_retval = -1;
@@ -134,7 +134,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     if (dolock) {
       DEBUG_CONSOLE_UNLOCK();
     } else {
-      spinlock_release(&kprintf_spinlock);
+      //spinlock_release(&kprintf_spinlock);
     }
   }
   if (res == 0 && !is_console) {

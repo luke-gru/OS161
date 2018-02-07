@@ -47,6 +47,7 @@ extern __DEAD void asm_usermode(struct trapframe *tf);
 
 /* called only from assembler, so not declared in a header */
 void mips_trap(struct trapframe *tf);
+void user_return_from_trap(struct trapframe *tf, uint32_t trap_code);
 
 
 /* Names for trap codes */
@@ -156,7 +157,7 @@ mips_trap(struct trapframe *tf)
 	}
 
 	/* Interrupt? Call the interrupt handler and return. */
-	if (code == EX_IRQ) {
+	if (code == EX_IRQ) { // 0
 		int old_in;
 		bool doadjust;
 
@@ -219,7 +220,7 @@ mips_trap(struct trapframe *tf)
 	splx(spl);
 
 	/* Syscall? Call the syscall handler and return. */
-	if (code == EX_SYS) {
+	if (code == EX_SYS) { // 8
 		/* Interrupts should have been on while in user mode. */
 		KASSERT(curthread->t_curspl == 0);
 		KASSERT(curthread->t_iplhigh_count == 0);
@@ -267,7 +268,7 @@ mips_trap(struct trapframe *tf)
 		break;
 	}
 
-	// FIXME: hack for returning from threads, load invalid address and catch it here.
+	// FIXME: hack for returning from userlevel threads, load invalid address and catch it here.
 	if (code == EX_ADEL && proc_is_clone(curproc) && tf->tf_vaddr == UINT32_MAX) {
 		// thread exited
 		thread_exit(0);
@@ -360,6 +361,30 @@ mips_trap(struct trapframe *tf)
 	 * to find out now.
 	 */
 	KASSERT(SAME_STACK(cpustacks[curcpu->c_number]-1, (vaddr_t)tf));
+	user_return_from_trap(tf, code);
+}
+
+static void setup_sig_handler(vaddr_t sighandler, int signo, struct trapframe *tf) {
+	struct sigcontext sctx;
+	bzero(&sctx, sizeof(sigcontext));
+	sctx.signo = signo;
+	sctx.saved_tf = *tf;
+	uint32_t sp = tf->tf_sp;
+	// setup new stack space for the handler function
+	sp -= sizeof(struct sigcontext);
+}
+
+void user_return_from_trap(struct trapframe *tf, uint32_t code) {
+	//kprintf("returning from trap, code: %u (%s)\n", code, trapcodenames[code]);
+	if (curproc && curproc->current_sig_handler) {
+		setup_sig_handler(curproc->current_sig_handler, curproc->current_signo, tf);
+		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
+		tf->tf_ra = -1;
+		tf->tf_epc = curproc->current_sig_handler;
+		tf->tf_sp = curproc->trap_handler_stacktop;
+		curproc->current_sig_handler = 0;
+	}
+	(void)code;
 }
 
 /*

@@ -90,7 +90,7 @@ void threadlist_insertafter(struct threadlist *tl,
 void threadlist_insertbefore(struct threadlist *tl,
 			     struct thread *addee, struct thread *onlist);
 void threadlist_remove(struct threadlist *tl, struct thread *t);
-struct thread *threadlist_remove_if(struct threadlist *tl, bool (*callback)(struct thread *t));
+struct thread *threadlist_remove_if(struct threadlist *tl, bool (*callback)(struct thread *t, void *data), void *data);
 
 /* Iteration; itervar should previously be declared as (struct thread *) */
 #define THREADLIST_FORALL(itervar, tl) \

@@ -693,6 +693,19 @@ struct proc *proc_create(const char *name) {
 		return NULL;
 	}
 	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
+
+	proc->p_sigdescrs[0] = NULL;
+	struct sigdescr *sig_descr;
+	for (int i = 1; i <= NSIG; i++) {
+		sig_descr = kmalloc(sizeof(struct sigdescr));
+		KASSERT(sig_descr);
+		sig_descr->signo = i;
+		sig_descr->is_blocked = false;
+		sig_descr->user_handler = 0;
+		proc->p_sigdescrs[i] = sig_descr;
+	}
+	proc->current_sig_handler = (vaddr_t)0;
+	proc->current_signo = 0;
 	proc->file_table_refcount = 1;
 	spinlock_init(&proc->p_lock);
 	proc->p_mutex = lock_create("proc mutex");
@@ -806,6 +819,14 @@ void proc_destroy(struct proc *proc) {
 		if (p != NULL && p->pid == proc->pid) {
 			userprocs[i] = NULL;
 		}
+	}
+
+	struct sigdescr *sig_descr;
+	for (int i = 1; i <= NSIG; i++) {
+		sig_descr = proc->p_sigdescrs[i];
+		KASSERT(sig_descr);
+		kfree(sig_descr);
+		proc->p_sigdescrs[i] = NULL;
 	}
 
 	kfree(proc->p_name);
@@ -1191,6 +1212,7 @@ int proc_send_signal(struct proc *p, int sig, int *errcode) {
 	case SIGSTOP:
 	case SIGCONT:
 	case SIGKILL:
+	case SIGUSR1:
 		return thread_send_signal(t, sig);
 	// not yet implemented
 	default:
