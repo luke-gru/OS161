@@ -623,6 +623,21 @@ static void dealloc_page_entries(struct page_table_entry *pte, bool dolock) {
 		unlock_pagetable();
 }
 
+static void as_pte_init(struct addrspace *as, struct page_table_entry *pte,
+	paddr_t paddr, int prot, enum page_entry_type entry_type) {
+	pte->as = as;
+	pte->paddr = paddr;
+	pte->permissions = prot;
+	pte->page_entry_type = entry_type;
+	pte->next = NULL;
+	pte->tlb_idx = -1;
+	pte->cpu_idx = curcpu->c_number;
+	pte->is_dirty = true;
+	pte->is_swapped = false;
+	pte->debug_name = as->name;
+	pte->num_swaps = 0;
+}
+
 int as_growheap(struct addrspace *as, size_t bytes) {
 	size_t nbytes = ROUNDUP(bytes, PAGE_SIZE);
 	size_t npages = nbytes / PAGE_SIZE;
@@ -659,17 +674,7 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 			if (i > 0) kfree(pte);
 			goto nomem;
 		}
-		pte->as = as;
-		pte->paddr = paddr;
-		pte->permissions = PF_R|PF_W;
-		pte->page_entry_type = PAGE_ENTRY_TYPE_HEAP;
-		pte->next = NULL;
-		pte->tlb_idx = -1;
-		pte->cpu_idx = curcpu->c_number;
-		pte->is_dirty = true;
-		pte->is_swapped = false;
-		pte->debug_name = as->name;
-		pte->num_swaps = 0;
+		as_pte_init(as, pte, paddr, PF_R|PF_W, PAGE_ENTRY_TYPE_HEAP);
 		if (last) {
 			last->next = pte;
 		}
@@ -703,6 +708,8 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 	(void)file_offset;
 	struct mmap_reg *reg = NULL;
 	size_t npages;
+	size_t nbytes_orig = nbytes;
+	struct filedes *file_des = NULL;
 	DEBUGASSERT(as != NULL);
 	if (nbytes == 0) {
 		*errcode = EINVAL;
@@ -722,6 +729,27 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 	if ((flags & MAP_PRIVATE) == 0 && (flags & MAP_SHARED) == 0) {
 		*errcode = EINVAL;
 		return -1;
+	}
+	if (fd > 2) {
+		if (!file_is_open(fd)) {
+			*errcode = EBADF;
+			return -1;
+		}
+		file_des = filetable_get(curproc, fd);
+		DEBUGASSERT(file_des);
+		if (filedes_is_device(file_des)) {
+			// not yet supported
+			*errcode = EBADF;
+			return -1;
+		}
+		if (prot & PROT_READ && !filedes_is_readable(file_des)) {
+			*errcode = EPERM;
+			return -1;
+		}
+		if (prot & PROT_WRITE && !filedes_is_writable(file_des)) {
+			*errcode = EPERM;
+			return -1;
+		}
 	}
 	nbytes = ROUNDUP(nbytes, PAGE_SIZE);
 	npages = nbytes / PAGE_SIZE;
@@ -748,7 +776,7 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 	vaddr_t reg_top = as->heap_top;
 	reg->start_addr = reg_btm;
 	reg->end_addr = reg_top;
-	reg->valid_end_addr = reg_btm + nbytes;
+	reg->valid_end_addr = reg_btm + nbytes_orig;
 	reg->opened_by = curproc->pid;
 	reg->num_pages = npages;
 	vaddr_t pte_vaddr;
@@ -769,25 +797,68 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 			if (i > 0) kfree(pte);
 			goto nomem;
 		}
-		// zero out page if MAP_ANONYMOUS is given
+		// zero out page if MAP_ANONYMOUS is given (no support for MAP_UNINITIALIZED)
 		if (flags & MAP_ANONYMOUS) {
 			memset((void*)PADDR_TO_KVADDR(paddr), 0, PAGE_SIZE);
 		}
-		pte->as = as;
-		pte->paddr = paddr;
-		pte->permissions = prot;
-		pte->page_entry_type = PAGE_ENTRY_TYPE_MMAP;
-		pte->next = NULL;
-		pte->tlb_idx = -1;
-		pte->cpu_idx = curcpu->c_number;
-		pte->is_dirty = true;
-		pte->is_swapped = false;
-		pte->debug_name = as->name;
-		pte->num_swaps = 0;
+		as_pte_init(as, pte, paddr, prot, PAGE_ENTRY_TYPE_MMAP);
+
 		if (last) {
 			last->next = pte;
 		}
 		last = pte;
+	}
+	unlock_pagetable();
+
+	if (fd > 0) {
+		// initialize physical memory pages with contents of file. Since pages aren't
+		// necessarily contiguous, we iterate over them and copy the proper bytes into the
+		// pages.
+		off_t file_size = filedes_size(file_des, errcode);
+		if (file_size == -1) {
+			return -1; // errcode set above
+		}
+		off_t old_file_offset = file_des->offset;
+		size_t readamt, bytes_left_to_read;
+		void *buf;
+		bytes_left_to_read = MINVAL(nbytes_orig, (size_t)file_size);
+		int bytes_read = 0;
+		paddr_t paddr = 0;
+		off_t fdread_offset = file_offset;
+		struct page_table_entry *pte = NULL;
+		for (unsigned i = 0; i < reg->num_pages; i++) {
+			struct iovec iov;
+			struct uio myuio;
+			if (i == 0) {
+				pte = first_pte;
+			} else {
+				pte = pte->next;
+			}
+			if (bytes_left_to_read >= PAGE_SIZE) {
+				readamt = PAGE_SIZE;
+			} else {
+				readamt = bytes_left_to_read;
+			}
+			paddr = pte->paddr;
+			DEBUGASSERT(paddr > 0);
+			buf = (void*)PADDR_TO_KVADDR(paddr);
+			if (readamt > 0) {
+				uio_kinit(&iov, &myuio, buf, readamt, fdread_offset, UIO_READ);
+				bytes_read = file_read(file_des, &myuio, errcode);
+				if (bytes_read != (int)readamt) {
+					DEBUG(DB_SYSCALL, "mmap with FD error during file_read: %d (%s)\n", *errcode, strerror(*errcode));
+					file_des->offset = old_file_offset;
+					return -1;
+				}
+				fdread_offset += bytes_read;
+				bytes_left_to_read -= readamt;
+			}
+			// zero out remaining contents of page, if applicable
+			if (readamt < PAGE_SIZE) {
+				memset((void*)PADDR_TO_KVADDR(paddr+readamt), 0, PAGE_SIZE - readamt);
+			}
+		}
+		file_des->offset = old_file_offset;
 	}
 
 	// link region into as->mmaps
@@ -808,7 +879,6 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 
 	as->heap_top = reg_btm;
 	*mmap_startaddr = reg->start_addr;
-	unlock_pagetable();
 	return 0;
 	nomem: {
 		if (reg) {

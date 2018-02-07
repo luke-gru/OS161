@@ -6,6 +6,43 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+// MAP_PRIVATE with file
+static int mmap_test6(int argc, char **argv) {
+  if (argc != 3) {
+    errx(1, "Usage error, need to give file to read");
+  }
+  char *fname = argv[2];
+  int fd = open(fname, O_RDWR, 0644);
+  if (fd < 3) {
+    errx(1, "Open failed: %d", fd);
+  }
+  struct stat st;
+  int stat_res = fstat(fd, &st);
+  if (stat_res != 0) {
+    errx(1, "fstat failed: %d", stat_res);
+  }
+  size_t filesize = st.st_size;
+  void *startaddr = mmap(filesize+1, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
+  if (startaddr == MAP_FAILED) {
+    errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  char *file_contents = malloc(filesize+1);
+  int read_res = read(fd, file_contents, filesize);
+  file_contents[filesize] = '\0';
+  if (read_res != (int)filesize) {
+    errx(1, "Read failed: %d", read_res);
+  }
+  for (size_t i = 0; i < filesize; i++) {
+    if (file_contents[i] != ((char*)startaddr)[i]) {
+      errx(1, "Invalid memory in iteration %d", (int)i);
+    }
+  }
+  if (strcmp(file_contents, startaddr) != 0) {
+    errx(1, "strcmp failed");
+  }
+  return 0;
+}
+
 // mmap shareable with child with MAP_SHARED
 static int mmap_test5(int argc, char **argv) {
   (void)argc;
@@ -414,7 +451,9 @@ int main(int argc, char *argv[]) {
     mmap_test4(argc, argv);
   } else if (strcmp(argv[1], "mmap5") == 0) {
     mmap_test5(argc, argv);
+  } else if (strcmp(argv[1], "mmap6") == 0) {
+    mmap_test6(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6] OPTIONS\n");
   }
 }
