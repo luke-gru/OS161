@@ -85,6 +85,7 @@ int sys_clone(userptr_t func, uint32_t child_stack_top, size_t stacksize, int fl
 int sys_sbrk(size_t increment, int *retval);
 int sys_mmap(size_t nbytes, int prot, int flags, int fd, off_t offset, int *retval);
 int sys_munmap(uint32_t startaddr, int *retval);
+int sys_msync(uint32_t startaddr, size_t length, int flags, int *retval);
 
 int sys_chdir(userptr_t dir, int *retval);
 int sys_getpid(int *retval);

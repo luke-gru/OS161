@@ -261,7 +261,7 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
 	return addr; // physical address start (bottom addr of block of pages or page)
 }
 
-// Marks the page or pages that start at given addr as free. Doesn't zero out the page 
+// Marks the page or pages that start at given addr as free. Doesn't zero out the page
 // or pages, the caller has to do this if that's what's necessary.
 static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
   int pop = 0;
@@ -470,6 +470,16 @@ bool vm_regions_overlap(vaddr_t reg1_btm, vaddr_t reg1_top, vaddr_t reg2_btm, va
 		return false;
 	} else {
 		return true;
+	}
+}
+
+bool vm_region_contains_other(vaddr_t reg1_btm, vaddr_t reg1_top, vaddr_t reg2_btm, vaddr_t reg2_top) {
+	KASSERT(reg1_btm <= reg1_top);
+	KASSERT(reg2_btm <= reg2_top);
+	if (reg1_btm <= reg2_btm && reg1_top >= reg2_top) {
+		return true;
+	} else {
+		return false;
 	}
 }
 

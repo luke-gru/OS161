@@ -185,10 +185,15 @@ static struct page_table_entry *as_copy_pte(struct addrspace *old, struct addrsp
 }
 
 static struct mmap_reg *as_copy_mmap_region(struct addrspace *old, struct addrspace *new, struct mmap_reg *reg) {
+	KASSERT((reg->flags & MAP_SHARED) != 0);
 	struct mmap_reg *new_reg = kmalloc(sizeof(*new_reg));
 	KASSERT(new_reg);
 	DEBUG(DB_SYSCALL, "Copying mmap region\n");
 	memcpy(new_reg, reg, sizeof(struct mmap_reg));
+	if (new_reg->backing_obj) {
+		KASSERT((new_reg->flags & MAP_ANONYMOUS) == 0);
+		VOP_INCREF(new_reg->backing_obj);
+	}
 	new_reg->next = NULL;
 	new_reg->pids_sharing = NULL;
 	struct page_table_entry *old_pte, *last, *first;
@@ -770,6 +775,8 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 	reg->prot_flags = prot;
 	reg->flags = flags;
 	reg->fd = fd;
+	reg->backing_obj = NULL;
+	reg->file_offset = file_offset;
 	reg->next = NULL;
 	vaddr_t reg_btm = as->heap_top - (npages * PAGE_SIZE);
 	DEBUGASSERT(reg_btm % PAGE_SIZE == 0);
@@ -819,6 +826,9 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 			return -1; // errcode set above
 		}
 		off_t old_file_offset = file_des->offset;
+		reg->backing_obj = file_des->node;
+		VOP_INCREF(reg->backing_obj);
+
 		size_t readamt, bytes_left_to_read;
 		void *buf;
 		bytes_left_to_read = MINVAL(nbytes_orig, (size_t)file_size);
@@ -893,6 +903,66 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 	}
 }
 
+int as_sync_mmap(struct addrspace *as, struct mmap_reg *mmap, unsigned start_page /* 0-indexed */, size_t length, int flags, int *errcode) {
+	(void)flags;
+	(void)as;
+	DEBUGASSERT(start_page < mmap->num_pages);
+	if (!mmap->backing_obj) {
+		*errcode = EBADF;
+		return -1;
+	}
+	if (length == 0) {
+		return 0;
+	}
+	vaddr_t start_addr = mmap->start_addr + (PAGE_SIZE * start_page);
+	off_t file_offset = mmap->file_offset + (PAGE_SIZE * start_page);
+	vaddr_t end_addr = start_addr + length;
+	if (!vm_region_contains_other(mmap->start_addr, mmap->valid_end_addr, start_addr, end_addr)) {
+		*errcode = EFAULT;
+		return -1;
+	}
+	size_t bytes_to_write = length;
+	size_t writeamt = 0;
+	struct page_table_entry *pte = mmap->ptes;
+	for (unsigned i = start_page; i > 0; i--) { pte = pte->next; }
+	for (unsigned i = start_page; i < mmap->num_pages; i++) {
+		DEBUGASSERT(pte);
+		struct iovec iov;
+		struct uio myuio;
+		if (bytes_to_write > PAGE_SIZE) {
+			writeamt = PAGE_SIZE;
+		} else {
+			writeamt = bytes_to_write;
+		}
+		void *buf = (void*)pte->vaddr;
+		uio_uinit(&iov, &myuio, buf, writeamt, file_offset, UIO_WRITE);
+		int res = VOP_WRITE(mmap->backing_obj, &myuio);
+		if (res != 0) {
+			*errcode = res;
+			return -1;
+		}
+		bytes_to_write -= writeamt;
+		if (bytes_to_write == 0) {
+			break;
+		}
+		file_offset += writeamt;
+		pte = pte->next;
+	}
+	return 0;
+}
+
+struct mmap_reg *as_mmap_for_region(struct addrspace *as, vaddr_t startaddr, vaddr_t endaddr) {
+	KASSERT(startaddr % PAGE_SIZE == 0);
+	KASSERT(startaddr < endaddr);
+	struct mmap_reg *mmap;
+	for (mmap = as->mmaps; mmap != NULL; mmap = mmap->next) {
+		if (mmap->start_addr <= startaddr && mmap->valid_end_addr >= endaddr) {
+			return mmap;
+		}
+	}
+	return NULL;
+}
+
 // Adds a pidlink (pidlist entry) to the given mmap, for use when a process
 // shares the mapping. Currently this gets run on proc_fork when the parent
 // has shared mappings.
@@ -939,6 +1009,7 @@ static int as_unlink_mmapped_pages(struct addrspace *as, vaddr_t start_addr, uns
 int as_free_mmap(struct addrspace *as, struct mmap_reg *reg) {
 	struct mmap_reg *cur = as->mmaps;
 	struct mmap_reg *prev = as->mmaps;
+	// unlink mmap from as->mmaps
 	if (cur == reg) {
 		as->mmaps = cur->next;
 	} else {
@@ -959,6 +1030,10 @@ int as_free_mmap(struct addrspace *as, struct mmap_reg *reg) {
 		kfree(pte);
 		pte = next;
 	}
+	if (reg->backing_obj) {
+		VOP_DECREF(reg->backing_obj);
+	}
+
 	kfree(reg);
 	return 0;
 }

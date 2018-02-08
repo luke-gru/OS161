@@ -182,6 +182,9 @@ syscall(struct trapframe *tf)
 		case SYS_mmap:
 			err = sys_mmap((size_t)tf->tf_a0, (int)tf->tf_a1, (int)tf->tf_a2, (int)tf->tf_a3, (off_t)tf->tf_v1, &retval);
 			break;
+		case SYS_msync:
+			err = sys_msync((uint32_t)tf->tf_a0, (size_t)tf->tf_a1, (int)tf->tf_a2, &retval);
+			break;
 		case SYS_munmap:
 			err = sys_munmap((uint32_t)tf->tf_a0, &retval);
 			break;

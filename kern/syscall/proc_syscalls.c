@@ -42,6 +42,7 @@
 #include <clock.h>
 #include <lib.h>
 #include <kern/errno.h>
+#include <kern/unistd.h>
 
 void sys_exit(int status) {
   // Detaches current thread from process, and turns it into zombie, then exits
@@ -198,8 +199,44 @@ int sys_mmap(size_t nbytes, int prot, int flags, int fd, off_t offset, int *retv
   }
 }
 
+int sys_msync(uint32_t startaddr, size_t length, int flags, int *retval) {
+  int errcode = 0;
+  struct addrspace *as = curproc->p_addrspace;
+  if (startaddr % PAGE_SIZE != 0 || length == 0) {
+    *retval = -1;
+    return EINVAL;
+  }
+  struct mmap_reg *mmap = as_mmap_for_region(as, startaddr, startaddr+length);
+  if (!mmap) {
+    *retval = -1;
+    return ENOMEM;
+  }
+  unsigned start_page = 0;
+  struct page_table_entry *pte = mmap->ptes;
+  for (unsigned i = 0; i < mmap->num_pages; i++) {
+    if (startaddr > pte->vaddr) {
+      pte = pte->next;
+      KASSERT(pte);
+      start_page++;
+    } else {
+      DEBUGASSERT(startaddr == pte->vaddr);
+    }
+  }
+  int mmap_sync_res = as_sync_mmap(as, mmap, start_page, length, flags, &errcode);
+  if (mmap_sync_res != 0) {
+    *retval = -1;
+    return errcode;
+  }
+  *retval = 0;
+  return 0;
+}
+
 int sys_munmap(uint32_t startaddr, int *retval) {
   int errcode = 0;
+  if (startaddr % PAGE_SIZE != 0) {
+    *retval = -1;
+    return EINVAL;
+  }
   struct addrspace *as = curproc->p_addrspace;
   struct mmap_reg *reg = as->mmaps;
   bool created_map = false;
@@ -212,6 +249,13 @@ int sys_munmap(uint32_t startaddr, int *retval) {
     return EINVAL;
   }
   created_map = reg->opened_by == curproc->pid;
+  if (reg->backing_obj && ((reg->flags & MAP_SHARED) != 0)) {
+    DEBUG(DB_SYSCALL, "Syncing mmap before unmapping it because it's shared\n");
+    int sync_res = as_sync_mmap(as, reg, 0, reg->valid_end_addr - reg->start_addr, 0, &errcode);
+    if (sync_res != 0) {
+      DEBUG(DB_SYSCALL, "Syncing mmap failed with %d (%s)\n", errcode, strerror(errcode));
+    }
+  }
   if (created_map) {
     DEBUG(DB_SYSCALL, "Removing mmap from process %d (as_rm_mmap)\n", (int)curproc->pid);
     lock_pagetable();

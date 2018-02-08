@@ -92,6 +92,8 @@ struct mmap_reg {
   struct page_table_entry *ptes; // page table entries for mapping
   unsigned num_pages;
   int fd; // if this is a file-backed mmap call
+  struct vnode *backing_obj; // if this is a file-backed mmap call
+  off_t file_offset; // if this is a file-backed mmap call
   vaddr_t start_addr;
   vaddr_t end_addr;
   vaddr_t valid_end_addr;
@@ -219,6 +221,8 @@ int as_add_mmap(
   int flags, int fd, off_t file_offset, vaddr_t *mmap_startaddr, int *errcode
 );
 int as_rm_mmap(struct addrspace *as, struct mmap_reg *reg);
+int as_sync_mmap(struct addrspace *as, struct mmap_reg *reg, unsigned page_num, size_t length, int flags, int *errcode);
+struct mmap_reg *as_mmap_for_region(struct addrspace *as, vaddr_t startaddr, vaddr_t endaddr);
 int as_free_mmap(struct addrspace *as, struct mmap_reg *reg);
 void mmap_add_shared_pid(struct mmap_reg *mmap, pid_t pid);
 

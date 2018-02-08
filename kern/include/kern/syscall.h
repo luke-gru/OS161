@@ -62,6 +62,7 @@
 #define SYS_mprotect     10
 
 //#define SYS_madvise    11
+#define SYS_msync        11
 //#define SYS_mincore    12
 //#define SYS_mlock      13
 #define SYS_pageout_region 12

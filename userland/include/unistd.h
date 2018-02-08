@@ -145,6 +145,7 @@ void *mmap(size_t len, int prot, int flags, int fd, off_t offset);
 // always check return value of mmap() against MAP_FAILED
 #define MAP_FAILED ((void*)-1)
 int munmap(void *addr);
+int msync(void *startaddr, size_t length, int flags);
 ssize_t getdirentry(int filehandle, char *buf, size_t buflen);
 int symlink(const char *target, const char *linkname);
 ssize_t readlink(const char *path, char *buf, size_t buflen);

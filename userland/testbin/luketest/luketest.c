@@ -6,6 +6,62 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+// MAP_SHARED with file, msync
+static int msync_test(int argc, char **argv) {
+  if (argc != 3) {
+    errx(1, "Usage error, need to give file to read");
+  }
+  char *fname = argv[2];
+  int fd = open(fname, O_RDWR, 0644);
+  if (fd < 3) {
+    errx(1, "Open failed: %d", fd);
+  }
+  struct stat st;
+  int stat_res = fstat(fd, &st);
+  if (stat_res != 0) {
+    errx(1, "fstat failed: %d", stat_res);
+  }
+  size_t filesize = st.st_size;
+  if (filesize < 4) {
+    errx(1, "Need a file with at least 4 characters");
+  }
+  void *startaddr = mmap(filesize+1, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+  if (startaddr == MAP_FAILED) {
+    errx(1, "mmap call failed: %d (%s)", errno, strerror(errno));
+  }
+  char *file_contents = malloc(filesize+1);
+  int read_res = read(fd, file_contents, filesize);
+  if (read_res != (int)filesize) {
+    errx(1, "Read failed: %d", read_res);
+  }
+  char old_char = file_contents[4];
+  file_contents[4] = '\0';
+  if (strcmp(file_contents, "NEW!") == 0) {
+    errx(1, "File contents are already 'NEW!'");
+  }
+  char *startmem = (char*)startaddr;
+  startmem[0] = 'N'; startmem[1] = 'E'; startmem[2] = 'W'; startmem[3] = '!';
+  int msync_res = msync(startaddr, 4, 0);
+  if (msync_res != 0) {
+    errx(1, "msync call failed: %d", msync_res);
+  }
+  char *new_file_contents = malloc(filesize+1);
+  lseek(fd, 0, SEEK_SET);
+  read(fd, new_file_contents, filesize);
+  new_file_contents[4] = '\0';
+  if (strcmp(new_file_contents, "NEW!") != 0) {
+    errx(1, "New file contents aren't correct");
+  }
+  file_contents[4] = old_char;
+  lseek(fd, 0, SEEK_SET);
+  int write_old_res = write(fd, file_contents, filesize);
+  if (write_old_res != (int)filesize) {
+    printf("Writing old file contents back to file failed with %d\n", write_old_res);
+  }
+  printf("msync properly synced file\n");
+  return 0;
+}
+
 // MAP_PRIVATE with file
 static int mmap_test6(int argc, char **argv) {
   if (argc != 3) {
@@ -453,7 +509,9 @@ int main(int argc, char *argv[]) {
     mmap_test5(argc, argv);
   } else if (strcmp(argv[1], "mmap6") == 0) {
     mmap_test6(argc, argv);
+  } else if (strcmp(argv[1], "msync") == 0) {
+    msync_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6] OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6]|msync OPTIONS\n");
   }
 }
