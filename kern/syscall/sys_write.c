@@ -56,7 +56,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   struct uio myuio;
   int errcode = 0;
 
-  if (file_des->ftype == FILEDES_TYPE_PIPE) { // TODO: handle non-blocking pipes
+  if (file_des->ftype == FILEDES_TYPE_PIPE) {
     struct pipe *writer = file_des->pipe;
     struct pipe *reader = writer->pair;
     if (!writer->is_writer || !reader) {
@@ -64,9 +64,12 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
       *count_retval = -1;
       return EBADF;
     }
-    // TODO: If the write is too large, we should write what we can and return the
-    // length written
     if ((writer->bufpos + count) > writer->buflen) {
+      if (file_des->flags & O_NONBLOCK) {
+        *count_retval = -1;
+        return EAGAIN; // try again later
+      }
+      // TODO: block for larger writes instead of failing with ENOMEM
       DEBUG(DB_SYSCALL, "Write to pipe failed, bufsize not big enough\n");
       *count_retval = -1;
       return ENOMEM;

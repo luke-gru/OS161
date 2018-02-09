@@ -443,7 +443,127 @@ static void fcntl_test(int argc, char **argv) {
   }
 }
 
-static void pipe_test(int argc, char **argv) {
+// nonblocking writes
+static void pipe_test3(int argc, char **argv) {
+  (void)argc; (void)argv;
+  int pipefd[2];
+  pid_t cpid;
+  char buf;
+
+  if (pipe(pipefd, 2) == -1) { // buffer size of 2 chars
+    errx(1, "pipe() failed");
+  }
+
+  if (pipefd[0] < 3) {
+    errx(1, "Failed to get reader FD");
+  }
+
+  if (pipefd[1] < 3) {
+    errx(1, "Failed to get writer FD");
+  }
+
+  printf("reader: %d, writer: %d\n", pipefd[0], pipefd[1]);
+
+  int set_nonblock_write_res = fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+  if (set_nonblock_write_res != 0) {
+    errx(1, "Failed to set non-blocking mode on write side of pipe");
+  }
+
+  cpid = fork();
+  if (cpid == -1) {
+    errx(1, "fork failed");
+  }
+
+  if (cpid == 0) {    /* Child reads from pipe */
+    close(pipefd[1]);          /* Close unused write end */
+    sleep(3);
+    while (read(pipefd[0], &buf, 1) > 0) // now it should be there
+      write(1, &buf, 1);
+
+    write(1, "\n", 1);
+    close(pipefd[0]);
+    _exit(0);
+
+  } else {            /* Parent writes argv[1] to pipe */
+    close(pipefd[0]);          /* Close unused read end */
+    // fill buffer
+    int write_res = write(pipefd[1], "PM", 2);
+    if (write_res != 2) {
+      errx(1, "Failed to fill pipe buffer");
+    }
+    write_res = write(pipefd[1], "MO", 2);
+    if (write_res != -1 || errno != EAGAIN) {
+      errx(1, "Should have returned immediately telling me to try again later");
+    }
+    sleep(4); // wait until child reads
+    write_res = write(pipefd[1], "MO", 2);
+    if (write_res != 2) {
+      errx(1, "Should have written to the buffer");
+    }
+    close(pipefd[1]);          /* Reader will see EOF */
+    int exitstatus;
+    waitpid(cpid, &exitstatus, 0);              /* Wait for child */
+  }
+}
+
+// nonblocking reads
+static void pipe_test2(int argc, char **argv) {
+  (void)argc; (void)argv;
+  int pipefd[2];
+  pid_t cpid;
+  char buf;
+
+  if (pipe(pipefd, 100) == -1) {
+    errx(1, "pipe() failed");
+  }
+
+  if (pipefd[0] < 3) {
+    errx(1, "Failed to get reader FD");
+  }
+
+  if (pipefd[1] < 3) {
+    errx(1, "Failed to get writer FD");
+  }
+
+  printf("reader: %d, writer: %d\n", pipefd[0], pipefd[1]);
+
+  int set_nonblock_read_res = fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+  if (set_nonblock_read_res != 0) {
+    errx(1, "Failed to set non-blocking reads on read side of pipe");
+  }
+
+  cpid = fork();
+  if (cpid == -1) {
+    errx(1, "fork failed");
+  }
+
+  if (cpid == 0) {    /* Child reads from pipe */
+    close(pipefd[1]);          /* Close unused write end */
+
+    int read_res = read(pipefd[0], &buf, 1); // read immediately, nothing should be there
+    if (read_res != -1 || errno != EAGAIN) {
+      errx(1, "Non-blocking read should have set errno to EAGAIN if nothing available to read");
+    }
+    sleep(3);
+    while (read(pipefd[0], &buf, 1) > 0) // now it should be there
+      write(1, &buf, 1);
+
+    write(1, "\n", 1);
+    close(pipefd[0]);
+    _exit(0);
+
+  } else {            /* Parent writes argv[1] to pipe */
+    close(pipefd[0]);          /* Close unused read end */
+    sleep(2);
+    write(pipefd[1], argv[1], strlen(argv[1]));
+    close(pipefd[1]);          /* Reader will see EOF */
+    int exitstatus;
+    waitpid(cpid, &exitstatus, 0);              /* Wait for child */
+  }
+}
+
+// blocking reads/writes
+static void pipe_test1(int argc, char **argv) {
   (void)argc; (void)argv;
   int pipefd[2];
   pid_t cpid;
@@ -614,19 +734,18 @@ static void files_test(int argc, char **argv) {
 int main(int argc, char *argv[]) {
   if (strcmp(argv[1], "fcntl") == 0) {
     fcntl_test(argc, argv);
-    exit(0);
-  } else if (strcmp(argv[1], "pipe") == 0) {
-    pipe_test(argc, argv);
-    exit(0);
+  } else if (strcmp(argv[1], "pipe1") == 0) {
+    pipe_test1(argc, argv);
+  } else if (strcmp(argv[1], "pipe2") == 0) {
+    pipe_test2(argc, argv);
+  } else if (strcmp(argv[1], "pipe3") == 0) {
+    pipe_test3(argc, argv);
   } else if (strcmp(argv[1], "files") == 0) {
     files_test(argc, argv);
-    exit(0);
   } else if (strcmp(argv[1], "atexit") == 0) {
     atexit_test(argc, argv);
-    exit(0);
   } else if (strcmp(argv[1], "clone") == 0) {
     clone_test(argc, argv);
-    exit(0);
   } else if (strcmp(argv[1], "sleep") == 0) {
     sleep_test(argc, argv);
   } else if (strcmp(argv[1], "mmap1") == 0) {
@@ -648,6 +767,6 @@ int main(int argc, char *argv[]) {
   } else if (strcmp(argv[1], "socket") == 0) {
     socket_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6]|msync|select|socket OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket OPTIONS\n");
   }
 }

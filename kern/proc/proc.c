@@ -444,7 +444,19 @@ int filedes_fcntl(struct filedes *file_des, int cmd, int flag, int *errcode) {
 			return -1;
 		case F_GETFD:
 			(void)flag;
-			return file_des->flags;
+			return (file_des->flags & O_CLOEXEC); // O_CLOEXEC is the only FD flag
+		case F_SETFL:
+			switch(flag) {
+				case O_NONBLOCK:
+					file_des->flags |= O_NONBLOCK;
+					return 0;
+			default:
+				*errcode = EINVAL;
+				return -1;
+			}
+		case F_GETFL:
+			(void)flag;
+			return (file_des->flags & ~O_CLOEXEC); // ignore CLOEXEC, it's considered a FD flag
 		default:
 			*errcode = EINVAL;
 			return -1;
@@ -935,6 +947,7 @@ void proc_bootstrap(void) {
 	devnull->ftype = FILEDES_TYPE_REG;
 	devnull->node = NULL;
 	devnull->pipe = NULL;
+	devnull->sock = NULL;
 	devnull->flags = O_RDWR;
 	devnull->offset = 0;
 	devnull->refcount = 1;

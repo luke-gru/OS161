@@ -45,45 +45,49 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
     return EBADF;
   }
   DEBUGASSERT(count > 0);
-  if (file_des->ftype == FILEDES_TYPE_PIPE) { // TODO: handle non-blocking pipes
-    struct pipe *pipe = file_des->pipe;
-    if (pipe->is_writer || !pipe->pair) {
+  if (file_des->ftype == FILEDES_TYPE_PIPE) {
+    struct pipe *reader = file_des->pipe;
+    struct pipe *writer = reader->pair;
+    if (reader->is_writer || !writer) {
       DEBUG(DB_SYSCALL, "Read from pipe failed: is writer or pair vanished!\n");
       *retval = -1;
       return EBADF;
     }
-    if (pipe->pair->is_closed && pipe->pair->bufpos == 0) {
+    if (writer->is_closed && writer->bufpos == 0) {
       DEBUG(DB_SYSCALL, "Read from pipe got EOF, writer is closed!\n");
-      *retval = 0 /*EOF*/ ;
+      *retval = 0 /*EOF*/;
       return 0;
     }
-    struct pipe *writer = pipe->pair;
     count = count > writer->buflen ? writer->buflen : count;
     // non-blocking read, there's a big enough buffer in the write pipe
     if (writer->bufpos >= count) {
       count = count > writer->buflen ? writer->buflen : count;
       int errcode = 0;
       DEBUG(DB_SYSCALL, "Non-blocking read from pipe\n");
-      int piperead_res = pipe_read_nonblock(pipe, writer, buf, count, &errcode);
+      int piperead_res = pipe_read_nonblock(reader, writer, buf, count, &errcode);
       if (piperead_res == -1) {
         DEBUG(DB_SYSCALL, "Read from pipe failed: %d\n", errcode);
         *retval = -1;
         return errcode;
       }
       *retval = count;
-      io_is_ready(curproc->pid, writer->fd, IO_TYPE_WRITE, count);
+      io_is_ready(curproc->pid, writer->fd, IO_TYPE_WRITE, count); // writer can write again if blocked
       return 0;
     } else {
+      if (file_des->flags & O_NONBLOCK) {
+        *retval = -1;
+        return EAGAIN; // read side of pipe set to non-blocking, so don't block!
+      }
       int errcode = 0;
       DEBUG(DB_SYSCALL, "Blocking read from pipe\n");
-      int piperead_res = pipe_read_block(pipe, writer, buf, count, &errcode);
+      int piperead_res = pipe_read_block(reader, writer, buf, count, &errcode);
       if (piperead_res == -1) {
         DEBUG(DB_SYSCALL, "Read from pipe failed: %d\n", errcode);
         *retval = -1;
         return errcode;
       }
       *retval = count;
-      io_is_ready(curproc->pid, writer->fd, IO_TYPE_WRITE, count);
+      io_is_ready(curproc->pid, writer->fd, IO_TYPE_WRITE, count); // writer can write again if blocked
       return 0;
     }
   }
