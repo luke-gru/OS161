@@ -47,7 +47,7 @@ static int select_test(int argc, char **argv) {
     int read_fd = pipefd[0];
     FD_SET(read_fd, &readfds);
     //printf("TV values: %ld : %ld\n", (long)tv.tv_sec, (long)tv.tv_usec);
-    int select_res = select(1, &readfds, NULL, NULL, &tv);
+    int select_res = select(read_fd+1, &readfds, NULL, NULL, &tv);
     if (select_res != 1) {
       errx(1, "Read should be ready after 5 seconds: got %d", select_res);
     }

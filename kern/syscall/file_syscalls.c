@@ -289,6 +289,8 @@ int sys_pipe(userptr_t pipes_ary, size_t buflen, int *retval) {
   return 0;
 }
 
+// NOTE: nfds is the highest numbered FD + 1, but we don't use this optimization because our fd_set is
+// quite stupid and right now only allows 10 descriptors to be watched per set.
 int sys_select(int nfds, userptr_t readfds, userptr_t writefds,
                userptr_t exceptfds, userptr_t timeval_struct, int *retval) {
   struct fd_set reads, writes, exceptions;
@@ -298,7 +300,7 @@ int sys_select(int nfds, userptr_t readfds, userptr_t writefds,
   struct timeval timeout;
   struct timeval *timeout_p;
   int copy_res;
-  if (nfds <= 0) {
+  if (nfds <= 0) { // we don't support this, just use nanosleep() for sleeping
     *retval = -1;
     return EINVAL;
   }

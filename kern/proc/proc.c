@@ -1359,9 +1359,8 @@ bool is_current_userspace_proc(struct proc *p) {
 int file_select(unsigned nfds, struct fd_set *reads, struct fd_set *writes,
 								struct fd_set *exceptions, struct timeval *timeout,
 								int *errcode, int *num_ready) {
-	DEBUGASSERT(nfds > 0);
+	(void)nfds;
 	int total_ready = 0;
-	unsigned nfds_checked = 0;
 
 	struct fd_set reads_cpy = *reads;
 	struct fd_set writes_cpy = *writes;
@@ -1370,32 +1369,29 @@ int file_select(unsigned nfds, struct fd_set *reads, struct fd_set *writes,
 	FD_ZERO(writes);
 	FD_ZERO(exceptions);
 
-	for (unsigned i = 0; nfds_checked < nfds && i < reads_cpy.fds; i++) {
+	for (unsigned i = 0; i < reads_cpy.fds; i++) {
 		int fd = reads_cpy.fd_list[i];
-		if (fd <= 0) break;
+		DEBUGASSERT(fd > 0);
 		if (io_check_ready(fd-1, IO_TYPE_READ)) {
 			FD_SETREADY(fd-1, reads);
 			total_ready += 1;
 		}
-		nfds_checked += 1;
 	}
-	for (unsigned i = 0; nfds_checked < nfds && i < writes_cpy.fds; i++) {
+	for (unsigned i = 0; i < writes_cpy.fds; i++) {
 		int fd = writes_cpy.fd_list[i];
-		if (fd <= 0) break;
+		DEBUGASSERT(fd > 0);
 		if (io_check_ready(fd-1, IO_TYPE_WRITE)) {
 			FD_SETREADY(fd-1, writes);
 			total_ready += 1;
 		}
-		nfds_checked += 1;
 	}
-	for (unsigned i = 0; nfds_checked < nfds && i < exceptions_cpy.fds; i++) {
+	for (unsigned i = 0; i < exceptions_cpy.fds; i++) {
 		int fd = exceptions_cpy.fd_list[i];
-		if (fd <= 0) break;
+		DEBUGASSERT(fd > 0);
 		if (io_check_ready(fd-1, IO_TYPE_EXCEPTION)) {
 			FD_SETREADY(fd-1, exceptions);
 			total_ready += 1;
 		}
-		nfds_checked += 1;
 	}
 	if (total_ready > 0) {
 		DEBUG(DB_SYSCALL, "file_select returning immediately without blocking (ready IO)\n");
@@ -1417,24 +1413,20 @@ int file_select(unsigned nfds, struct fd_set *reads, struct fd_set *writes,
 	// setup polling if timeout is in the future, or no timeout given
 	struct io_poll poll;
 	io_poll_init(&poll);
-	nfds_checked = 0;
-	for (unsigned i = 0; nfds_checked < nfds && i < reads_cpy.fds; i++) {
+	for (unsigned i = 0; i < reads_cpy.fds; i++) {
 		int fd = reads_cpy.fd_list[i];
 		DEBUGASSERT(fd > 0);
 		io_poll_setup(&poll, fd-1, IO_TYPE_READ, reads, sel_wchan, &sel_wchan_lk);
-		nfds_checked += 1;
 	}
-	for (unsigned i = 0; nfds_checked < nfds && i < writes_cpy.fds; i++) {
+	for (unsigned i = 0; i < writes_cpy.fds; i++) {
 		int fd = writes_cpy.fd_list[i];
 		DEBUGASSERT(fd > 0);
 		io_poll_setup(&poll, fd-1, IO_TYPE_WRITE, writes, sel_wchan, &sel_wchan_lk);
-		nfds_checked += 1;
 	}
-	for (unsigned i = 0; nfds_checked < nfds && i < exceptions_cpy.fds; i++) {
+	for (unsigned i = 0; i < exceptions_cpy.fds; i++) {
 		int fd = exceptions_cpy.fd_list[i];
 		DEBUGASSERT(fd > 0);
 		io_poll_setup(&poll, fd-1, IO_TYPE_EXCEPTION, exceptions, sel_wchan, &sel_wchan_lk);
-		nfds_checked += 1;
 	}
 
 	int poll_start_res = io_poll_start(&poll);
