@@ -59,6 +59,8 @@
 #include <wchan.h>
 #include <copyinout.h>
 #include <signal.h>
+#include <kern/select.h>
+#include <clock.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -67,6 +69,11 @@ struct proc *kproc;
 struct proc *kswapproc;
 
 static struct filedes *devnull;
+// FIXME: io listeners are global right now, not per process or file table
+static struct io_pollset *io_listeners[FILE_TABLE_LIMIT];
+
+extern struct wchan *sel_wchan;
+extern struct spinlock sel_wchan_lk;
 
 const char *special_filedes_name(int i) {
 	switch (i) {
@@ -223,6 +230,7 @@ struct filedes *pipe_create(struct proc *p, int flags, size_t buflen, int table_
 		return NULL;
 	}
 	file_des->latest_fd = fd;
+	file_des->pipe->fd = fd;
 	return file_des;
 }
 
@@ -1346,4 +1354,230 @@ int proc_waitpid_sleep(pid_t child_pid, int *errcode) {
 
 bool is_current_userspace_proc(struct proc *p) {
 	return is_valid_user_pid(p->pid);
+}
+
+int file_select(unsigned nfds, struct fd_set *reads, struct fd_set *writes,
+								struct fd_set *exceptions, struct timeval *timeout,
+								int *errcode, int *num_ready) {
+	DEBUGASSERT(nfds > 0);
+	int total_ready = 0;
+	unsigned nfds_checked = 0;
+
+	struct fd_set reads_cpy = *reads;
+	struct fd_set writes_cpy = *writes;
+	struct fd_set exceptions_cpy = *exceptions;
+	FD_ZERO(reads);
+	FD_ZERO(writes);
+	FD_ZERO(exceptions);
+
+	for (unsigned i = 0; nfds_checked < nfds && i < reads_cpy.fds; i++) {
+		int fd = reads_cpy.fd_list[i];
+		if (fd <= 0) break;
+		if (io_check_ready(fd-1, IO_TYPE_READ)) {
+			FD_SETREADY(fd-1, reads);
+			total_ready += 1;
+		}
+		nfds_checked += 1;
+	}
+	for (unsigned i = 0; nfds_checked < nfds && i < writes_cpy.fds; i++) {
+		int fd = writes_cpy.fd_list[i];
+		if (fd <= 0) break;
+		if (io_check_ready(fd-1, IO_TYPE_WRITE)) {
+			FD_SETREADY(fd-1, writes);
+			total_ready += 1;
+		}
+		nfds_checked += 1;
+	}
+	for (unsigned i = 0; nfds_checked < nfds && i < exceptions_cpy.fds; i++) {
+		int fd = exceptions_cpy.fd_list[i];
+		if (fd <= 0) break;
+		if (io_check_ready(fd-1, IO_TYPE_EXCEPTION)) {
+			FD_SETREADY(fd-1, exceptions);
+			total_ready += 1;
+		}
+		nfds_checked += 1;
+	}
+	if (total_ready > 0) {
+		DEBUG(DB_SYSCALL, "file_select returning immediately without blocking (ready IO)\n");
+		*num_ready = total_ready;
+		return 0; // no need to poll or sleep, some conditions are ready
+	}
+
+	struct timeval now;
+	timeval_now(&now);
+	if (timeout) {
+		int timeval_cmp_res = timeval_cmp(&now, timeout);
+		if (timeval_cmp_res == 0 || timeval_cmp_res == 1) { // timeout is in the past, just return
+			DEBUG(DB_SYSCALL, "Timeout value is in the past, returning from file_select without blocking\n");
+			*errcode = EINVAL;
+			return -1;
+		}
+	}
+
+	// setup polling if timeout is in the future, or no timeout given
+	struct io_poll poll;
+	io_poll_init(&poll);
+	nfds_checked = 0;
+	for (unsigned i = 0; nfds_checked < nfds && i < reads_cpy.fds; i++) {
+		int fd = reads_cpy.fd_list[i];
+		DEBUGASSERT(fd > 0);
+		io_poll_setup(&poll, fd-1, IO_TYPE_READ, reads, sel_wchan, &sel_wchan_lk);
+		nfds_checked += 1;
+	}
+	for (unsigned i = 0; nfds_checked < nfds && i < writes_cpy.fds; i++) {
+		int fd = writes_cpy.fd_list[i];
+		DEBUGASSERT(fd > 0);
+		io_poll_setup(&poll, fd-1, IO_TYPE_WRITE, writes, sel_wchan, &sel_wchan_lk);
+		nfds_checked += 1;
+	}
+	for (unsigned i = 0; nfds_checked < nfds && i < exceptions_cpy.fds; i++) {
+		int fd = exceptions_cpy.fd_list[i];
+		DEBUGASSERT(fd > 0);
+		io_poll_setup(&poll, fd-1, IO_TYPE_EXCEPTION, exceptions, sel_wchan, &sel_wchan_lk);
+		nfds_checked += 1;
+	}
+
+	int poll_start_res = io_poll_start(&poll);
+	if (poll_start_res != 0) {
+		*errcode = poll_start_res;
+		return -1;
+	}
+
+	DEBUG(DB_SYSCALL, "file_select putting current thread to sleep\n");
+	int timed_out = 0;
+
+	spinlock_acquire(&sel_wchan_lk);
+	if (timeout) {
+		timed_out = wchan_sleep_timeout(sel_wchan, &sel_wchan_lk, timeout);
+	} else {
+		wchan_sleep(sel_wchan, &sel_wchan_lk);
+	}
+	spinlock_release(&sel_wchan_lk);
+
+	io_poll_stop(&poll);
+	DEBUG(DB_SYSCALL, "file_select thread woke up (%s)\n", timed_out ? "timed out" : "IO ready");
+	if (timed_out == 1) {
+		*num_ready = 0;
+		return 0;
+	} else {
+		*num_ready = FDS_READY(reads) + FDS_READY(writes) + FDS_READY(exceptions);
+		return 0;
+	}
+}
+
+static void io_ready_broadcast(int fd, enum io_ready_type io_type, size_t min_bytes_ready) {
+	(void)min_bytes_ready;
+	struct io_pollset *pollset = io_listeners[fd];
+	DEBUGASSERT(pollset != NULL);
+	struct io_pollset_interest *interest = pollset->polls;
+	for (unsigned i = 0; i < pollset->num_polls; i++) {
+		if (interest->ready_type != io_type) {
+			interest = interest->next;
+			continue;
+		}
+		FD_SETREADY(fd, interest->fd_setp);
+		spinlock_acquire(interest->wchan_lk);
+		wchan_wake_specific(interest->t_wakeup, interest->wchan, interest->wchan_lk);
+		spinlock_release(interest->wchan_lk);
+		interest = interest->next;
+	}
+}
+
+void io_is_ready(pid_t pid, int fd, enum io_ready_type io_type, size_t min_bytes_ready) {
+	(void)pid;
+	if (io_listeners[fd] && (io_listeners[fd]->io_poll_types & io_type) != 0) {
+		io_ready_broadcast(fd, io_type, min_bytes_ready);
+	}
+}
+
+bool io_check_ready(int fd, enum io_ready_type type) {
+	(void)fd;
+	(void)type;
+	return false;
+}
+
+void io_poll_init(struct io_poll *poll) {
+	poll->running = false;
+	poll->num_interests = 0;
+	poll->interests = NULL;
+}
+
+void io_poll_setup(struct io_poll *poll, int fd, enum io_ready_type type, struct fd_set *fd_setp,
+									 struct wchan *wchan, struct spinlock *wchan_lk) {
+	DEBUGASSERT(!poll->running);
+	struct io_pollset_interest *interest = kmalloc(sizeof(*interest));
+	KASSERT(interest);
+	interest->fd = fd;
+	interest->fd_setp = fd_setp;
+	interest->ready_type = type;
+	interest->wchan = wchan;
+	interest->wchan_lk = wchan_lk;
+	interest->t_wakeup = curthread;
+	interest->next = NULL;
+	interest->poll = poll;
+	// link it into poll->interests
+	if (poll->interests) {
+		struct io_pollset_interest *last = poll->interests;
+		while (last->next) { last = last->next; }
+		last->next = interest;
+	} else {
+		poll->interests = interest;
+	}
+	poll->num_interests++;
+}
+
+int io_poll_start(struct io_poll *poll) {
+	if (poll->num_interests == 0 || poll->running) {
+		return EINVAL;
+	}
+	struct io_pollset_interest *interest = poll->interests;
+	int fd = interest->fd;
+	struct io_pollset *pollset = io_listeners[fd];
+	if (pollset == NULL) {
+		pollset = kmalloc(sizeof(*pollset));
+		KASSERT(pollset);
+		memset(pollset, 0, sizeof(*pollset));
+		io_listeners[fd] = pollset;
+	}
+	// NOTE: linking in the first interest links in all of them, because they're a linked list
+	if (pollset->polls) {
+		struct io_pollset_interest *last = pollset->polls;
+		while (last->next) { last = last->next; }
+		last->next = interest;
+	} else {
+		pollset->polls = interest;
+	}
+
+	pollset->num_polls += poll->num_interests;
+
+	struct io_pollset_interest *cur = poll->interests;
+	while (cur) {
+		if ((pollset->io_poll_types & cur->ready_type) == 0) {
+			pollset->io_poll_types |= cur->ready_type;
+		}
+		cur = cur->next;
+	}
+	poll->running = true;
+	return 0;
+}
+
+// NOTE: assumes only 1 poll running at once! FIXME:
+void io_poll_stop(struct io_poll *poll) {
+	DEBUGASSERT(poll->running);
+	struct io_pollset_interest *interest = poll->interests;
+	struct io_pollset_interest *next;
+	for (unsigned i = 0; i < poll->num_interests; i++) {
+		DEBUGASSERT(interest && interest->poll == poll);
+		int fd = interest->fd;
+		if (io_listeners[fd]) {
+			kfree(io_listeners[fd]);
+			io_listeners[fd] = NULL;
+		}
+		next = interest->next;
+		kfree(interest);
+		interest = next;
+	}
+	poll->num_interests = 0;
+	poll->interests = NULL;
+	poll->running = false;
 }

@@ -6,6 +6,74 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+static int select_test(int argc, char **argv) {
+  (void)argc; (void)argv;
+  int pipefd[2];
+  pid_t cpid;
+  char buf;
+
+  if (pipe(pipefd, 100) == -1) {
+    errx(1, "pipe() failed");
+  }
+
+  if (pipefd[0] < 3) {
+    errx(1, "Failed to get reader FD");
+  }
+
+  if (pipefd[1] < 3) {
+    errx(1, "Failed to get writer FD");
+  }
+
+  printf("reader: %d, writer: %d\n", pipefd[0], pipefd[1]);
+
+  cpid = fork();
+  if (cpid == -1) {
+    errx(1, "fork failed");
+  }
+
+  if (cpid == 0) {    /* Child reads from pipe, will be blocked because nothing avail for first 5 secs */
+    close(pipefd[1]);          /* Close unused write end */
+
+    struct timespec ts;
+    __time(&ts.tv_sec, (unsigned long*)&ts.tv_nsec);
+    ts.tv_sec += 10; // 10-second timeout
+    struct timeval tv;
+    TIMESPEC_TO_TIMEVAL(&tv, &ts);
+    if (tv.tv_sec < ts.tv_sec) {
+      errx(1, "TIMESPEC_TO_TIMEVAL failed");
+    }
+    struct fd_set readfds;
+    FD_ZERO(&readfds);
+    int read_fd = pipefd[0];
+    FD_SET(read_fd, &readfds);
+    //printf("TV values: %ld : %ld\n", (long)tv.tv_sec, (long)tv.tv_usec);
+    int select_res = select(1, &readfds, NULL, NULL, &tv);
+    if (select_res != 1) {
+      errx(1, "Read should be ready after 5 seconds: got %d", select_res);
+    }
+    if (!FD_ISSET(read_fd, &readfds)) {
+      errx(1, "&readfds fd_set not modified properly in select() call");
+    }
+    printf("Child is ready to read, reading and then writing out:\n");
+    while (read(pipefd[0], &buf, 1) > 0)
+      write(1, &buf, 1);
+
+    write(1, "\n", 1);
+    close(pipefd[0]);
+    _exit(0);
+  } else {                     /* Parent writes argv[1] to pipe */
+    close(pipefd[0]);          /* Close unused read end */
+    printf("Parent sleeping for 5 seconds\n");
+    sleep(5);
+    printf("Parent writing after sleep\n");
+    write(pipefd[1], argv[1], strlen(argv[1]));
+    close(pipefd[1]);          /* Reader will see EOF */
+    int exitstatus;
+    waitpid(cpid, &exitstatus, 0);              /* Wait for child */
+  }
+  return 0;
+}
+
 // MAP_SHARED with file, msync
 static int msync_test(int argc, char **argv) {
   if (argc != 3) {
@@ -511,7 +579,9 @@ int main(int argc, char *argv[]) {
     mmap_test6(argc, argv);
   } else if (strcmp(argv[1], "msync") == 0) {
     msync_test(argc, argv);
+  } else if (strcmp(argv[1], "select") == 0) {
+    select_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6]|msync OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6]|msync|select OPTIONS\n");
   }
 }

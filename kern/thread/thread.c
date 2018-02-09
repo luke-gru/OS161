@@ -91,6 +91,11 @@ static struct spinlock threads_sleeping_lock = SPINLOCK_INITIALIZER;
 static struct wchan *threads_stopped_wchan;
 static struct spinlock threads_stopped_lock = SPINLOCK_INITIALIZER;
 
+/* Used for threads that are waiting on select() syscall */
+struct wchan *sel_wchan;
+struct spinlock sel_wchan_lk;
+extern struct timeout_node *timeout_list;
+
 static time_t timestamp() {
 	struct timespec tv;
 	gettime(&tv);
@@ -117,12 +122,12 @@ static int threadarray_get_index(bool (*thread_find_func)(struct thread *t, void
 	return -1;
 }
 
-static bool threadarray_find_by_pid_func(struct thread *t, void *pid) {
+static bool thread_find_by_pid_func(struct thread *t, void *pid) {
 	return t->t_pid == (pid_t)pid;
 }
 
 struct thread *thread_find_by_id(pid_t id) {
-	int index = threadarray_get_index(threadarray_find_by_pid_func, (void*)id);
+	int index = threadarray_get_index(thread_find_by_pid_func, (void*)id);
 	if (index < 0) {
 		return NULL;
 	}
@@ -350,7 +355,7 @@ thread_destroy(struct thread *thread)
 	/* sheer paranoia */
 	thread->t_wchan_name = "DESTROYED";
 
-	int allthreads_index = threadarray_get_index(threadarray_find_by_pid_func, (void*)thread->t_pid);
+	int allthreads_index = threadarray_get_index(thread_find_by_pid_func, (void*)thread->t_pid);
 	DEBUGASSERT(allthreads_index >= 0);
 	spinlock_acquire(&allthreads_lock);
 	threadarray_remove(&allthreads, (unsigned)allthreads_index);
@@ -475,6 +480,8 @@ thread_bootstrap(void)
 
 	threads_sleeping_wchan = wchan_create("threads_sleeping");
 	threads_stopped_wchan = wchan_create("threads_stopped");
+	sel_wchan = wchan_create("select() wchan");
+	spinlock_init(&sel_wchan_lk);
 
 	/* cpu_create() should also have set t_proc. */
 	KASSERT(curcpu != NULL);
@@ -811,7 +818,8 @@ int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
 	return child_pid;
 }
 
-static bool thread_find_ready_sleeper_cb(struct thread *t) {
+static bool thread_find_ready_sleeper_cb(struct thread *t, void *data) {
+	(void)data;
 	return t->wakeup_at == 0 || t->wakeup_at <= timestamp();
 }
 
@@ -822,7 +830,7 @@ void thread_add_ready_sleepers_to_runqueue(void) {
 		spinlock_acquire(&threads_sleeping_lock);
 	struct thread *ready;
 	if (!wchan_isempty(threads_sleeping_wchan, &threads_sleeping_lock)) {
-		while ((ready = threadlist_remove_if(&threads_sleeping_wchan->wc_threads, thread_find_ready_sleeper_cb)) != NULL) {
+		while ((ready = threadlist_remove_if(&threads_sleeping_wchan->wc_threads, thread_find_ready_sleeper_cb, NULL)) != NULL) {
 			bool already_have_lock = spinlock_do_i_hold(&ready->t_cpu->c_runqueue_lock);
 			ready->wakeup_at = 0;
 			ready->t_wchan_name = NULL;
@@ -831,6 +839,31 @@ void thread_add_ready_sleepers_to_runqueue(void) {
 	}
 	if (dolock)
 		spinlock_release(&threads_sleeping_lock);
+}
+
+void thread_wakeup_ready_timeouts(void) {
+	struct timeout_node *timeout_n = timeout_list;
+	if (!timeout_n) { // no timeouts registered
+		return;
+	}
+	struct timeout *timeout;
+	struct timeval now;
+	timeval_now(&now);
+	while (timeout_n) {
+		timeout = &timeout_n->timeout;
+		if (timeout->notified) { // notified but not deregistered yet
+			timeout_n = timeout_n->next;
+			continue;
+		}
+		int cmp_res = timeval_cmp(&now, timeout->notify_at);
+		if (cmp_res == 0 || cmp_res == 1) {
+			spinlock_acquire(timeout->wchan_lk);
+			wchan_wake_specific(timeout->t_wakeup, timeout->wchan, timeout->wchan_lk);
+			spinlock_release(timeout->wchan_lk);
+			timeout->notified = true;
+		}
+		timeout_n = timeout_n->next;
+	}
 }
 
 /*
@@ -1353,6 +1386,78 @@ wchan_sleep(struct wchan *wc, struct spinlock *lk)
 	spinlock_acquire(lk);
 }
 
+void register_wchan_timeout(struct thread *t, struct wchan *wchan, struct spinlock *lk, struct timeval *tv) {
+	struct timeout_node *node = kmalloc(sizeof(*node));
+	KASSERT(node);
+	struct timeout to;
+	bzero(&to, sizeof(struct timeout));
+	to.notified = false;
+	to.t_wakeup = t;
+	to.notify_at = tv;
+	to.wchan = wchan;
+	to.wchan_lk = lk;
+	node->timeout = to;
+	node->prev = NULL; node->next = NULL;
+	// link the node into timeout_list
+	struct timeout_node *last = timeout_list;
+	if (!last) {
+		timeout_list = node;
+	} else {
+		while (last->next) { last = last->next; }
+		last->next = node;
+		node->prev = last;
+	}
+}
+
+int unregister_wchan_timeout(struct thread *t, struct wchan *wchan, struct spinlock *lk, struct timeval *tv) {
+	struct timeout_node *node = timeout_list;
+	struct timeout_node *found = NULL;
+	if (!node) { return -1; }
+	struct timeout *to;
+	while (node) {
+		to = &node->timeout;
+		KASSERT(to);
+		if (to->t_wakeup == t && to->wchan == wchan && to->wchan_lk == lk && to->notify_at == tv) {
+			found = node;
+			break;
+		}
+	}
+	if (!found) {
+		return -1;
+	}
+	if (found->prev) {
+		found->prev->next = found->next;
+	}
+	if (found->next) {
+		found->next->prev = found->prev;
+	}
+	bool timed_out = found->timeout.notified;
+	if (found == timeout_list) {
+		if (found->next) {
+			timeout_list = found->next;
+		} else {
+			timeout_list = NULL;
+		}
+	}
+	kfree(found);
+	return timed_out ? 1 : 0;
+}
+
+int wchan_sleep_timeout(struct wchan *wc, struct spinlock *lk, struct timeval *timeout) {
+	/* may not sleep in an interrupt handler */
+	KASSERT(!curthread->t_in_interrupt);
+	KASSERT(timeout);
+	/* must hold the spinlock */
+	KASSERT(spinlock_do_i_hold(lk));
+	/* must not hold other spinlocks */
+	KASSERT(curcpu->c_spinlocks == 1);
+	register_wchan_timeout(curthread, wc, lk, timeout);
+	thread_switch(S_SLEEP, wc, lk);
+	int timed_out = unregister_wchan_timeout(curthread, wc, lk, timeout);
+	spinlock_acquire(lk);
+	return timed_out;
+}
+
 /*
  * Wake up one thread sleeping on a wait channel.
  */
@@ -1394,6 +1499,18 @@ wchan_wakeall(struct wchan *wc, struct spinlock *lk)
 
 	while ((target = threadlist_remhead(&wc->wc_threads)) != NULL) {
 		thread_make_runnable(target, false);
+	}
+}
+
+bool wchan_wake_specific(struct thread *t, struct wchan *wc, struct spinlock *lk) {
+	KASSERT(spinlock_do_i_hold(lk));
+	struct thread *target;
+	if ((target = threadlist_remove_if(&wc->wc_threads, thread_find_by_pid_func, (void*)t->t_pid))) {
+		DEBUGASSERT(target == t);
+		thread_make_runnable(target, false);
+		return true;
+	} else {
+		return false;
 	}
 }
 

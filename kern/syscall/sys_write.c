@@ -83,8 +83,10 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     if (reader->buflen <= writer->bufpos && reader->buflen > 0) { // reader can read now
       DEBUG(DB_SYSCALL, "Write to pipe successful, signalling reader\n");
       pipe_signal_can_read(reader); // wake up any blocked readers
+      io_is_ready(curproc->pid, reader->fd, IO_TYPE_READ, count); // signal that a read is ready to select() and friends
     } else { // no blocked readers, or blocked readers want more in buffer to read at once
       DEBUG(DB_SYSCALL, "Write to pipe successful\n");
+      io_is_ready(curproc->pid, reader->fd, IO_TYPE_READ, count);
     }
     *count_retval = count;
     return 0;
@@ -130,6 +132,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     return errcode;
   }
   *count_retval = res; // num bytes written
+  io_is_ready(curproc->pid, fd, IO_TYPE_READ, res);
   if (is_console) {
     if (dolock) {
       DEBUG_CONSOLE_UNLOCK();

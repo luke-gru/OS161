@@ -52,6 +52,8 @@ struct proc;
 struct stat;
 struct trapframe;
 struct pipe;
+struct timeval;
+struct fd_set;
 
 #define FPATH_MAX 1024
 
@@ -60,6 +62,12 @@ struct pipe;
 #define FD_DEV_NULL -2
 
 #define PIPE_BUF_MAX 4096
+
+enum io_ready_type {
+	IO_TYPE_READ = 1,
+	IO_TYPE_WRITE = 2,
+	IO_TYPE_EXCEPTION = 4
+};
 
 // TODO: move to filedes.c/filedes.h
 // Open file descriptor
@@ -83,6 +91,7 @@ struct pipe {
 	size_t buflen; // for writers, length of internal buffer. For readers, non-0 value
 	// is length of pending read
 	struct pipe *pair;
+	int fd;
 	bool is_writer;
 	bool is_closed;
 	char *buf; // writers only
@@ -239,5 +248,43 @@ void pipe_destroy_reader(struct pipe *reader);
 void pipe_destroy_writer(struct pipe *writer);
 void pipe_destroy_pair(struct pipe *reader, struct pipe *writer);
 
+struct io_pollset_interest; // forward decl
+struct io_poll {
+	bool running;
+	unsigned num_interests;
+	struct io_pollset_interest *interests;
+};
+
+// linked list of polls
+struct io_pollset_interest {
+	struct io_poll *poll; // underlying poll object
+	int fd;
+	struct fd_set *fd_setp;
+	enum io_ready_type ready_type;
+	struct wchan *wchan;
+	struct spinlock *wchan_lk;
+	struct thread *t_wakeup;
+	struct io_pollset_interest *next;
+};
+
+// set of polls for a particular FD
+struct io_pollset {
+	unsigned num_polls;
+	struct io_pollset_interest *polls;
+	int io_poll_types;
+};
+
+// select
+int file_select(unsigned nfds, struct fd_set *reads, struct fd_set *writes,
+								struct fd_set *exceptions, struct timeval *timeout,
+								int *errcode, int *num_ready);
+void io_is_ready(pid_t pid, int fd, enum io_ready_type io_type, size_t min_bytes_ready);
+bool io_check_ready(int fd, enum io_ready_type type);
+void io_poll_init(struct io_poll *poll);
+void io_poll_setup(struct io_poll *poll, int fd, enum io_ready_type type,
+	struct fd_set *fd_setp, struct wchan *wchan, struct spinlock *wchan_lk
+);
+int io_poll_start(struct io_poll *poll);
+void io_poll_stop(struct io_poll *poll);
 
 #endif /* _PROC_H_ */

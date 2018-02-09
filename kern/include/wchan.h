@@ -37,6 +37,8 @@
 
 struct spinlock; /* in spinlock.h */
 struct wchan; /* Opaque */
+struct thread;
+struct timeval;
 
 /*
  * Create a wait channel. Use NAME as a symbolic name for the channel.
@@ -75,6 +77,10 @@ void wchan_sleep(struct wchan *wc, struct spinlock *lk);
  */
 void wchan_wakeone(struct wchan *wc, struct spinlock *lk);
 void wchan_wakeall(struct wchan *wc, struct spinlock *lk);
+bool wchan_wake_specific(struct thread *t, struct wchan *wc, struct spinlock *lk);
+int wchan_sleep_timeout(struct wchan *wc, struct spinlock *lk, struct timeval *timeout);
+void  register_wchan_timeout(struct thread *t, struct wchan *wc, struct spinlock *lk, struct timeval *timeout);
+int unregister_wchan_timeout(struct thread *t, struct wchan *wc, struct spinlock *lk, struct timeval *timeout);
 
 
 #endif /* _WCHAN_H_ */

@@ -45,6 +45,7 @@
 #include <kern/time.h>
 #include <kern/unistd.h>
 #include <kern/wait.h>
+#include <kern/select.h>
 
 
 /*
@@ -160,6 +161,7 @@ ssize_t __getcwd(char *buf, size_t buflen);
 int sleep(int seconds);
 int fcntl(int filehandle, int cmd, int flag);
 int clone(int (*fn)(void *), void *child_stacktop, size_t stack_size, int flags);
+int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
 
 int pageout_region(__u32 startaddr, size_t nbytes);
 int lock_region(__u32 startaddr, size_t nbytes);

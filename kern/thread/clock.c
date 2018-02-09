@@ -58,6 +58,7 @@
  */
 static struct wchan *lbolt;
 static struct spinlock lbolt_lock;
+struct timeout_node *timeout_list;
 
 /*
  * Setup.
@@ -70,6 +71,7 @@ hardclock_bootstrap(void)
 	if (lbolt == NULL) {
 		panic("Couldn't create lbolt\n");
 	}
+	timeout_list = NULL;
 }
 
 /*
@@ -84,6 +86,7 @@ timerclock(void)
 	wchan_wakeall(lbolt, &lbolt_lock);
 	spinlock_release(&lbolt_lock);
 	thread_add_ready_sleepers_to_runqueue();
+	thread_wakeup_ready_timeouts();
 }
 
 /*

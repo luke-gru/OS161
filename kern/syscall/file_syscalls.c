@@ -41,6 +41,8 @@
 #include <current.h>
 #include <vnode.h>
 #include <spl.h>
+#include <kern/select.h>
+#include <kern/time.h>
 
 int sys_chdir(userptr_t dirbuf, int *retval) {
   char fname[PATH_MAX];
@@ -284,5 +286,62 @@ int sys_pipe(userptr_t pipes_ary, size_t buflen, int *retval) {
   copyout(&reader_fd, pipes_ary, sizeof(int));
   copyout(&writer_fd, pipes_ary + sizeof(int), sizeof(int));
   *retval = 0;
+  return 0;
+}
+
+int sys_select(int nfds, userptr_t readfds, userptr_t writefds,
+               userptr_t exceptfds, userptr_t timeval_struct, int *retval) {
+  struct fd_set reads, writes, exceptions;
+  FD_ZERO(&reads);
+  FD_ZERO(&writes);
+  FD_ZERO(&exceptions);
+  struct timeval timeout;
+  struct timeval *timeout_p;
+  int copy_res;
+  if (nfds <= 0) {
+    *retval = -1;
+    return EINVAL;
+  }
+  if (readfds != (userptr_t)0) {
+    DEBUG(DB_SYSCALL, "Copying in readfds for sys_select\n");
+    copy_res = copyin(readfds, &reads, sizeof(struct fd_set));
+    DEBUGASSERT(copy_res == 0);
+  }
+  if (writefds != (userptr_t)0) {
+    DEBUG(DB_SYSCALL, "Copying in writefds for sys_select\n");
+    copy_res = copyin(writefds, &writes, sizeof(struct fd_set));
+    DEBUGASSERT(copy_res == 0);
+  }
+  if (exceptfds != (userptr_t)0) {
+    DEBUG(DB_SYSCALL, "Copying in exceptfds for sys_select\n");
+    copy_res = copyin(exceptfds, &exceptions, sizeof(struct fd_set));
+    DEBUGASSERT(copy_res == 0);
+  }
+  if (timeval_struct != (userptr_t)0) {
+    copy_res = copyin(timeval_struct, &timeout, sizeof(struct timeval));
+    DEBUGASSERT(copy_res == 0);
+    timeout_p = &timeout;
+  } else {
+    timeout_p = NULL;
+  }
+  int errcode = 0;
+  int num_ready = 0;
+  // NOTE: this call can block
+  int select_res = file_select((unsigned)nfds, &reads, &writes, &exceptions, timeout_p, &errcode, &num_ready);
+  if (select_res != 0) {
+    DEBUG(DB_SYSCALL, "file_select failed: %d (%s)\n", errcode, strerror(errcode));
+    *retval = -1;
+    return errcode;
+  }
+  if (readfds != (userptr_t)0) {
+    copyout(&reads, readfds, sizeof(struct fd_set));
+  }
+  if (writefds != (userptr_t)0) {
+    copyout(&writes, writefds, sizeof(struct fd_set));
+  }
+  if (exceptfds != (userptr_t)0) {
+    copyout(&exceptions, exceptfds, sizeof(struct fd_set));
+  }
+  *retval = num_ready;
   return 0;
 }

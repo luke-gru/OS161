@@ -211,5 +211,6 @@ void thread_wait_for_count(unsigned);
 
 void thread_sleep_n_seconds(int seconds);
 void thread_add_ready_sleepers_to_runqueue(void);
+void thread_wakeup_ready_timeouts(void);
 
 #endif /* _THREAD_H_ */

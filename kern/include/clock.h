@@ -35,6 +35,24 @@
  */
 
 #include <kern/time.h>
+struct thread;
+struct spinlock;
+struct wchan;
+
+struct timeout {
+	bool notified;
+	struct thread *t_wakeup;
+	struct timeval *notify_at;
+	struct wchan *wchan;
+	struct spinlock *wchan_lk;
+};
+
+// double linked list of timeout nodes
+struct timeout_node {
+	struct timeout timeout;
+	struct timeout_node *prev;
+	struct timeout_node *next;
+};
 
 
 /*
@@ -72,6 +90,9 @@ void timespec_add(const struct timespec *t1,
 void timespec_sub(const struct timespec *t1,
 		  const struct timespec *t2,
 		  struct timespec *ret);
+
+void timeval_now(struct timeval *out);
+int timeval_cmp(struct timeval *a, struct timeval *b);
 
 /*
  * clocksleep() suspends execution for the requested number of seconds,

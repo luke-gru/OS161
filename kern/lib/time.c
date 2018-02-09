@@ -67,3 +67,28 @@ timespec_sub(const struct timespec *ts1,
 	r.tv_sec -= ts2->tv_sec;
 	*ret = r;
 }
+
+void timeval_now(struct timeval *out) {
+	struct timespec ts;
+	struct timeval tv;
+	gettime(&ts);
+	TIMESPEC_TO_TIMEVAL(&tv, &ts);
+	*out = tv;
+}
+
+// if a is > b, returns 1. If a == b, returns 0. If b > a, returns -1
+int timeval_cmp(struct timeval *a, struct timeval *b) {
+	if (a->tv_sec > b->tv_sec) {
+		return 1;
+	} else if (a->tv_sec == b->tv_sec) {
+		if (a->tv_usec == b->tv_usec) {
+			return 0;
+		} else if (a->tv_usec > b->tv_usec) {
+			return 1;
+		} else {
+			return -1;
+		}
+	} else {
+		return -1;
+	}
+}

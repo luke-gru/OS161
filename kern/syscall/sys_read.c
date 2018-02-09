@@ -71,6 +71,7 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
         return errcode;
       }
       *retval = count;
+      io_is_ready(curproc->pid, writer->fd, IO_TYPE_WRITE, count);
       return 0;
     } else {
       int errcode = 0;
@@ -82,6 +83,7 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
         return errcode;
       }
       *retval = count;
+      io_is_ready(curproc->pid, writer->fd, IO_TYPE_WRITE, count);
       return 0;
     }
   }
@@ -100,5 +102,6 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
     DEBUG(DB_SYSCALL, "sys_read for fd %d read 0 bytes from file\n", fd);
   }
   *retval = bytes_read;
+  io_is_ready(curproc->pid, fd, IO_TYPE_WRITE, bytes_read);
   return 0;
 }
