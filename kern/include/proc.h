@@ -54,11 +54,13 @@ struct trapframe;
 struct pipe;
 struct timeval;
 struct fd_set;
+struct socket;
 
 #define FPATH_MAX 1024
 
 #define FILEDES_TYPE_REG 1
 #define FILEDES_TYPE_PIPE 2
+#define FILEDES_TYPE_SOCK 3
 #define FD_DEV_NULL -2
 
 #define PIPE_BUF_MAX 4096
@@ -76,6 +78,7 @@ struct filedes {
 	int ftype;
 	struct vnode *node;
 	struct pipe *pipe; // TODO: make it a union with vnode*, they're mutually exclusive
+	struct socket *sock; // TODO: same as above
 	int flags;
 	int32_t offset;
 	// filedes is shared by child processes, and different fd integers

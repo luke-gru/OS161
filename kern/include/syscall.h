@@ -98,6 +98,11 @@ int sys_pipe(userptr_t pipes_ary, size_t buflen, int *retval);
 int sys_select(int nfds, userptr_t readfds, userptr_t writefds,
 					 userptr_t exceptfds, userptr_t timeval_struct, int *retval);
 
+int sys_socket(int af, int type, int proto, int *retval);
+int sys_bind(int sockfd, userptr_t sockaddr_user, socklen_t sockaddr_len, int *retval);
+int sys_listen(int sockfd, int backlog, int *retval);
+int sys_accept(int sockfd, userptr_t sockaddr_peer, userptr_t sockaddr_peer_len, int *retval);
+
 // NOTE: this is used to test paging memory in/out and memory region locking
 // in the kernel!
 int sys_pageout_region(uint32_t startaddr, size_t nbytes, int *retval);

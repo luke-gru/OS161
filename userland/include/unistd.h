@@ -46,6 +46,7 @@
 #include <kern/unistd.h>
 #include <kern/wait.h>
 #include <kern/select.h>
+#include <kern/socket.h>
 
 
 /*
@@ -162,6 +163,12 @@ int sleep(int seconds);
 int fcntl(int filehandle, int cmd, int flag);
 int clone(int (*fn)(void *), void *child_stacktop, size_t stack_size, int flags);
 int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
+
+int socket(int domain, int type, int proto);
+int bind(int sockfd, const struct sockaddr *sockaddr, socklen_t sockaddr_len);
+int listen(int sockfd, int backlog);
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+
 
 int pageout_region(__u32 startaddr, size_t nbytes);
 int lock_region(__u32 startaddr, size_t nbytes);

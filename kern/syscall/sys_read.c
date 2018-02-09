@@ -34,8 +34,8 @@
 #include <kern/errno.h>
 #include <uio.h>
 #include <copyinout.h>
-
 #include <lib.h>
+#include <socket.h>
 
 int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
@@ -45,7 +45,7 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
     return EBADF;
   }
   DEBUGASSERT(count > 0);
-  if (file_des->ftype == FILEDES_TYPE_PIPE) {
+  if (file_des->ftype == FILEDES_TYPE_PIPE) { // TODO: handle non-blocking pipes
     struct pipe *pipe = file_des->pipe;
     if (pipe->is_writer || !pipe->pair) {
       DEBUG(DB_SYSCALL, "Read from pipe failed: is writer or pair vanished!\n");
@@ -91,8 +91,15 @@ int sys_read(int fd, userptr_t buf, size_t count, int *retval) {
   struct iovec iov;
   struct uio myuio;
   uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_READ);
+
+  int bytes_read;
   int errcode = 0;
-  int bytes_read = file_read(file_des, &myuio, &errcode);
+  if (file_des->ftype == FILEDES_TYPE_SOCK) {
+    bytes_read = socket_read(file_des, &myuio, &errcode);
+  } else {
+    bytes_read = file_read(file_des, &myuio, &errcode);
+  }
+
   if (bytes_read < 0) {
     DEBUG(DB_SYSCALL, "sys_read for fd %d failed with error: %d, %s\n", fd, errcode, strerror(errcode));
     *retval = -1;

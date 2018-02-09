@@ -6,6 +6,70 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+static int socket_test(int argc, char **argv) {
+  (void)argc; (void)argv;
+  int fd = socket(AF_INET, SOCK_STREAM, PF_INET);
+  if (fd < 3) {
+    errx(1, "couldn't create socket: %d - %d (%s)", fd, errno, strerror(errno));
+  }
+
+  struct sockaddr_in sockaddr;
+  sockaddr.sa_len = sizeof(struct sockaddr_in);
+  sockaddr.sa_family = AF_INET;
+  strcpy(sockaddr.sa_data, "127.0.0.1:80");
+
+  int bind_res = bind(fd, (const struct sockaddr*)&sockaddr, sizeof(struct sockaddr_in));
+  if (bind_res != 0) {
+    errx(1, "socket bind() failed: %d (%s)", errno, strerror(errno));
+  }
+  int listen_res = listen(fd, 100);
+  if (listen_res != 0) {
+    errx(1, "socket listen() failed: %d (%s)", errno, strerror(errno));
+  }
+
+  struct sockaddr_in connected_addr;
+  connected_addr.sa_len = sizeof(struct sockaddr_in);
+  connected_addr.sa_family = AF_INET;
+  memset(connected_addr.sa_data, 0, sizeof(connected_addr.sa_data));
+  socklen_t connected_addrlen = sizeof(struct sockaddr_in);
+  socklen_t oldlen = connected_addrlen;
+  int connected_fd = accept(fd, (struct sockaddr*)&connected_addr, &connected_addrlen);
+  if (connected_fd < 0) {
+    errx(1, "socket accept() failed: %d (%s)", errno, strerror(errno));
+  }
+  if (connected_addrlen != oldlen) {
+    errx(1, "socket accept() overwrote peer addrlen unnecessarily!");
+  }
+
+  printf("Connected socket (fd: %d) has address '%s'\n", connected_fd, connected_addr.sa_data);
+
+  size_t readlen = 10;
+  char *buf = malloc(readlen);
+  int read_res = read(connected_fd, buf, readlen);
+  if (read_res == -1) {
+    errx(1, "Error reading from socket: %d (%s)", errno, strerror(errno));
+  }
+  buf[readlen-1]='\0';
+  printf("Read %d bytes from socket: '%s'\n", read_res, buf);
+
+  int write_res = write(connected_fd, buf, readlen);
+  if (write_res == -1) {
+    errx(1, "Error writing to socket: %d (%s)", errno, strerror(errno));
+  }
+
+  int close_res = close(connected_fd);
+  if (close_res != 0) {
+    errx(1, "socket close() failed for connected fd: %d (%s)", errno, strerror(errno));
+  }
+
+  close_res = close(fd);
+  if (close_res != 0) {
+    errx(1, "socket close() failed for listening socket: %d (%s)", errno, strerror(errno));
+  }
+  printf("Done, success!\n");
+  return 0;
+}
+
 static int select_test(int argc, char **argv) {
   (void)argc; (void)argv;
   int pipefd[2];
@@ -581,7 +645,9 @@ int main(int argc, char *argv[]) {
     msync_test(argc, argv);
   } else if (strcmp(argv[1], "select") == 0) {
     select_test(argc, argv);
+  } else if (strcmp(argv[1], "socket") == 0) {
+    socket_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6]|msync|select OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-6]|msync|select|socket OPTIONS\n");
   }
 }

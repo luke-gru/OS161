@@ -34,13 +34,12 @@
 #include <kern/errno.h>
 #include <uio.h>
 #include <copyinout.h>
-
 #include <lib.h>
-
 #include <console_lock.h>
 #include <current.h>
 #include <cpu.h>
 #include <spl.h>
+#include <socket.h>
 extern struct spinlock kprintf_spinlock;
 
 // NOTE: non-zero return value is an error
@@ -57,7 +56,7 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
   struct uio myuio;
   int errcode = 0;
 
-  if (file_des->ftype == FILEDES_TYPE_PIPE) {
+  if (file_des->ftype == FILEDES_TYPE_PIPE) { // TODO: handle non-blocking pipes
     struct pipe *writer = file_des->pipe;
     struct pipe *reader = writer->pair;
     if (!writer->is_writer || !reader) {
@@ -104,10 +103,11 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     *count_retval = -1;
     return EBADF;
   }
-  // disable interrupts during writes to avoid race conditions writing to the same file
-  int spl = splhigh();
-  uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
+
+  int spl;
+
   if (is_console) {
+    spl = splhigh();
     if (dolock) {
       DEBUG_CONSOLE_LOCK(fd);
     } else {
@@ -115,8 +115,19 @@ int sys_write(int fd, userptr_t buf, size_t count, int *count_retval) {
     }
   }
 
-  int res = file_write(file_des, &myuio, &errcode); // releases filedes lock
-  splx(spl);
+  uio_uinit(&iov, &myuio, buf, count, file_des->offset, UIO_WRITE);
+  int res;
+  if (file_des->ftype == FILEDES_TYPE_SOCK) {
+    res = socket_write(file_des, &myuio, &errcode);
+    if (lock_do_i_hold(file_des->lk)) lock_release(file_des->lk);
+  } else {
+    res = file_write(file_des, &myuio, &errcode); // releases filedes lock
+  }
+
+  if (is_console) {
+    splx(spl);
+  }
+
   if (res == -1) {
     if (is_console) {
       if (dolock) {

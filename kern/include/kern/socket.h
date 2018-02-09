@@ -75,8 +75,14 @@ struct sockaddr {
    __u8 sa_family;
 };
 
+struct sockaddr_in {
+  __u8 sa_len;
+  __u8 sa_family;
+  char sa_data[112];
+};
+
 #define _SS_SIZE	128
-struct sockaddr_storage {
+struct sockaddr_storage { // 128 bytes total
    __u8 ss_len;
    __u8 ss_family;
    __u8 __ss_pad1;

@@ -108,6 +108,7 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	file_des->ftype = FILEDES_TYPE_REG;
 	file_des->node = node;
 	file_des->pipe = NULL;
+	file_des->sock = NULL;
 	file_des->flags = flags;
 	file_des->offset = 0;
 	file_des->refcount = 1;
@@ -156,6 +157,9 @@ static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 			file_des->pipe->is_closed = true; // wait until pipe pair is closed to destroy the pair together
 			return;
 		}
+	} else if (file_des->ftype == FILEDES_TYPE_SOCK) {
+		// TODO:
+		return;
 	}
 	kfree(file_des->pathname);
 	vfs_close(file_des->node); // check success?
@@ -383,6 +387,7 @@ bool filedes_is_writable(struct filedes *file_des) {
 }
 bool filedes_is_device(struct filedes *file_des) {
 	KASSERT(file_des);
+	if (!file_des->node) { return false; }
 	return vnode_is_device(file_des->node);
 }
 bool filedes_is_seekable(struct filedes *file_des) {
@@ -452,12 +457,12 @@ bool file_is_open(int fd) {
 
 bool file_is_readable(char *path) {
 	(void)path;
-	return true; // TODO
+	return true; // TODO: implement after support for access() syscall
 }
 
 bool file_is_writable(char *path) {
 	(void)path;
-	return true; // TODO
+	return true; // TODO: implement after support for access() syscall
 }
 
 // Non-zero return value is error
@@ -549,6 +554,7 @@ int file_read(struct filedes *file_des, struct uio *io, int *errcode) {
 	if (file_des == devnull) {
 		return 0;
 	}
+	DEBUGASSERT(file_des->node);
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);
 	// NOTE: this must be before VOP_READ, as it's modified by the operation
@@ -578,6 +584,7 @@ int file_write(struct filedes *file_des, struct uio *io, int *errcode) {
 	if (file_des == devnull) {
 		return io->uio_iov->iov_len;
 	}
+	DEBUGASSERT(file_des->node);
   int res = 0;
 	if (!lock_do_i_hold(file_des->lk))
 		lock_acquire(file_des->lk);

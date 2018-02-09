@@ -362,7 +362,8 @@ optfile myvm        vm/vm.c
 #
 
 defoption  net
-#optfile   net    net/net.c
+optfile   net    net/socket.c
+optfile   net    syscall/net_syscalls.c
 
 #
 # VFS layer

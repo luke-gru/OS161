@@ -200,6 +200,18 @@ syscall(struct trapframe *tf)
 			err = sys_select((int)tf->tf_a0, (userptr_t)tf->tf_a1, (userptr_t)tf->tf_a2, (userptr_t)tf->tf_a3,
 				(userptr_t)((struct timeval*)tf->tf_sp+8), &retval);
 			break;
+		case SYS_socket:
+			err = sys_socket((int)tf->tf_a0, (int)tf->tf_a1, (int)tf->tf_a2, &retval);
+			break;
+		case SYS_bind:
+			err = sys_bind((int)tf->tf_a0, (userptr_t)tf->tf_a1, (socklen_t)tf->tf_a2, &retval);
+			break;
+		case SYS_listen:
+			err = sys_listen((int)tf->tf_a0, (int)tf->tf_a1, &retval);
+			break;
+		case SYS_accept:
+			err = sys_accept((int)tf->tf_a0, (userptr_t)tf->tf_a1, (userptr_t)tf->tf_a2, &retval);
+			break;
 		// system calls for testing Kernel
 		case SYS_pageout_region:
 			err = sys_pageout_region((uint32_t)tf->tf_a0, (size_t)tf->tf_a1, &retval);

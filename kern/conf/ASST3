@@ -24,7 +24,7 @@ device con0 at lser*		# Abstract console on serial port
 device rtclock0 at ltimer*	# Abstract realtime clock
 device random0 at lrandom*	# Abstract randomness device
 
-#options net			# Network stack (not supported)
+options net			# Network stack (not supported)
 options semfs			# Semaphores for userland
 
 options sfs			# Always use the file system
