@@ -87,6 +87,17 @@ static int flock1_test(int argc, char **argv) {
     errx(1, "trying to take shared lock after exclusive lock should fail thru new FD for same file in same process (EINVAL)");
   }
 
+  // closing fd should release its lock
+  int close_res = close(fd);
+  if (close_res != 0) {
+    errx(1, "error closing fd2");
+  }
+
+  lock_res = flock(fd2, LOCK_SH);
+  if (lock_res != 0) {
+    errx(1, "We closed fd1, which should have released its exclusive lock and allowed us to take a shared lock");
+  }
+
   return 0;
 }
 
