@@ -62,6 +62,8 @@ struct socket;
 #define FILEDES_TYPE_PIPE 2
 #define FILEDES_TYPE_SOCK 3
 #define FD_DEV_NULL -2
+#define FD_LOCK_SH LOCK_SH
+#define FD_LOCK_EX LOCK_EX
 
 #define PIPE_BUF_MAX 4096
 
@@ -75,18 +77,20 @@ enum io_ready_type {
 // Open file descriptor
 struct filedes {
 	char *pathname;
-	int ftype;
+	int ftype; // "file" type
 	struct vnode *node;
 	struct pipe *pipe; // TODO: make it a union with vnode*, they're mutually exclusive
 	struct socket *sock; // TODO: same as above
-	int flags;
-	int32_t offset;
+	int flags; // FL_GET and FD_GET flags (see fcntl), including open(2) flags like O_RDWR
+	int fi_flags; // internal flags, including whether or not the file is locked with flock, etc. Not exposed to userspace.
+	int32_t offset; // current offset into file
 	// filedes is shared by child processes, and different fd integers
 	// (descriptors) in the same process can refer to the same description
 	// (filedes). See dup and dup2 for more info.
 	unsigned int refcount;
 	int latest_fd;
-	struct lock *lk;
+	struct flock_node *flock_nodep; // pointer to this file description's flock record, if one exists
+	struct lock *lk; // internal lock for file
 };
 
 // reader/writer pipes
@@ -101,6 +105,17 @@ struct pipe {
 	unsigned bufpos; // for writers, amount of bytes in buffer ready to be read
 	struct wchan *wchan; // only reader posesses a wchan
 	struct spinlock wchan_lk; // only reader posseses a wchan_lk
+};
+
+// doubly-linked list of file locks, along with their vnodes and filedes
+struct flock_node {
+	struct vnode *fln_vnode;
+	struct filedes *fln_fdp;
+	struct flock fln_flock;
+	struct wchan *fln_wchan;
+	struct spinlock fln_wchan_lk;
+	struct  flock_node *fln_next;
+	struct  flock_node *fln_prev;
 };
 
 const char *special_filedes_name(int fd);
@@ -125,6 +140,7 @@ bool filedes_is_device(struct filedes *file_des);
 bool filedes_is_readable(struct filedes *file_des);
 bool filedes_is_seekable(struct filedes *file_des);
 bool filedes_is_console(struct filedes *file_des);
+bool filedes_is_lockable(struct filedes *file_des);
 
 // NOTE: takes a fd int because a file can be open more than once in a process, returning different file descriptors to the underlying file
 bool file_is_open(int fd);
@@ -138,6 +154,10 @@ int file_open(char *path, int openflags, mode_t mode, int *errcode);
 int file_write(struct filedes *file_des, struct uio *io, int *errcode);
 int file_read(struct filedes *file_des, struct uio *io, int *errcode);
 int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode);
+
+int file_flock(struct filedes *file_des, int op);
+int file_try_lock(struct vnode *vnode, struct filedes *fd_p, struct flock *flock, int flags); // NOTE: can block!
+int file_rm_lock(struct vnode *vnode, struct filedes *fd_p, struct flock *flock, int flags, bool forceremove);
 
 /*
  * Process structure.

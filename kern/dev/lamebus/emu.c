@@ -52,6 +52,7 @@
 #include <lamebus/emu.h>
 #include <platform/bus.h>
 #include <vfs.h>
+#include <proc.h>
 #include <emufs.h>
 #include "autoconf.h"
 
@@ -728,6 +729,20 @@ emufs_truncate(struct vnode *v, off_t len)
 	return emu_trunc(ev->ev_emu, ev->ev_handle, len);
 }
 
+static int emufs_advlock(struct vnode *v, struct filedes *file_des, int op, struct flock *flock) {
+	int flags = 0;
+	if (op & LOCK_NB) {
+		flags |= LOCK_NB;
+	}
+	if (op == LOCK_UN) {
+		return file_rm_lock(v, file_des, flock, flags, false);
+	} else if ((op & LOCK_SH) || (op & LOCK_EX)) {
+		return file_try_lock(v, file_des, flock, flags);
+	} else {
+		return EINVAL;
+	}
+}
+
 /*
  * VOP_CREAT
  */
@@ -1090,6 +1105,7 @@ static const struct vnode_ops emufs_fileops = {
 	.vop_mmap = emufs_mmap,
 	.vop_truncate = emufs_truncate,
 	.vop_namefile = emufs_uio_op_notdir,
+	.vop_advlock = emufs_advlock,
 
 	.vop_creat = emufs_creat_notdir,
 	.vop_symlink = emufs_symlink_notdir,

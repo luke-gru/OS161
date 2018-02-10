@@ -1382,8 +1382,21 @@ wchan_sleep(struct wchan *wc, struct spinlock *lk)
 
 	/* must not hold other spinlocks */
 	KASSERT(curcpu->c_spinlocks == 1);
-	thread_switch(S_SLEEP, wc, lk);
+	thread_switch(S_SLEEP, wc, lk); // releases spinlock
 	spinlock_acquire(lk);
+}
+
+void wchan_sleep_no_reacquire_on_wake(struct wchan *wc, struct spinlock *lk)
+{
+	/* may not sleep in an interrupt handler */
+	KASSERT(!curthread->t_in_interrupt);
+
+	/* must hold the spinlock */
+	KASSERT(spinlock_do_i_hold(lk));
+
+	/* must not hold other spinlocks */
+	KASSERT(curcpu->c_spinlocks == 1);
+	thread_switch(S_SLEEP, wc, lk); // releases spinlock
 }
 
 void register_wchan_timeout(struct thread *t, struct wchan *wchan, struct spinlock *lk, struct timeval *tv) {

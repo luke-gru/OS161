@@ -112,7 +112,7 @@ extern uint32_t dbflags; // to be set by debugger, normally
  *
  * DEBUG is a varargs macro. These were added to the language in C99.
  */
-#define DEBUG(d, ...) ((dbflags & (d)) ? kprintf(__VA_ARGS__) : 0)
+#define DEBUG(d, ...) ((dbflags & (d)) ? kprintf("[DEBUG] " __VA_ARGS__) : 0)
 
 /*
  * Random number generator, using the random device.

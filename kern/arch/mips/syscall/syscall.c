@@ -141,6 +141,9 @@ syscall(struct trapframe *tf)
 		case SYS_dup2:
 			err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
 			break;
+		case SYS_flock:
+			err = sys_flock((int)tf->tf_a0, (int)tf->tf_a1, &retval);
+			break;
 		case SYS_mkdir:
 			err = sys_mkdir((userptr_t)tf->tf_a0, (mode_t)tf->tf_a1, &retval);
 			break;

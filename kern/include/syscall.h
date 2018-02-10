@@ -76,6 +76,8 @@ int sys_getdirentry(int fd, userptr_t fname_buf, size_t buf_count, int *retval);
 int sys_dup(int fd, int *retval);
 int sys_dup2(int oldfd, int newfd, int *retval);
 
+int sys_flock(int fd, int op, int *retval);
+
 int sys_fork(struct trapframe *tf, int *retval);
 int sys_waitpid(pid_t child_pid, userptr_t status, int options, int *retval);
 void sys_exit(int status);

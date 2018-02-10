@@ -98,5 +98,4 @@ struct flock {
 	pid_t l_pid;            /* process that holds the lock */
 };
 
-
 #endif /* _KERN_FCNTL_H_ */

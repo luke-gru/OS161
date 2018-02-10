@@ -4,9 +4,11 @@
 #include <kern/socket.h>
 #include <types.h>
 
-#define SOCK_STATE_NONE 0
-#define SOCK_STATE_LISTEN 1
-#define SOCK_STATE_CONNECTED 2
+#define SS_DISCONNECTED 0
+#define SS_LISTENING 1
+#define SS_CONNECTED 2
+#define SS_CONNECTING 3
+#define SS_DISCONNECTING 4
 
 typedef struct socket socket_conn_t;
 
@@ -14,14 +16,15 @@ struct uio;
 struct filedes;
 
 struct socket {
-  int s_af; // address family, ex: AF_INET
-  int s_type; // ex: SOCK_STREAM
-  int s_protof; // protocol family, ex: PF_INET
-  const struct sockaddr *s_addr;
-  struct socket *peer; // for connected sockets
-  int s_state;
-  socket_conn_t **s_conn_buf;
-  size_t s_conn_bufsz;
+  int so_af; // address family, ex: AF_INET
+  int so_type; // ex: SOCK_STREAM
+  int so_proto; // protocol family, ex: PF_INET
+  int so_options;
+  const struct sockaddr *so_addr;
+  struct socket *so_peer; // for connected sockets
+  int so_state;
+  socket_conn_t **so_conn_buf;
+  size_t so_conn_bufsz;
 };
 
 struct socket *make_socket(int af, int type, int proto, int *errcode);

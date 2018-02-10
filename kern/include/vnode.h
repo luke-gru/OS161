@@ -33,6 +33,8 @@
 #include <spinlock.h>
 struct uio;
 struct stat;
+struct flock;
+struct filedes;
 
 
 /*
@@ -183,7 +185,6 @@ struct vnode_ops {
 	int (*vop_eachopen)(struct vnode *object, int flags_from_open);
 	int (*vop_reclaim)(struct vnode *vnode);
 
-
 	int (*vop_read)(struct vnode *file, struct uio *uio);
 	int (*vop_readlink)(struct vnode *link, struct uio *uio);
 	int (*vop_getdirentry)(struct vnode *dir, struct uio *uio);
@@ -196,6 +197,7 @@ struct vnode_ops {
 	int (*vop_mmap)(struct vnode *file /* add stuff */);
 	int (*vop_truncate)(struct vnode *file, off_t len);
 	int (*vop_namefile)(struct vnode *file, struct uio *uio);
+	int (*vop_advlock)(struct vnode *file, struct filedes *file_des, int op, struct flock *flockp);
 
 
 	int (*vop_creat)(struct vnode *dir,
@@ -221,6 +223,7 @@ struct vnode_ops {
 	int (*vop_lookparent)(struct vnode *dir,
 			      char *pathname, struct vnode **result,
 			      char *buf, size_t len);
+
 };
 
 #define __VOP(vn, sym) (vnode_check(vn, #sym), (vn)->vn_ops->vop_##sym)
@@ -233,7 +236,7 @@ struct vnode_ops {
 #define VOP_GETDIRENTRY(vn, uio)        (__VOP(vn,getdirentry)(vn, uio))
 #define VOP_WRITE(vn, uio)              (__VOP(vn, write)(vn, uio))
 #define VOP_IOCTL(vn, code, buf)        (__VOP(vn, ioctl)(vn,code,buf))
-#define VOP_STAT(vn, ptr) 	        (__VOP(vn, stat)(vn, ptr))
+#define VOP_STAT(vn, ptr) 	        	  (__VOP(vn, stat)(vn, ptr))
 #define VOP_GETTYPE(vn, result)         (__VOP(vn, gettype)(vn, result))
 #define VOP_ISSEEKABLE(vn)              (__VOP(vn, isseekable)(vn))
 #define VOP_FSYNC(vn)                   (__VOP(vn, fsync)(vn))
@@ -247,7 +250,9 @@ struct vnode_ops {
 #define VOP_LINK(vn, name, vn2)         (__VOP(vn, link)(vn, name, vn2))
 #define VOP_REMOVE(vn, name)            (__VOP(vn, remove)(vn, name))
 #define VOP_RMDIR(vn, name)             (__VOP(vn, rmdir)(vn, name))
-#define VOP_RENAME(vn1,name1,vn2,name2)(__VOP(vn1,rename)(vn1,name1,vn2,name2))
+#define VOP_RENAME(vn1,name1,vn2,name2) (__VOP(vn1,rename)(vn1,name1,vn2,name2))
+
+#define VOP_ADVLOCK(vn,fd_p,op,flock_p)  	  (__VOP(vn, advlock)(vn,fd_p,op,flock_p))
 
 #define VOP_LOOKUP(vn, name, res)       (__VOP(vn, lookup)(vn, name, res))
 #define VOP_LOOKPARENT(vn,nm,res,bf,ln) (__VOP(vn,lookparent)(vn,nm,res,bf,ln))

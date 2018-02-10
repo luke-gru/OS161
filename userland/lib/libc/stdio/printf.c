@@ -53,6 +53,16 @@ __printf_send(void *mydata, const char *data, size_t len)
 	*err = (ret == -1) ? errno : 0;
 }
 
+static
+void __fprintf_send(void *mydata, const char *data, size_t len) {
+	ssize_t ret;
+	// int fd = *(int*)mydata;
+	int *err = (int*)mydata;
+
+	ret = write(STDERR_FILENO, data, len);
+	*err = (ret == -1) ? errno : 0;
+}
+
 /* printf: hand off to vprintf */
 int
 printf(const char *fmt, ...)
@@ -62,6 +72,31 @@ printf(const char *fmt, ...)
 
 	va_start(ap, fmt);
 	chars = vprintf(fmt, ap);
+	va_end(ap);
+	return chars;
+}
+
+/* vprintf: call __vprintf to do the work. */
+static
+int
+vfprintf(int stream, const char *fmt, va_list ap)
+{
+	(void)stream;
+	int chars, err;
+	chars = __vprintf(__fprintf_send, &err, fmt, ap);
+	if (err) {
+		errno = err;
+		return -1;
+	}
+	return chars;
+}
+
+int fprintf(int stream, const char *fmt, ...) {
+	int chars;
+	va_list ap;
+
+	va_start(ap, fmt);
+	chars = vfprintf(stream, fmt, ap);
 	va_end(ap);
 	return chars;
 }

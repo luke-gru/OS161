@@ -69,7 +69,7 @@ int sys_listen(int sockfd, int backlog, int *retval) {
     return EBADF;
   }
   sock = file_des->sock;
-  if (!sock->s_addr) { // call bind() first
+  if (!sock->so_addr) { // call bind() first
     *retval = -1;
     return EADDRINUSE;
   }
@@ -82,9 +82,9 @@ int sys_listen(int sockfd, int backlog, int *retval) {
     *retval = -1;
     return ENOMEM;
   }
-  sock->s_state = SOCK_STATE_LISTEN;
-  sock->s_conn_buf = conn_buf;
-  sock->s_conn_bufsz = (size_t)backlog;
+  sock->so_state = SS_LISTENING;
+  sock->so_conn_buf = conn_buf;
+  sock->so_conn_bufsz = (size_t)backlog;
   *retval = 0;
   return 0;
 }
@@ -101,7 +101,7 @@ int sys_accept(int sockfd, userptr_t sockaddr_peer, userptr_t sockaddr_peer_len,
     return EBADF;
   }
   sock = file_des->sock;
-  if (sock->s_state != SOCK_STATE_LISTEN) {
+  if (sock->so_state != SS_LISTENING) {
     *retval = -1;
     return EINVAL;
   }

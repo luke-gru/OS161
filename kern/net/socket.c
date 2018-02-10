@@ -35,11 +35,11 @@ struct socket *make_socket(int af, int type, int proto, int *errcode) {
   struct socket *sock = kmalloc(sizeof(*sock));
   bzero(sock, sizeof(struct socket));
   KASSERT(sock);
-  sock->s_af = af;
-  sock->s_type = type;
-  sock->s_protof = proto;
-  sock->s_addr = NULL;
-  sock->s_state = SOCK_STATE_NONE;
+  sock->so_af = af;
+  sock->so_type = type;
+  sock->so_proto = proto;
+  sock->so_addr = NULL;
+  sock->so_state = SS_DISCONNECTED;
   return sock;
 }
 
@@ -83,7 +83,7 @@ static void bind_addr(const struct sockaddr *addr) {
 int bind_socket(struct socket *sock, const struct sockaddr *addr, socklen_t addrlen, int *errcode) {
   KASSERT(sock);
   KASSERT(addr);
-  if (sock->s_addr != NULL || sock->s_af != addr->sa_family) {
+  if (sock->so_addr != NULL || sock->so_af != addr->sa_family) {
     *errcode = EINVAL;
     return -1;
   }
@@ -100,7 +100,7 @@ int bind_socket(struct socket *sock, const struct sockaddr *addr, socklen_t addr
     return -1;
   }
   bind_addr(addr);
-  sock->s_addr = addr;
+  sock->so_addr = addr;
   return 0;
 }
 
@@ -112,21 +112,21 @@ int socket_accept_new_conn(struct socket *listener, struct sockaddr *addr_out, s
   addr_out->sa_len = sizeof(struct sockaddr_in);
   // simulate a connection
   strcpy(((struct sockaddr_in*)(addr_out))->sa_data, "peeraddr test");
-  struct filedes *new_sock_des = open_socket_filedes(listener->s_af, listener->s_type, listener->s_protof, errcode);
+  struct filedes *new_sock_des = open_socket_filedes(listener->so_af, listener->so_type, listener->so_proto, errcode);
   if (!new_sock_des) {
     return -1; // errcode set above
   }
   struct socket *new_sock = new_sock_des->sock;
   DEBUGASSERT(new_sock);
-  new_sock->s_addr = (const struct sockaddr*)addr_out;
-  new_sock->s_state = SOCK_STATE_CONNECTED;
-  new_sock->peer = listener;
+  new_sock->so_addr = (const struct sockaddr*)addr_out;
+  new_sock->so_state = SS_CONNECTED;
+  new_sock->so_peer = listener;
   return new_sock_des->latest_fd;
 }
 
 int socket_read(struct filedes *file_des, struct uio *myuio, int *errcode) {
   struct socket *sock = file_des->sock;
-  if (sock->s_state != SOCK_STATE_CONNECTED) {
+  if (sock->so_state != SS_CONNECTED) {
     *errcode = ENOTCONN;
     return -1;
   }
@@ -141,7 +141,7 @@ int socket_read(struct filedes *file_des, struct uio *myuio, int *errcode) {
 
 int socket_write(struct filedes *file_des, struct uio *myuio, int *errcode) {
   struct socket *sock = file_des->sock;
-  if (sock->s_state != SOCK_STATE_CONNECTED) {
+  if (sock->so_state != SS_CONNECTED) {
     *errcode = ENOTCONN;
     return -1;
   }

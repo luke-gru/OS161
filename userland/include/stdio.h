@@ -40,6 +40,9 @@
 
 /* Constant returned by a bunch of stdio functions on error */
 #define EOF (-1)
+#define stderr 2
+#define stdout 1
+#define stdin 0
 
 /*
  * The actual guts of printf
@@ -52,6 +55,7 @@ int __vprintf(void (*sendfunc)(void *clientdata, const char *, size_t len),
 
 /* Printf calls for user programs */
 int printf(const char *fmt, ...);
+int fprintf(int stream, const char *fmt, ...); // NOTE: should be FILE *stream, but whatever
 int vprintf(const char *fmt, __va_list ap);
 int snprintf(char *buf, size_t len, const char *fmt, ...);
 int vsnprintf(char *buf, size_t len, const char *fmt, __va_list ap);

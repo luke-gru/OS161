@@ -6,6 +6,90 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+// multi-process flock tests
+static int flock2_test(int argc, char **argv) {
+  if (argc != 3) {
+    errx(1, "Usage: needs a filename to lock");
+  }
+  char *fname = argv[2];
+  int fd = open(fname, O_RDWR, 0644);
+  if (fd < 3) {
+    errx(1, "error opening file");
+  }
+  int lock_res = flock(fd, LOCK_EX);
+  if (lock_res != 0) {
+    errx(1, "exclusive lock failed");
+  }
+
+  pid_t cpid = fork();
+  if (cpid == 0) { // in child
+    int fd2 = open(fname, O_RDWR, 0644);
+    if (fd2 < 3) {
+      errx(1, "opening file (fd2) failed");
+    }
+    fprintf(stderr, "Child should block now, waiting for exclusive lock thru new FD...\n");
+    int res = flock(fd2, LOCK_EX);
+    if (res != 0) {
+      errx(1, "child should block trying to get exclusive lock on already locked file thru fd2");
+    }
+    fprintf(stderr, "Child woke up with lock\n");
+    _exit(0);
+  } else { // in parent
+    int exitstatus = 0;
+    sleep(5);
+    fprintf(stderr, "Parent unlocking file, should unblock child\n");
+    lock_res = flock(fd, LOCK_UN);
+    if (lock_res != 0) {
+      errx(1, "Parent should have successfully unlocked file, unblocking the child");
+    }
+    waitpid(cpid, &exitstatus, 0);
+    exit(exitstatus);
+  }
+  return 0;
+}
+
+// single-process flock tests
+static int flock1_test(int argc, char **argv) {
+  if (argc != 3) {
+    errx(1, "Usage: needs a filename to lock");
+  }
+  char *fname = argv[2];
+  int fd = open(fname, O_RDWR, 0644);
+  if (fd < 3) {
+    errx(1, "error opening file");
+  }
+  int lock_res = flock(fd, LOCK_EX);
+  if (lock_res != 0) {
+    errx(1, "exclusive lock failed");
+  }
+
+  lock_res = flock(fd, LOCK_EX);
+  if (lock_res != -1) {
+    errx(1, "2nd exclusive lock from same process should fail on file, it makes no sense!");
+  }
+
+  lock_res = flock(fd, LOCK_SH);
+  if (lock_res != 0) {
+    errx(1, "downgrade to shared lock through same fd in same process should work");
+  }
+
+  lock_res = flock(fd, LOCK_EX);
+  if (lock_res != 0) {
+    errx(1, "upgrade to exclusive lock through same fd in same process should work");
+  }
+
+  int fd2 = open(fname, O_RDWR, 0644);
+  if (fd2 < 3) {
+    errx(1, "error opening file again");
+  }
+  lock_res = flock(fd2, LOCK_SH);
+  if (lock_res != -1) {
+    errx(1, "trying to take shared lock after exclusive lock should fail thru new FD for same file in same process (EINVAL)");
+  }
+
+  return 0;
+}
+
 static int socket_test(int argc, char **argv) {
   (void)argc; (void)argv;
   int fd = socket(AF_INET, SOCK_STREAM, PF_INET);
@@ -766,7 +850,11 @@ int main(int argc, char *argv[]) {
     select_test(argc, argv);
   } else if (strcmp(argv[1], "socket") == 0) {
     socket_test(argc, argv);
+  } else if (strcmp(argv[1], "flock1") == 0) {
+    flock1_test(argc, argv);
+  } else if (strcmp(argv[1], "flock2") == 0) {
+    flock2_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket|flock1 OPTIONS\n");
   }
 }

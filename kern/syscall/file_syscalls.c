@@ -228,6 +228,23 @@ int sys_dup2(int oldfd, int newfd, int *retval) {
   return 0;
 }
 
+int sys_flock(int fd, int op, int *retval) {
+  struct filedes *file_des = filetable_get(curproc, fd);
+  if (!file_des) {
+    DEBUG(DB_SYSCALL, "Error in sys_flock: file not open\n");
+    *retval = -1;
+    return EBADF;
+  }
+  int lock_res = file_flock(file_des, op);
+  if (lock_res != 0) {
+    *retval = -1;
+    DEBUG(DB_SYSCALL, "Error in sys_flock (file_flock): %d (%s)\n", lock_res, strerror(lock_res));
+    return lock_res;
+  }
+  *retval = 0;
+  return 0;
+}
+
 int sys_mkdir(userptr_t pathname, mode_t mode, int *retval) {
   char path[PATH_MAX];
   copyinstr(pathname, (void*)&path, sizeof(path), NULL);

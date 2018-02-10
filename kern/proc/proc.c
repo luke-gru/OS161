@@ -75,6 +75,10 @@ static struct io_pollset *io_listeners[FILE_TABLE_LIMIT];
 extern struct wchan *sel_wchan;
 extern struct spinlock sel_wchan_lk;
 
+struct flock_node *file_locks;
+static struct flock_node *flocklist_virt_head;
+static struct flock_node *flocklist_virt_tail;
+
 const char *special_filedes_name(int i) {
 	switch (i) {
 		case 0:
@@ -112,6 +116,7 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	file_des->flags = flags;
 	file_des->offset = 0;
 	file_des->refcount = 1;
+	file_des->flock_nodep = NULL;
 	file_des->lk = lock_create("file lock");
 	file_des->latest_fd = -1;
 	int fd = filetable_put(p, file_des, table_idx);
@@ -160,6 +165,10 @@ static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	} else if (file_des->ftype == FILEDES_TYPE_SOCK) {
 		// TODO:
 		return;
+	}
+	if (file_des->flock_nodep) {
+		file_rm_lock(file_des->node, file_des, &file_des->flock_nodep->fln_flock, 0, true);
+		file_des->flock_nodep = NULL;
 	}
 	kfree(file_des->pathname);
 	vfs_close(file_des->node); // check success?
@@ -399,6 +408,15 @@ bool filedes_is_seekable(struct filedes *file_des) {
 bool filedes_is_console(struct filedes *file_des) {
 	if (file_des == devnull) return false;
 	return filedes_is_device(file_des);
+}
+bool filedes_is_lockable(struct filedes *file_des) {
+	if (file_des == devnull || !file_des->node) {
+		return false;
+	}
+	if (filedes_is_device(file_des)) {
+		return false;
+	}
+	return file_des->ftype == FILEDES_TYPE_REG;
 }
 
 off_t filedes_size(struct filedes *file_des, int *errcode) {
@@ -659,6 +677,275 @@ int file_seek(struct filedes *file_des, int32_t offset, int whence, int *errcode
 	}
 	DEBUGASSERT(file_des->offset >= 0);
 	file_des->offset = new_offset;
+	return 0;
+}
+
+int file_flock(struct filedes *file_des, int op) {
+	KASSERT(file_des);
+	if (!filedes_is_lockable(file_des)) {
+		return EINVAL;
+	}
+	struct flock flock;
+	bzero(&flock, sizeof(struct flock));
+	flock.l_start = 0;
+	flock.l_whence = SEEK_SET;
+	if (op != LOCK_UN) {
+		flock.l_type = (op & LOCK_SH) ? F_RDLCK : F_WRLCK;
+	}
+	flock.l_pid = curproc->pid;
+	flock.l_len = 0; // represents whole file
+	int lock_res = VOP_ADVLOCK(file_des->node, file_des, op, &flock);
+	if (lock_res != 0) {
+		DEBUGASSERT(lock_res > 0); // should return an errno-compatible error
+		return lock_res; // error
+	}
+	if (op == LOCK_UN) {
+		file_des->fi_flags &= ~FD_LOCK_EX;
+		file_des->fi_flags &= ~FD_LOCK_SH;
+	} else if (op & LOCK_EX) {
+		file_des->fi_flags |=  FD_LOCK_EX;
+		file_des->fi_flags &= ~FD_LOCK_SH;
+	} else if (op & LOCK_SH) {
+		file_des->fi_flags |=  FD_LOCK_SH;
+		file_des->fi_flags &= ~FD_LOCK_EX;
+	} else {
+		KASSERT(0); // unreachable, VOP_ADVLOCK should error out if op is invalid
+	}
+	return 0;
+}
+
+static struct flock_node *flocklist_head() {
+	return flocklist_virt_head;
+}
+
+static struct flock_node *flocklist_tail() {
+	return flocklist_virt_tail;
+}
+
+static struct flock_node *first_flock_for_file(struct vnode *vnode) {
+	KASSERT(vnode);
+	struct flock_node *fln = flocklist_head()->fln_next;
+	while (fln && fln != flocklist_virt_tail) {
+		if (fln->fln_vnode == vnode) return fln;
+		fln = fln->fln_next;
+	}
+	return NULL;
+}
+
+static struct flock_node *first_flock_for_file_not_held_by_me(struct vnode *vnode) {
+	KASSERT(vnode);
+	struct flock_node *fln = flocklist_head()->fln_next;
+	while (fln && fln != flocklist_virt_tail) {
+		if (fln->fln_vnode == vnode && fln->fln_flock.l_pid != curproc->pid) return fln;
+		fln = fln->fln_next;
+	}
+	return NULL;
+}
+
+static bool is_only_flock_for_file(struct flock_node *fln, struct vnode *vnode) {
+	struct flock_node *fln_cur = flocklist_head()->fln_next;
+	DEBUGASSERT(fln_cur != NULL);
+	while (fln_cur && fln_cur != flocklist_virt_tail) {
+		if (fln_cur != fln && fln_cur->fln_vnode == vnode) return false;
+		fln_cur = fln_cur->fln_next;
+	}
+	return true;
+}
+
+static int add_new_flock(struct vnode *vnode, struct flock *flock, struct filedes *fdes) {
+	struct flock_node *fln = kmalloc(sizeof(*fln));
+	KASSERT(fln);
+	bzero(fln, sizeof(*fln));
+	fln->fln_flock = *flock;
+	fln->fln_vnode = vnode;
+	fln->fln_fdp = fdes;
+	spinlock_init(&fln->fln_wchan_lk);
+	fln->fln_wchan = wchan_create("flock");
+	fln->fln_next = NULL; fln->fln_prev = NULL;
+	VOP_INCREF(vnode);
+	struct flock_node *tail_virt, *head_virt, *tail_real;
+	tail_virt = flocklist_tail();
+	head_virt = flocklist_head();
+	tail_real = tail_virt->fln_prev == head_virt ? NULL : tail_virt->fln_prev;
+
+	if (!tail_real) { // first real entry
+		fln->fln_prev = head_virt;
+		fln->fln_next = tail_virt;
+		tail_virt->fln_prev = fln;
+		head_virt->fln_next = fln;
+	} else {
+		KASSERT(tail_real->fln_next == tail_virt);
+		tail_real->fln_next = fln;
+		fln->fln_prev = tail_real;
+		fln->fln_next = tail_virt;
+		tail_virt->fln_prev = fln;
+	}
+	fdes->flock_nodep = fln;
+	return 0;
+}
+
+/*
+	Flock semantics:
+
+	Taking exclusive lock for file thru fd X:
+	  1) No locks exists for file, create it
+	  2) Shared lock exists for file:
+	       * if it's for same filedes and there aren't any other (shared) locks for the file, upgrade it to exclusive
+	       * otherwise, block until all shared locks are unlocked and try again
+	  3) Exclusive lock exists for file:
+	       * if it's for same filedes, return an error if it's held by current process. If not, block until it's removed and try again.
+	       * if it's for different filedes, block until exclusive lock is unlocked and try again
+
+	Taking shared lock for file thru fd X:
+	  1) No locks exist for file, create it
+	  2) Shared lock exists for file, create it
+	  3) Exclusive lock exists for file:
+	      * if it's for same filedes, downgrade it to shared and notify waiters
+	      * if it's for diff filedes, block then retry ONLY if current process doesn't hold it
+	      * otherwise, return error
+
+	Unlocking a lock for file thru fd X:
+	  1) If last shared lock, notify waiters
+	  2) If exclusive lock, notify waiters
+*/
+int file_try_lock(struct vnode *vnode, struct filedes *fd_p, struct flock *flock, int flags) {
+	struct flock_node *fln, *fln_samefile;
+	bool taking_exlock = flock->l_type == F_WRLCK;
+	bool taking_shlock = flock->l_type == F_RDLCK;
+
+retry_lock: {
+
+	fln = flocklist_head()->fln_next;
+
+	if (fln == NULL) { // first active lock ever
+		DEBUG(DB_SYSCALL, "Creating first active flock.\n");
+		return add_new_flock(vnode, flock, fd_p);
+	}
+
+	fln_samefile = first_flock_for_file(vnode);
+	if (!fln_samefile) {
+		DEBUG(DB_SYSCALL, "Creating first flock for file.\n");
+		return add_new_flock(vnode, flock, fd_p);
+	}
+	bool lock_is_shlock = fln_samefile->fln_flock.l_type == F_RDLCK;
+	bool lock_is_exlock = !lock_is_shlock;
+	bool lock_is_for_same_fdes = fln_samefile->fln_fdp == fd_p;
+	bool lock_held_by_me = fln_samefile->fln_flock.l_pid == curproc->pid;
+
+	if (taking_exlock) {
+		if (lock_is_shlock) {
+			if (lock_is_for_same_fdes && is_only_flock_for_file(fln_samefile, vnode)) {
+				// safe to upgrade to exclusive, curproc takes ownership
+				DEBUG(DB_SYSCALL, "Upgrading SH lock to EX lock.\n");
+				fln_samefile->fln_flock = *flock;
+				return 0;
+			} else {
+				struct flock_node *fln_samefile_held_by_other_proc = first_flock_for_file_not_held_by_me(vnode);
+				if (fln_samefile_held_by_other_proc) {
+					DEBUG(DB_SYSCALL, "Tried to take EX lock, blocking due SH lock(s)\n");
+					// block until all shared locks are gone for file (actually just blocks until this one is released, then tries again)
+					spinlock_acquire(&fln_samefile_held_by_other_proc->fln_wchan_lk);
+					wchan_sleep_no_reacquire_on_wake(fln_samefile_held_by_other_proc->fln_wchan, &fln_samefile_held_by_other_proc->fln_wchan_lk);
+					DEBUG(DB_SYSCALL, "Retrying EX lock\n");
+					goto retry_lock;
+				} else { // we hold the shared lock that's causing the exclusive one to fail (thru another filedes)
+					// don't want to deadlock here, so we just return
+					if (flags & LOCK_NB) {
+						return EAGAIN;
+					} else {
+						return EINVAL;
+					}
+				}
+			}
+		} else if (lock_is_exlock) {
+			if (lock_held_by_me) {
+				return EINVAL;
+			} else {
+				if (flags & LOCK_NB) {
+					return EAGAIN;
+				}
+				spinlock_acquire(&fln_samefile->fln_wchan_lk);
+				wchan_sleep_no_reacquire_on_wake(fln_samefile->fln_wchan, &fln_samefile->fln_wchan_lk);
+				goto retry_lock;
+			}
+		}
+		panic("BUG: unreachable");
+	} else { // taking shared lock
+		DEBUGASSERT(taking_shlock);
+		if (lock_is_shlock) {
+			if (lock_is_for_same_fdes && !lock_held_by_me) {
+				fln_samefile->fln_flock = *flock; // gain ownership
+				return 0;
+			} else if (lock_is_for_same_fdes && lock_held_by_me) {
+				return EINVAL;
+			} else {
+				DEBUGASSERT(!lock_is_for_same_fdes);
+				DEBUG(DB_SYSCALL, "Creating another shared lock for file thru new fdes.\n");
+				return add_new_flock(vnode, flock, fd_p);
+			}
+		} else { // existing lock is exclusive lock for file and we're trying to take a shared lock
+			DEBUGASSERT(lock_is_exlock);
+			if (lock_is_for_same_fdes) {
+				DEBUG(DB_SYSCALL, "Downgrading EX lock to SH lock thru same fdes.\n");
+				fln_samefile->fln_flock = *flock; // downgrade to shared and potentially gain ownership if we aren't the current holder
+				spinlock_acquire(&fln_samefile->fln_wchan_lk);
+				wchan_wakeall(fln_samefile->fln_wchan, &fln_samefile->fln_wchan_lk);
+				spinlock_release(&fln_samefile->fln_wchan_lk);
+				return 0;
+			} else {
+				if (lock_held_by_me) {
+					return EINVAL;
+				}
+				if (flags & LOCK_NB) {
+					return EAGAIN;
+				}
+				// block until exclusive lock is removed or downgraded
+				spinlock_acquire(&fln_samefile->fln_wchan_lk);
+				wchan_sleep_no_reacquire_on_wake(fln_samefile->fln_wchan, &fln_samefile->fln_wchan_lk);
+				goto retry_lock;
+			}
+		}
+	}
+} // retry_lock
+	panic("BUG: unreachable");
+}
+
+int file_rm_lock(struct vnode *vnode, struct filedes *fd_p, struct flock *flock, int flags, bool forceremove) {
+	(void)flags; (void)flock;
+	struct flock_node *fln, *head;
+	struct flock_node *fln_found = NULL;
+	head = flocklist_head()->fln_next;
+	fln = head;
+	while (fln && fln != flocklist_virt_tail) {
+		if (fln->fln_vnode == vnode && (fln->fln_flock.l_pid == curproc->pid || forceremove) &&
+			  fln->fln_fdp == fd_p) {
+			fln_found = fln;
+			break;
+		}
+		fln = fln->fln_next;
+	}
+	if (!fln_found) {
+		return EINVAL;
+	}
+
+	// next and prev should always exist due to virtual head and tail in list
+	fln_found->fln_prev->fln_next = fln_found->fln_next;
+	fln_found->fln_next->fln_prev = fln_found->fln_prev;
+
+	struct wchan *wchan = fln_found->fln_wchan;
+	struct spinlock *wchan_lk = &fln_found->fln_wchan_lk;
+
+	spinlock_acquire(wchan_lk);
+	wchan_wakeall(wchan, wchan_lk);
+	spinlock_release(wchan_lk);
+
+	VOP_DECREF(fln_found->fln_vnode);
+	DEBUG(DB_SYSCALL, "Removed flock entry (on %s)\n", forceremove ? "close" : "unlock");
+
+	wchan_destroy(wchan);
+	spinlock_cleanup(wchan_lk);
+	kfree(fln_found);
+	fd_p->flock_nodep = NULL;
 	return 0;
 }
 
@@ -952,6 +1239,19 @@ void proc_bootstrap(void) {
 	devnull->offset = 0;
 	devnull->refcount = 1;
 	devnull->latest_fd = -1;
+	struct flock_node *virt_head = kmalloc(sizeof(*virt_head));
+	struct flock_node *virt_tail = kmalloc(sizeof(*virt_tail));
+	KASSERT(virt_head); KASSERT(virt_tail);
+	bzero(virt_head, sizeof(*virt_head));
+	bzero(virt_tail, sizeof(*virt_tail));
+	virt_head->fln_next = virt_tail;
+	virt_head->fln_prev = NULL;
+	virt_tail->fln_next = NULL;
+	virt_tail->fln_prev = virt_head;
+	flocklist_virt_head = virt_head;
+	flocklist_virt_tail = virt_tail;
+	file_locks = virt_head;
+	KASSERT(file_locks->fln_next->fln_prev == virt_head);
 }
 
 /*

@@ -138,6 +138,7 @@ int ftruncate(int filehandle, int size);
 int remove(const char *filename);
 int rename(const char *oldfile, const char *newfile);
 int link(const char *oldfile, const char *newfile);
+int flock(int fd, int op);
 /* fstat - see sys/stat.h */
 int chdir(const char *path);
 
