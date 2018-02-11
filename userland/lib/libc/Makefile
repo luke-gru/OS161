@@ -19,7 +19,8 @@ SRCS+=\
 	stdio/getchar.c \
 	stdio/printf.c \
 	stdio/putchar.c \
-	stdio/puts.c
+	stdio/puts.c \
+	stdio/tmpfile.c
 
 # stdlib
 SRCS+=\

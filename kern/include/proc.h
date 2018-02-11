@@ -147,6 +147,7 @@ bool file_is_open(int fd);
 bool file_is_readable(char *path);
 bool file_is_writable(char *path);
 int  file_close(int fd);
+int  file_access(char *path, int mode, int *errcode);
 int  file_unlink(char *path);
 bool file_exists(char *path);
 bool file_is_dir(int fd);

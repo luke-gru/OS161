@@ -5,6 +5,54 @@
 #include <err.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <limits.h>
+
+static int tmpfile_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  int res;
+  int fd = tmpfile();
+  if (fd < 3) {
+    errx(1, "tmpfile() failed");
+  }
+  const char *buf = "hi there";
+  res = write(fd, buf, strlen(buf));
+  if (res != (int)strlen(buf)) {
+    errx(1, "Couldn't write to tmpfile");
+  }
+  char tmpname[PATH_MAX];
+  tmpname[0]='\0';
+  res = fcntl(fd, F_GETPATH, (int)tmpname);
+  if (res == -1 || strlen(tmpname) == 0) {
+    errx(1, "fcntl F_GETPATH failed (%d:%s)", errno, strerror(errno));
+  }
+  printf("F_GETPATH got tmpfile name: %s\n", tmpname);
+  res = close(fd);
+  if (res != 0) {
+    errx(1, "error closing tmpfile, should also destroy the file");
+  }
+  res = open(tmpname, O_RDONLY);
+  if (res != -1 || errno != ENOENT) {
+    errx(1, "temp file should have been removed on close: res: %d, errno: %d (%s)", res, errno, strerror(errno));
+  }
+  return 0;
+}
+
+static int access_test(int argc, char **argv) {
+  if (argc != 3) {
+    errx(1, "Usage: needs a file to try to access");
+  }
+  char *fname = argv[2];
+  int res = access(fname, F_OK);
+  if (res != 0) {
+    errx(1, "access() failed for file %s", fname);
+  }
+  res = access("__filethatdoesntexist.txt", F_OK);
+  if (res != -1 || errno != ENOENT) {
+    errx(1, "access() should return -1 and set errno to ENOENT if given nonexistent file: res: %d, errno: %d (%s)", res, errno, strerror(errno));
+  }
+  return 0;
+}
 
 // multi-process flock tests
 static int flock2_test(int argc, char **argv) {
@@ -865,7 +913,11 @@ int main(int argc, char *argv[]) {
     flock1_test(argc, argv);
   } else if (strcmp(argv[1], "flock2") == 0) {
     flock2_test(argc, argv);
+  } else if (strcmp(argv[1], "access") == 0) {
+    access_test(argc, argv);
+  } else if (strcmp(argv[1], "tmpfile") == 0) {
+    tmpfile_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket|flock1 OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket|flock1|access|tmpfile OPTIONS\n");
   }
 }

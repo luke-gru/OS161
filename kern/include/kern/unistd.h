@@ -45,5 +45,10 @@
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 4
 
+// for access() syscall
+#define R_OK 4
+#define W_OK 2
+#define X_OK 1
+#define F_OK 0
 
 #endif /* _KERN_UNISTD_H_ */

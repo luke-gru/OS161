@@ -78,4 +78,6 @@ int putchar(int);
 /* Reads one character (0-255) or returns EOF on error. */
 int getchar(void);
 
+int tmpfile(void);
+
 #endif /* _STDIO_H_ */

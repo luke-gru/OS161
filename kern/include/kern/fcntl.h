@@ -43,7 +43,7 @@
 #define O_RDONLY      0      /* Open for read */
 #define O_WRONLY      1      /* Open for write */
 #define O_RDWR        2      /* Open for read and write */
-/* then or in any of these: */
+/* then OR in any of these: */
 #define O_CREAT       4      /* Create file if it doesn't exist */
 #define O_EXCL        8      /* With O_CREAT, fail if file already exists */
 #define O_TRUNC      16      /* Truncate file upon open */
@@ -51,6 +51,7 @@
 #define O_NOCTTY     64      /* Required by POSIX, != 0, but does nothing */
 #define O_CLOEXEC    128     /* same as fcntl(fd, F_SETFL, FD_CLOEXEC) */
 #define O_NONBLOCK   256
+#define O_TMPFILE    512
 
 /* Additional related definition */
 #define O_ACCMODE     3      /* mask for O_RDONLY/O_WRONLY/O_RDWR */
@@ -80,6 +81,7 @@
 #define F_GETLK         7       /* inspect record locks */
 #define F_SETLK         8       /* acquire record locks nonblocking */
 #define F_SETLKW        9       /* acquire record locks and wait */
+#define F_GETPATH				10      /* get pathname for file that was used on open() */
 
 /* flag for F_GETFD and F_SETFD */
 #define FD_CLOEXEC      1       /* close-on-exec */

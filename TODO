@@ -9,20 +9,20 @@
   I'll add the memory pinning and unpinning calls.
 * Idea: add a new syscall that pages out a region, to facilitate testing so we don't have to rely
   solely on sleep() and page aging. [DONE]
-* Get pipes working (pipe(2)), with blocking and non-blocking reads and buffering [DONE, mostly. Needs testing]
-* Get shared memory regions working [DONE, except for file-backed ones]
+* Get pipes working (pipe(2)), with blocking and non-blocking reads and buffering [DONE. Needs more testing]
+* Get shared memory regions working [DONE]
 * Get mmap working (MAP_PRIVATE and MAP_ANONYMOUS for shared memory regions)
 * Implement O_CLOEXEC on file descriptors [DONE]
-* Implement vfork (no copying of pages for new process, and wait for child to execv or exit before continuing)
-* Implement copy on write for forked processes
+* Implement vfork (no copying of pages for new process, and wait for child to execv or exit before continuing) [IN PROGRESS]
+* Implement copy on write for forked processes (medium hard)
 * Implement clone() for user-level threads [DONE, except for exitstatus of new threads]
-* Implement signals (hard!)
+* Implement signals (hard)
 * allow lseeking for sparse files (files with holes in them, see lseek(2)
 * Implement fcntl to set fd flags [DONE] (for O_CLOEXEC)
 * get atexit functions working [DONE]
-* get exec() to parse shebang lines if present, and modify argv and parse options like Linux does
+* get exec() to parse shebang lines if present, and modify argv and parse options like Linux does (medium)
 * get daemonized processes working from kernel shell for testing signals [DONE, mostly]
-* Implement process scheduling
-* Implement CPU thread migration
-* Add process accounting info, like CPU time, wall time, sleep time, etc.
-* Implement O_NONBLOCK for pipe reads
+* Implement process scheduling (medium-hard)
+* Implement CPU thread migration (medium)
+* Add process accounting info, like CPU time, wall time, sleep time, etc. (easy)
+* Implement O_NONBLOCK for pipe reads [DONE]

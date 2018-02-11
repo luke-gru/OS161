@@ -124,6 +124,28 @@ int sys_fcntl(int fd, int cmd, int flags, int *retval) {
   }
 }
 
+int sys_access(userptr_t pathname, int mode, int *retval) {
+  if (pathname == (userptr_t)0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  char path[PATH_MAX];
+  copyinstr(pathname, path, sizeof(path), NULL);
+  if (strlen(path) == 0) {
+    *retval = -1;
+    return ENOENT;
+  }
+  int access_err = 0;
+  int access_res = file_access(path, mode, &access_err);
+  if (access_res == 0) {
+    *retval = 0;
+    return 0;
+  } else {
+    *retval = -1;
+    return access_err;
+  }
+}
+
 int sys_lseek(int fd, int32_t offset, int whence, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
   if (!file_des) {

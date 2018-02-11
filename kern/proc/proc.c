@@ -121,6 +121,9 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	file_des->latest_fd = -1;
 	int fd = filetable_put(p, file_des, table_idx);
 	if (fd == -1) {
+		kfree(file_des->pathname);
+		lock_destroy(file_des->lk);
+		kfree(file_des);
 		*errcode = EMFILE;
 		return NULL;
 	}
@@ -129,8 +132,6 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 }
 static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	DEBUGASSERT(file_des != devnull);
-	file_des->flags = 0;
-	file_des->offset = 0;
 	if (file_des->ftype == FILEDES_TYPE_PIPE) {
 		// other side of pipe is also closed, safe to destruct pipe pair
 		if (file_des->pipe->pair && file_des->pipe->pair->is_closed) {
@@ -170,6 +171,9 @@ static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 		file_rm_lock(file_des->node, file_des, &file_des->flock_nodep->fln_flock, 0, true);
 		file_des->flock_nodep = NULL;
 	}
+	if (file_des->flags & O_TMPFILE) {
+		file_unlink(file_des->pathname);
+	}
 	kfree(file_des->pathname);
 	vfs_close(file_des->node); // check success?
 	file_des->node = (void*)0xdeadbeef;
@@ -177,6 +181,8 @@ static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 	lock_destroy(file_des->lk);
 	filetable_nullout(p, file_des);
 	file_des->refcount = 0;
+	file_des->flags = 0;
+	file_des->offset = 0;
 	kfree(file_des);
 }
 static void init_pipe(struct pipe *p, bool is_writer, size_t buflen) {
@@ -475,6 +481,25 @@ int filedes_fcntl(struct filedes *file_des, int cmd, int flag, int *errcode) {
 		case F_GETFL:
 			(void)flag;
 			return (file_des->flags & ~O_CLOEXEC); // ignore CLOEXEC, it's considered a FD flag
+		case F_GETPATH: {
+			(void)flag;
+			userptr_t pathbuf = (userptr_t)flag;
+			if (pathbuf == (userptr_t)0) {
+				*errcode = EFAULT;
+				return -1;
+			}
+			int copy_res = 0;
+			if (file_des->pathname == NULL) {
+				copy_res = copyoutstr("\0", pathbuf, 1, NULL);
+			}
+			copy_res = copyoutstr(file_des->pathname, pathbuf, PATH_MAX, NULL);
+			if (copy_res == 0) {
+				return 0;
+			} else {
+				*errcode = copy_res;
+				return -1;
+			}
+		}
 		default:
 			*errcode = EINVAL;
 			return -1;
@@ -517,7 +542,7 @@ int file_close(int fd) {
 */
 int file_unlink(char *path) {
 	if (!file_exists(path)) {
-		return EBADF;
+		return ENOENT;
 	}
 	int res = vfs_remove(path);
 	return res;
@@ -532,6 +557,18 @@ bool file_exists(char *path) {
 	}
 	VOP_DECREF(fnode);
 	return true;
+}
+
+int file_access(char *path, int mode, int *errcode) {
+	(void)mode; // TODO: check permissions for file
+	struct vnode *fnode;
+	int res = vfs_lookup(path, &fnode);
+	if (res != 0) {
+		*errcode = res;
+		return -1;
+	}
+	VOP_DECREF(fnode);
+	return 0;
 }
 
 bool file_is_dir(int fd) {
@@ -552,15 +589,20 @@ bool file_is_dir(int fd) {
 // Try opening or creating the file, returning fd > 0 on success. On error, *retval is set
 // to a non-zero error code. On success, adds filedes to current process's file table.
 int file_open(char *path, int openflags, mode_t mode, int *errcode) {
-	struct vnode *node;
+	struct vnode *node = NULL;
 	int result = vfs_open(path, openflags, mode, &node);
 	if (result != 0) {
-		//panic("FILE ALREADY OPEN"); // FIXME
+		if (node) {
+			vfs_close(node);
+		}
 		*errcode = result;
 		return -1;
 	}
 	struct filedes *new_filedes = filedes_open(curproc, path, node, openflags, -1, errcode);
 	if (!new_filedes) {
+		if (node) {
+			vfs_close(node);
+		}
 		return -1;
 	}
 	if (filedes_is_writable(new_filedes) && ((openflags & O_APPEND) != 0)) {
@@ -571,7 +613,6 @@ int file_open(char *path, int openflags, mode_t mode, int *errcode) {
 			return -1;
 		}
 	}
-	// TODO: implement O_TRUNC when file is writable
 	return new_filedes->latest_fd;
 }
 
