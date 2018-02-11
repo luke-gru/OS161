@@ -43,7 +43,10 @@
 #include <lib.h>
 #include <kern/errno.h>
 #include <kern/unistd.h>
+#include <wchan.h>
+#include <mips/trapframe.h>
 
+// NOTE: _exit(2) syscall, NOT userland exit(3)
 void sys_exit(int status) {
   // Detaches current thread from process, and turns it into zombie, then exits
   // from it to run other threads. Exorcise gets called once in a while (when starting
@@ -58,9 +61,9 @@ int sys_fork(struct trapframe *tf, int *retval) {
   // in the child doesn't point to invalid memory, which it would if the parent were to
   // run before the child and pop its trapframe stack
   int spl = splhigh();
-
+  int flags = PROC_FORKFL_NORM;
   DEBUG(DB_SYSCALL, "process %d forking\n", curproc->pid);
-  int pid = proc_fork(curproc, curthread, tf, &err);
+  int pid = proc_fork(curproc, curthread, tf, flags, &err);
   if (pid < 0) {
     DEBUG(DB_SYSCALL, "sys_fork failed: %d (%s)\n", err, strerror(err));
     *retval = -1;
@@ -79,6 +82,43 @@ int sys_fork(struct trapframe *tf, int *retval) {
   }
   splx(spl);
   thread_yield(); // make sure child runs before us (FIXME)
+  return 0;
+}
+
+int sys_vfork(struct trapframe *tf, int *retval) {
+  int err = 0;
+  // disable interrupts so the trapframe that we use for the parent (current) process
+  // in the child doesn't point to invalid memory, which it would if the parent were to
+  // run before the child and pop its trapframe stack
+  int spl = splhigh();
+  int flags = 0;
+  flags |= PROC_FORKFL_VFORK;
+  DEBUG(DB_SYSCALL, "process %d vforking\n", curproc->pid);
+  int pid = proc_fork(curproc, curthread, tf, flags, &err);
+  if (pid < 0) {
+    DEBUG(DB_SYSCALL, "sys_vfork failed: %d (%s)\n", err, strerror(err));
+    *retval = -1;
+    KASSERT(err != 0);
+    splx(spl);
+    return err; // error
+  }
+  if (pid == 0) {
+    // child process shouldn't get here, it should be scheduled off the interrupt to return
+    // to the syscall trapframe with a return value of 0 and the same CPU registers as the parent
+    panic("shouldn't get here!");
+  } else { // in parent
+    DEBUG(DB_SYSCALL, "process %d vforked, new pid: %d\n", curproc->pid, pid);
+    KASSERT(is_valid_user_pid(pid));
+    struct thread *newthread = thread_find_by_id(pid);
+    KASSERT(newthread);
+    KASSERT(newthread->t_proc->p_rflags & PROC_RUNFL_SIGEXEC);
+    curthread->wakeup_at = -1;
+    splx(spl);
+    thread_make_runnable(newthread, false);
+    wchan_sleep(NULL, NULL); // sleep until child process wakes us upon _exit() or execv()
+
+    *retval = pid;
+  }
   return 0;
 }
 

@@ -48,7 +48,6 @@
 
 //                              -- Process-related --
 #define SYS_fork         0
-// TODO
 #define SYS_vfork        1
 #define SYS_execv        2
 #define SYS__exit        3

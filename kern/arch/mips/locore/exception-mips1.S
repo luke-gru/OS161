@@ -106,7 +106,7 @@ mips_general_end:
 common_exception:
    mfc0 k0, c0_status		/* Get status register */
    andi k0, k0, CST_KUp		/* Check the we-were-in-user-mode bit */
-   beq	k0, $0, 1f		/* If clear, from kernel, already have stack */
+   beq	k0, $0, 1f		/* If clear, exception is from kernel and we already have the kernel stack */
    nop				/* delay slot */
 
    /* Coming from user mode - find kernel stack */
@@ -126,8 +126,8 @@ common_exception:
     * At this point:
     *      Interrupts are off. (The processor did this for us.)
     *      k0 contains the value for curthread, to go into s7.
-    *      k1 contains the old stack pointer.
-    *      sp points into the kernel stack.
+    *      k1 contains the old userspace stack pointer.
+    *      sp points into this thread's kernel stack.
     *      All other registers are untouched.
     */
 

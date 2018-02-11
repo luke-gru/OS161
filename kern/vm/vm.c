@@ -89,11 +89,12 @@ void vm_bootstrap(void) {
 }
 
 void kswapd_bootstrap() {
-  struct proc *kswapd_proc = proc_create("kswapd");
+  struct proc *kswapd_proc = proc_create("kswapd", PROC_CREATEFL_NORM);
   kswapproc = kswapd_proc;
   kswapd_proc->pid = KSWAPD_PID;
   kswapd_proc->p_parent = kproc;
   kswapd_proc->p_cwd = kproc->p_cwd;
+	return;
   struct addrspace *as = as_create(kswapd_proc->p_name);
   KASSERT(as);
 	as->no_heap_alloc = true;
@@ -275,10 +276,10 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
 	}
 
 	for (i=0; i<pages_in_coremap; i++){
-		if (pagetype == PAGETYPE_KERN && coremap[i].va == addr) {
+		if (pagetype == PAGETYPE_KERN && coremap[i].va == addr && coremap[i].is_kern_page) {
 			pop = coremap[i].partofpage;
 			break;
-		} else if (pagetype == PAGETYPE_USER && coremap[i].pa == addr) {
+		} else if (pagetype == PAGETYPE_USER && coremap[i].pa == addr && !coremap[i].is_kern_page) {
       pop = coremap[i].partofpage;
       break;
     }

@@ -79,6 +79,7 @@ int sys_dup2(int oldfd, int newfd, int *retval);
 int sys_flock(int fd, int op, int *retval);
 
 int sys_fork(struct trapframe *tf, int *retval);
+int sys_vfork(struct trapframe *tf, int *retval);
 int sys_waitpid(pid_t child_pid, userptr_t status, int options, int *retval);
 void sys_exit(int status);
 int sys_execv(userptr_t filename, userptr_t argv, int *retval);

@@ -360,6 +360,9 @@ mips_trap(struct trapframe *tf)
 	 * to find out now.
 	 */
 	KASSERT(SAME_STACK(cpustacks[curcpu->c_number]-1, (vaddr_t)tf));
+	if (curthread->t_pid == 4 && curthread->t_proc == NULL) {
+		DEBUG(DB_SYSCALL, "Returning from child exception\n");
+	}
 }
 
 /*

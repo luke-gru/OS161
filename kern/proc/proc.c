@@ -976,7 +976,7 @@ int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen) {
 /*
  * Create a proc structure with empty address space and file table.
  */
-struct proc *proc_create(const char *name) {
+struct proc *proc_create(const char *name, int flags) {
 	struct proc *proc;
 
 	proc = kmalloc(sizeof(*proc));
@@ -984,33 +984,40 @@ struct proc *proc_create(const char *name) {
 		return NULL;
 	}
 	proc->p_name = kstrdup(name);
-	proc->p_parent = NULL;
-
 	if (proc->p_name == NULL) {
 		kfree(proc);
 		return NULL;
 	}
+	proc->p_parent = NULL;
+	proc->pid = INVALID_PID;
 
 	proc->p_numthreads = 0;
 
 	/* VM fields */
 	proc->p_addrspace = NULL;
+	proc->p_stacktop = 0;
+	proc->p_stacksize = 0;
 
 	/* VFS fields */
 	proc->p_cwd = NULL;
 
-	proc->pid = INVALID_PID;
-	proc->file_table = kmalloc(FILE_TABLE_LIMIT * sizeof(struct filedes*));
-	if (proc->file_table == NULL) {
-		kfree(proc->p_name);
-		kfree(proc);
-		return NULL;
+	if (flags & PROC_CREATEFL_EMPTY_FT) {
+		proc->file_table = NULL;
+		proc->file_table_refcount = 0;
+	} else {
+		proc->file_table = kmalloc(FILE_TABLE_LIMIT * sizeof(struct filedes*));
+		if (proc->file_table == NULL) {
+			kfree(proc->p_name);
+			kfree(proc);
+			return NULL;
+		}
+		bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
+		proc->file_table_refcount = 1;
 	}
-	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
-	proc->file_table_refcount = 1;
+
 	spinlock_init(&proc->p_lock);
 	proc->p_mutex = lock_create("proc mutex");
-
+	proc->p_rflags = 0;
 	return proc;
 }
 
@@ -1127,28 +1134,47 @@ void proc_destroy(struct proc *proc) {
 	kfree(proc);
 }
 
-int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe *tf, int *err) {
+int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe *tf, int flags, int *err) {
 	KASSERT(is_current_userspace_proc(parent_pr));
 	struct proc *child_pr = NULL;
-	child_pr = proc_create(parent_pr->p_name);
+	int res;
+	child_pr = proc_create(parent_pr->p_name, PROC_CREATEFL_NORM);
 	if (!child_pr) {
 		*err = ENOMEM; // just a guess
 		return -1;
 	}
 	child_pr->p_parent = parent_pr;
 	child_pr->p_addrspace = NULL;
+
 	lock_acquire(parent_pr->p_mutex);
-	int res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
-	if (res != 0) {
+	if (flags & PROC_FORKFL_NORM) {
+		res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
+		if (res != 0) {
+			lock_release(parent_pr->p_mutex);
+			proc_destroy(child_pr);
+			*err = res;
+			return -1;
+		}
+	} else if (flags & PROC_FORKFL_VFORK) {
+		child_pr->p_addrspace = parent_pr->p_addrspace;
+		child_pr->p_stacktop = parent_pr->p_stacktop;
+		child_pr->p_stacksize = parent_pr->p_stacksize;
+		// signal parent on exec to wake him up, as parent auto-sleeps after call to vfork()
+		child_pr->p_rflags |= PROC_RUNFL_SIGEXEC;
+	} else { // invalid flags
 		lock_release(parent_pr->p_mutex);
 		proc_destroy(child_pr);
-		*err = res;
+		*err = EINVAL;
 		return -1;
 	}
+
 	KASSERT(child_pr->p_addrspace != NULL);
 	res = proc_inherit_filetable(parent_pr, child_pr);
 	if (res != 0) {
 		lock_release(parent_pr->p_mutex);
+		if (flags & PROC_FORKFL_VFORK) {
+			child_pr->p_addrspace = NULL; // make sure not to wipe parent's addrspace
+		}
 		proc_destroy(child_pr);
 		*err = res;
 		return -1;
@@ -1162,11 +1188,15 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 		parent_th,
 		child_pr,
 		tf,
+		flags,
 		&fork_errcode
 	);
 	if (res < 0) {
 		*err = fork_errcode;
 		lock_release(parent_pr->p_mutex);
+		if (flags & PROC_FORKFL_VFORK) {
+			child_pr->p_addrspace = NULL; // make sure not to wipe parent's addrspace
+		}
 		proc_destroy(child_pr);
 		return -1;
 	} else {
@@ -1219,7 +1249,7 @@ unsigned proc_numprocs(void) {
  * Create the process structure for the kernel.
  */
 void proc_bootstrap(void) {
-	kproc = proc_create("[kernel]");
+	kproc = proc_create("[kernel]", PROC_CREATEFL_NORM);
 	kproc->pid = BOOTUP_PID;
 	if (kproc == NULL) {
 		panic("proc_create for kproc failed\n");
@@ -1411,7 +1441,7 @@ struct proc *proc_create_runprogram(const char *name) {
 		parent_proc = curproc;
 	}
 
-	newproc = proc_create(name);
+	newproc = proc_create(name, PROC_CREATEFL_NORM);
 	if (newproc == NULL) {
 		return NULL;
 	}
@@ -1471,7 +1501,7 @@ struct proc *proc_clone(struct proc *old, vaddr_t new_stacktop, size_t new_stack
 	size_t name_size = strlen(old->p_name)+1+8;
 	char *clone_name = kmalloc(name_size); // ' (clone)'
 	snprintf(clone_name, name_size, "%s (clone)", old->p_name);
-	struct proc *clone = proc_create(clone_name);
+	struct proc *clone = proc_create(clone_name, PROC_CREATEFL_EMPTY_FT);
 	if (!clone) {
 		DEBUG(DB_SYSCALL, "proc_clone failed: proc_create failure\n");
 		kfree(clone_name);
@@ -1481,13 +1511,12 @@ struct proc *proc_clone(struct proc *old, vaddr_t new_stacktop, size_t new_stack
 	kfree(clone_name); // proc_create() kstrdup's the name, so we can free it here
 	clone->p_addrspace = old->p_addrspace; // share address space with old process
 	clone->p_addrspace->refcount++;
-	clone->file_table_refcount++;
+	clone->file_table_refcount = old->file_table_refcount+1;
 	old->file_table_refcount++;
-	kfree(clone->file_table); // share file_table with old process
 	clone->file_table = old->file_table;
 	clone->p_parent = old->p_parent;
 	clone->p_cwd = old->p_cwd;
-	clone->pid = INVALID_PID; // given in thread_fork
+	clone->pid = INVALID_PID; // pid given in thread_fork
 	clone->p_stacktop = new_stacktop;
 	clone->p_stacksize = new_stacksize;
 	return clone;
