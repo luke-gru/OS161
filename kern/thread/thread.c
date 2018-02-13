@@ -1397,7 +1397,11 @@ int wchan_wake_thread(struct wchan *wc, struct spinlock *lk, struct thread *t) {
 	target = threadlist_remove_if(&wc->wc_threads, thread_find_by_pid_cb, (void*)t->t_pid);
 	if (target) {
 		KASSERT(target == t);
-		thread_make_runnable(target, false);
+		t->t_wchan = NULL;
+		t->wakeup_at = 0;
+		t->t_wchan_lk = NULL;
+		t->t_wchan_name = "";
+		thread_make_runnable(t, false);
 		return 0;
 	}
 	return -1;

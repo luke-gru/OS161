@@ -1,0 +1,12 @@
+Signals:
+
+1) Thread gets signal from other process (such as kill), add it to pending signals list
+2) When starting a thread from sleep or returning from kernel mode, go thru pending signals and handle them 1 by 1
+3) If signal is a user handler signal, call it then return control to operating system.
+
+Asynchronous Signals (such as from kill)
+1) Wake up process if it's sleeping, and add pending signals to its buffer
+2) Process wakes up, and before entering back into user mode checks its pending signals
+3) It has one, and it's a user signal, so it sets up its current trapframe to point into
+the new handler, and sets the return address of the trapframe to point back to the original
+trapframe stack pointer

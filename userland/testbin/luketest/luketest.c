@@ -14,6 +14,11 @@ static void my_sigusr1_handler(int signo) {
   handled_sigusr1 = 1;
 }
 
+// run this in the background from the shell:
+// $ b testbin/luketest signal
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
 static int signal_test(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -21,7 +26,7 @@ static int signal_test(int argc, char **argv) {
   if (res == SIG_ERR) {
     errx(1, "Error setting signal handler for SIGUSR1");
   }
-  //pause(); TODO
+  //pause(); TODO, add this syscall
   while (1) {
     sleep(5);
     if (handled_sigusr1) {

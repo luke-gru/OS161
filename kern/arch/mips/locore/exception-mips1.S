@@ -273,7 +273,7 @@ common_exception:
     * Prepare to call mips_trap(struct trapframe *)
     */
 
-   addiu a0, sp, 16             /* set argument - pointer to the trapframe */
+   addiu a0, sp, 16             /* set argument - pointer to the trapframe (on kernel stack) */
    jal mips_trap		/* call it */
    nop				/* delay slot */
 

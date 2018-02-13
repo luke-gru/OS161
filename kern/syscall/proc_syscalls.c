@@ -279,6 +279,7 @@ int sys_sleep(int seconds, int *retval) {
     return 0;
   }
   thread_sleep_n_seconds(seconds);
+  KASSERT(curthread->t_iplhigh_count == 0);
   *retval = 0;
   return 0;
 }

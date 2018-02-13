@@ -31,6 +31,8 @@
 #ifndef _KERN_MIPS_SIGNAL_H_
 #define _KERN_MIPS_SIGNAL_H_
 
+#include <mips/trapframe.h>
+
 /*
  * Structure used to hold the register values for returning from a
  * userland signal handler - basically the saved register values from
