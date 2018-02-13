@@ -365,13 +365,16 @@ mips_trap(struct trapframe *tf)
 }
 
 static void setup_sig_handler(vaddr_t sighandler, int signo, struct trapframe *tf) {
-	struct sigcontext sctx;
-	bzero(&sctx, sizeof(sigcontext));
-	sctx.signo = signo;
-	sctx.saved_tf = *tf;
-	uint32_t sp = tf->tf_sp;
+	// struct sigcontext sctx;
+	// bzero(&sctx, sizeof(sigcontext));
+	// sctx.signo = signo;
+	// sctx.saved_tf = *tf;
+	//uint32_t sp = tf->tf_sp;
 	// setup new stack space for the handler function
-	sp -= sizeof(struct sigcontext);
+	//sp -= sizeof(struct sigcontext);
+	(void)sighandler;
+	(void)signo;
+	(void)tf;
 }
 
 void user_return_from_trap(struct trapframe *tf, uint32_t code) {
@@ -379,12 +382,13 @@ void user_return_from_trap(struct trapframe *tf, uint32_t code) {
 	if (curproc && curproc->current_sig_handler) {
 		setup_sig_handler(curproc->current_sig_handler, curproc->current_signo, tf);
 		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
-		tf->tf_ra = -1;
+		tf->tf_ra = tf->tf_sp;
 		tf->tf_epc = curproc->current_sig_handler;
-		tf->tf_sp = curproc->trap_handler_stacktop;
+		tf->tf_sp = tf->tf_sp - 16;
 		curproc->current_sig_handler = 0;
 	}
 	(void)code;
+	spl0();
 }
 
 /*

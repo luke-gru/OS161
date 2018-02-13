@@ -50,9 +50,9 @@ void syscall(struct trapframe *tf);
 void enter_forked_process(void *data1, unsigned long data2);
 
 /* Enter user mode. Does not return. */
-__DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
+void enter_new_process(int argc, userptr_t argv, userptr_t env,
 		       vaddr_t stackptr, vaddr_t entrypoint);
-__DEAD void enter_cloned_process(void *data1, unsigned long data2);
+void enter_cloned_process(void *data1, unsigned long data2);
 
 int runprogram_uspace(char *progname, struct argvdata *argdata);
 

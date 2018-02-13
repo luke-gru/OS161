@@ -1,0 +1,5 @@
+Signals:
+
+1) Thread gets signal from other process (such as kill), add it to pending signals list
+2) When starting a thread from sleep or returning from kernel mode, go thru pending signals and handle them
+3) If signals are user handler signals, call them.
