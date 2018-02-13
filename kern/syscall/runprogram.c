@@ -42,6 +42,9 @@
 #include <copyinout.h>
 #include <spl.h>
 
+#define ENV_VARS_MAX 100
+#define ENV_VAR_SINGLE_MAX 256
+
 struct argvdata *argvdata_create(void) {
 	struct argvdata *args = kmalloc(sizeof(struct argvdata));
 	bzero(args, sizeof(struct argvdata));
@@ -59,6 +62,7 @@ void argvdata_destroy(struct argvdata *argdata) {
 	}
 	argdata->offsets = NULL;
 	argdata->nargs = 0;
+	argdata->nargs_max = 0;
 	kfree(argdata);
 }
 
@@ -83,13 +87,33 @@ void argvdata_debug(struct argvdata *args, const char *msg, char *progname) {
 	}
 }
 
+static void environ_debug(struct argvdata *env, const char *msg) {
+	DEBUG(DB_SYSCALL, "%s ENV data:\n", msg);
+	if (env->nargs == 0) {
+		DEBUG(DB_SYSCALL, "  ENV is empty!\n");
+		return;
+	}
+	if (!env->buffer || !env->offsets || !env->bufend) {
+		DEBUG(DB_SYSCALL, "  ENV argdata is corrupted!\n");
+		return;
+	}
+	env->offsets[0] = 0;
+	for (int i = 0; i < env->nargs; i++) {
+		char *var = env->buffer + env->offsets[i];
+		if (var == NULL) {
+			DEBUG(DB_SYSCALL, "  ENV has invalid var #%d, is NULL!\n", i);
+			continue;
+		}
+		DEBUG(DB_SYSCALL, "  ENV[%d]=\"%s\"\n", i, var);
+	}
+}
+
 int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int argc) {
 	argdata->offsets = kmalloc(sizeof(size_t) * argc);
 	argdata->offsets[0] = 0;
 	size_t buflen = 0;
 	for (int i = 0; i < argc; i++) {
 		if (!args[i]) break;
-		//kprintf("argvdata fill %d: '%s'\n", i, args[i]);
 		if (i == 0) {
 			KASSERT(strcmp(progname, args[i]) == 0);
 		}
@@ -112,6 +136,7 @@ int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int arg
 	}
 	argdata->bufend = argdata->buffer + buflen + 1;
 	argdata->nargs = argc;
+	argdata->nargs_max = argc;
 	return 0;
 }
 
@@ -155,12 +180,48 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 	}
 	argdata->bufend = argdata->buffer + buflen + 1;
 	argdata->nargs = nargs_given;
+	argdata->nargs_max = nargs_given;
+	return 0;
+}
+
+static int environ_fill(struct argvdata *argdata, char **environ, int num_vars) {
+	char **environ_p = environ;
+	size_t buflen = 0;
+	int num_vars_found = 0;
+	char *envp[ENV_VARS_MAX];
+	bzero(envp, ENV_VARS_MAX * sizeof(char*));
+	for (int i = 0; environ_p[i] != 0 && i < ENV_VARS_MAX; i++) {
+			envp[i] = kstrdup(environ_p[i]);
+			buflen += strlen(environ_p[i])+1;
+			num_vars_found++;
+	}
+	KASSERT(num_vars == num_vars_found);
+	buflen+=1; // NULL byte to end args array
+	argdata->buffer = kmalloc(buflen);
+	bzero(argdata->buffer, buflen);
+	argdata->offsets = kmalloc(sizeof(size_t) * num_vars_found);
+	argdata->offsets[0] = 0;
+	char *bufp = argdata->buffer;
+	// move arg strings into buffer
+	for (int i = 0; i < num_vars; i++) {
+		size_t arg_sz = strlen(envp[i]) + 1; // with terminating NULL
+		memcpy(bufp, (const void *)envp[i], arg_sz);
+		KASSERT(strcmp(bufp, envp[i]) == 0);
+		if (i > 0) {
+			argdata->offsets[i] = bufp - argdata->buffer;
+		}
+		KASSERT((argdata->buffer + argdata->offsets[i]) == bufp);
+		bufp += arg_sz + 1;
+	}
+	argdata->bufend = argdata->buffer + buflen + 1;
+	argdata->nargs = num_vars_found;
+	argdata->nargs_max = ENV_VARS_MAX;
 	return 0;
 }
 
 /*
  * copyout_args
- * copies the argv out of the kernel space argvdata into the userspace.
+ * copies the argv (or envp) out of the kernel space argvdata into the userspace.
  * read through the comments to see how it works.
  */
 static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr) {
@@ -198,7 +259,7 @@ static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
 	 * the stack pointer is already suitably aligned.
 	 * allow an extra slot for the NULL that terminates the vector.
 	 */
-	stack -= (ad->nargs + 1)*sizeof(userptr_t);
+	stack -= (ad->nargs_max + 1)*sizeof(userptr_t);
 	userargv = (userptr_t)stack;
 
 	KASSERT(ad->offsets[0] == 0);
@@ -212,13 +273,18 @@ static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
 	}
 
 	/* NULL terminate it */
+	int nargs = ad->nargs;
 	arg = NULL;
-	result = copyout(&arg, userargv, sizeof(userptr_t));
-	if (result) {
-		return result;
+	while (nargs <= ad->nargs_max) {
+		result = copyout(&arg, userargv, sizeof(userptr_t));
+		if (result) {
+			return result;
+		}
+		userargv += sizeof(userptr_t);
+		nargs++;
 	}
 
-	*argv = (userptr_t)stack;
+	*argv = (userptr_t)stack; // argv is allocated above where the stack starts
 	*stackptr = stack;
 	return 0;
 }
@@ -280,25 +346,42 @@ int runprogram(char *progname, char **args, int nargs) {
 	proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * PAGE_SIZE);
 
 	struct argvdata *argdata = argvdata_create();
+	struct argvdata *envdata = argvdata_create();
 	argvdata_fill(argdata, progname, args, nargs);
 	argvdata_debug(argdata, "runprogram", progname);
+	environ_fill(envdata, curproc->p_environ, proc_environ_numvars(curproc));
+	environ_debug(envdata, "runprogram");
 	userptr_t userspace_argv_ary;
+	userptr_t userspace_env_ary;
+	vaddr_t old_stacktop = curproc->p_stacktop;
 	if (copyout_args(argdata, &userspace_argv_ary, &curproc->p_stacktop) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args into user process\n");
 		argvdata_destroy(argdata);
+		argvdata_destroy(envdata);
 		kfree(prognamecpy);
+		curproc->p_stacktop = old_stacktop;
 		return -1;
 	}
 	argvdata_destroy(argdata);
+	if (copyout_args(envdata, &userspace_env_ary, &curproc->p_stacktop) != 0) {
+		DEBUG(DB_SYSCALL, "Error copying env into user process\n");
+		argvdata_destroy(envdata);
+		kfree(prognamecpy);
+		curproc->p_stacktop = old_stacktop;
+		return -1;
+	}
+	argvdata_destroy(envdata);
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
 		kfree(prognamecpy);
+		curproc->p_stacktop = old_stacktop;
 		return pre_exec_res;
 	}
 	kfree(prognamecpy);
+	curproc->p_uenviron = userspace_env_ary;
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
-			  NULL /*userspace addr of environment*/,
+			  userspace_env_ary /*userspace addr of environment*/,
 			  curproc->p_stacktop, entrypoint);
 
 	/* enter_new_process does not return. */
@@ -340,6 +423,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	}
 
 	userptr_t userspace_argv_ary;
+	userptr_t userspace_env_ary;
 	proc_setas(as);
 	as_activate();
 	/* Load the executable, setting fields of curproc->p_addrspace. */
@@ -353,16 +437,29 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	if (curproc->p_stacksize == 0 || curproc->p_stacktop == 0) {
 		proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * STACK_SIZE);
 	}
+	vaddr_t old_stacktop = curproc->p_stacktop;
 
 	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &curproc->p_stacktop);
 	if (copyout_res != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
-		if (copyout_res)
-			panic("debug"); // FIXME:remove
 		as_destroy(as);
+		curproc->p_stacktop = old_stacktop;
+		vfs_close(v);
 		return copyout_res;
 	}
 	int nargs = argdata->nargs;
+	struct argvdata *envdata = argvdata_create();
+	environ_fill(envdata, curproc->p_environ, proc_environ_numvars(curproc));
+
+	copyout_res = copyout_args(envdata, &userspace_env_ary, &curproc->p_stacktop);
+	if (copyout_res != 0) {
+		DEBUG(DB_SYSCALL, "Error copying ENV during exec\n");
+		argvdata_destroy(envdata);
+		as_destroy(as);
+		curproc->p_stacktop = old_stacktop;
+		vfs_close(v);
+		return copyout_res;
+	}
 
 	/* Done with the file now. */
 	vfs_close(v);
@@ -370,15 +467,17 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
 		as_destroy(as);
+		curproc->p_stacktop = old_stacktop;
 		return pre_exec_res;
 	}
 	proc_close_cloexec_files(curproc);
+	curproc->p_uenviron = userspace_env_ary;
 
 	// DEBUG(DB_SYSCALL, "sys_execv entering new process %d\n", curproc->pid);
 	spl0();
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
-				NULL /*userspace addr of environment*/,
+				userspace_env_ary /*userspace addr of environment*/,
 				curproc->p_stacktop, entrypoint);
 
 	/* enter_new_process does not return. */

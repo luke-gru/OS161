@@ -41,6 +41,7 @@
 #include <unistd.h>
 #include <err.h>
 #include <assert.h>
+#include <string.h>
 
 #undef MALLOCDEBUG
 
@@ -479,6 +480,37 @@ malloc(size_t size)
 	__malloc_dump();
 #endif
 	return M_DATA(mh);
+}
+
+void *realloc(void* src, size_t newsize) {
+	struct mheader *mh;
+
+	if (src==NULL) {
+		errx(1, "Tried to realloc NULL");
+	}
+
+	/* Don't allow freeing pointers that aren't on the heap. */
+	if ((uintptr_t)src < __heapbase || (uintptr_t)src >= __heaptop) {
+		errx(1, "realloc: Invalid pointer %p freed (out of range)", src);
+	}
+
+#ifdef MALLOCDEBUG
+	warnx("realloc: about to realloc %p", src);
+	__malloc_dump();
+#endif
+
+	mh = ((struct mheader *)src)-1;
+	if (!M_OK(mh)) {
+		errx(1, "realloc: Invalid pointer %p freed (corrupt header)", src);
+	}
+	size_t oldsize = M_SIZE(mh);
+	void *new = malloc(newsize);
+	if (!new) {
+		return NULL;
+	}
+	memcpy(new, src, oldsize);
+	free(src);
+	return new;
 }
 
 ////////////////////////////////////////////////////////////

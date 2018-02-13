@@ -56,6 +56,9 @@ int atexit(void (*callback)(void));
  * provided if the kernel doesn't pass environment strings.
  */
 char *getenv(const char *var);
+int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
+int putenv(char *string);
 
 /*
  * Run a command. Returns its exit status as it comes back from waitpid().
@@ -75,6 +78,7 @@ char *setstate(char *);
  * Memory allocation functions.
  */
 void *malloc(size_t size);
+void *realloc(void *ptr, size_t newsize);
 void free(void *ptr);
 
 /*

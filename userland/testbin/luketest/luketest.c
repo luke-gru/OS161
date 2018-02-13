@@ -7,6 +7,54 @@
 #include <errno.h>
 #include <limits.h>
 
+static int getenv_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  char *path = getenv("PATH");
+  if (!path) {
+    errx(1, "env PATH not set properly (NULL)");
+  }
+  printf("old PATH: %s\n", path);
+  int res = setenv("PATH", "/myval:/other", 1);
+  if (res != 0) {
+    errx(1, "error with setenv: got %d (%d:%s)", res, errno, strerror(errno));
+  }
+  path = getenv("PATH");
+  if (strcmp(path, "/myval:/other") != 0) {
+    errx(1, "Improper PATH from getenv() after successful setenv(): '%s'", path);
+  }
+  res = setenv("NEWVAL", "myval", 0);
+  if (res != 0) {
+    errx(1, "setenv with new ENV name-value pair failed: %d (%d:%s)", res, errno, strerror(errno));
+  }
+  char *myval = getenv("NEWVAL");
+  if (!myval) {
+    errx(1, "getenv failed after successful setenv() with new key-value pair");
+  }
+  if (strcmp(myval, "myval") != 0) {
+    errx(1, "Improper NEWVAL value: '%s'", myval);
+  }
+  int i = 0;
+  for (i = 0; i < 100; i++) {
+    char *key = malloc(7);
+    if (!key) { errx(1, "out of MEM allocating ENV key in iter %d", i); }
+    snprintf(key, 6, "key%d", i);
+    key[6] = '\0';
+    res = setenv(key, "val", 0);
+    if (res != 0) {
+      if (i > 75 && errno == ENOMEM) { // this SHOULD happen
+        printf("Couldn't add another key after setenv() iteration %d\n", i);
+        break;
+      }
+      errx(1, "setenv() failed with res: %d in iter %d (%d:%s)", res, i, errno, strerror(errno));
+    }
+  }
+  if (i == 100) {
+    errx(1, "setenv() should have given ENOMEM after trying to add too many entries (100 should be max TOTAL)");
+  }
+  return 0;
+}
+
 static int tmpfile_test(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -875,6 +923,8 @@ static void files_test(int argc, char **argv) {
 }
 
 int main(int argc, char *argv[]) {
+  //char *path = getenv("PATH");
+  //printf("PATH: %s\n", path);
   if (strcmp(argv[1], "fcntl") == 0) {
     fcntl_test(argc, argv);
   } else if (strcmp(argv[1], "pipe1") == 0) {
@@ -917,7 +967,9 @@ int main(int argc, char *argv[]) {
     access_test(argc, argv);
   } else if (strcmp(argv[1], "tmpfile") == 0) {
     tmpfile_test(argc, argv);
+  } else if (strcmp(argv[1], "getenv") == 0) {
+    getenv_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket|flock1|access|tmpfile OPTIONS\n");
+    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket|flock1|access|tmpfile|getenv OPTIONS\n");
   }
 }

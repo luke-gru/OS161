@@ -198,6 +198,11 @@ struct proc {
 	// see above comment for p_stacktop for why this isn't in the struct addrspace
 	size_t p_stacksize;
 
+	char **p_environ; // array of environment variable strings, ex: { "PATH=/bin:", NULL }
+	// userspace environment pointer, we need this for fork/exec, because a process can mutate its environment
+	// array with calls to userspace functions like putenv(3)/clearenv(3)/setenv(3)/unsetenv(3)
+	userptr_t p_uenviron;
+
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
 	struct filedes **file_table;
@@ -240,6 +245,8 @@ void proc_destroy(struct proc *proc);
 int proc_addthread(struct proc *proc, struct thread *t);
 /* Detach a thread from its process. */
 void proc_remthread(struct thread *t);
+
+int proc_environ_numvars(struct proc *p);
 
 // Wait on child process to finish, collect its exitstatus and clean it up
 int proc_waitpid_sleep(pid_t pid, int *errcode);

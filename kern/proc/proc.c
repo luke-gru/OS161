@@ -79,6 +79,13 @@ struct flock_node *file_locks;
 static struct flock_node *flocklist_virt_head;
 static struct flock_node *flocklist_virt_tail;
 
+static const char *default_proc_environ[] = {
+	"PATH=/bin:/testbin",
+	"SHELL=/bin/sh",
+	"TERM=vt220",
+	NULL,
+};
+
 const char *special_filedes_name(int i) {
 	switch (i) {
 		case 0:
@@ -1014,6 +1021,48 @@ int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen) {
 	return 0;
 }
 
+/* NOTE: doesn't include terminating NULL at end of array */
+int proc_environ_numvars(struct proc *p) {
+	DEBUGASSERT(p && p->p_environ);
+	int i = 0;
+	while (p->p_environ[i] != NULL) {
+		i++;
+	}
+	return i;
+}
+
+static void proc_free_environ(char **environ) {
+	DEBUGASSERT(environ);
+	int i = 0;
+	while (environ[i] != NULL) {
+		kfree(environ[i]);
+		i++;
+	}
+	kfree(environ);
+}
+
+static char **proc_dup_environ(const char **environ_proto, size_t num_vars/* includes NULL */) {
+	DEBUGASSERT(environ_proto);
+	if (num_vars == 0) {
+		while (environ_proto[num_vars] != NULL) { num_vars++; }
+		num_vars++; // 1 more for NULL
+	}
+	char **env = kmalloc(num_vars);
+	KASSERT(env);
+	int i = 0;
+	while (environ_proto[i] != NULL) {
+		env[i] = kstrdup(environ_proto[i]);
+		KASSERT(env[i]);
+		i++;
+	}
+	env[i] = NULL;
+	return env;
+}
+
+static char** proc_default_environ() {
+	return proc_dup_environ(default_proc_environ, sizeof(default_proc_environ));
+}
+
 /*
  * Create a proc structure with empty address space and file table.
  */
@@ -1039,6 +1088,9 @@ struct proc *proc_create(const char *name) {
 
 	/* VFS fields */
 	proc->p_cwd = NULL;
+	/* userspace environment variables array */
+	proc->p_environ = proc_default_environ();
+	proc->p_uenviron = (userptr_t)0;
 
 	proc->pid = INVALID_PID;
 	proc->file_table = kmalloc(FILE_TABLE_LIMIT * sizeof(struct filedes*));
@@ -1162,7 +1214,8 @@ void proc_destroy(struct proc *proc) {
 			userprocs[i] = NULL;
 		}
 	}
-
+	proc_free_environ(proc->p_environ);
+	proc->p_environ = NULL;
 	kfree(proc->p_name);
 	lock_destroy(proc->p_mutex);
 	kfree(proc);
