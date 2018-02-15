@@ -153,12 +153,14 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 			size_t arglen_got = 0;
 			int copy_res = copyinstr((const_userptr_t)argv_p[i], argbuf, ARG_SINGLE_MAX, &arglen_got);
 			if (copy_res != 0 || arglen_got == 0) {
+				DEBUG(DB_SYSCALL, "Invalid copy for ARGV arg #%d\n", i);
 				for (int j = 0; j < i; j++) { kfree(args[j]); }
 				*errcode = EFAULT;
 				return -1;
-				//panic("invalid copy for arg #%d: (%s)", i, argv_p[i]); // FIXME:
 			}
+			if (i == 0) kfree(args[0]);
 			args[i] = (char*)kmalloc(arglen_got); // includes NULL byte, freed further down
+			KASSERT(args[i]);
 			memcpy(args[i], argbuf, arglen_got);
 			bzero(argbuf, ARG_SINGLE_MAX+1);
 			nargs_given++;
@@ -226,6 +228,7 @@ static int environ_fill(struct argvdata *argdata, char **environ, size_t environ
 			size_t arg_sz = strlen(envp[i]) + 1; // with terminating NULL
 			memcpy(bufp, (const void *)envp[i], arg_sz);
 			KASSERT(strcmp(bufp, envp[i]) == 0);
+			kfree(envp[i]);
 			if (i > 0) {
 				argdata->offsets[i] = bufp - argdata->buffer;
 			}
@@ -468,7 +471,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 	}
 	int nargs = argdata->nargs;
 	struct argvdata *envdata = argvdata_create();
-	environ_fill(envdata, new_environ, (size_t)101, num_environ_vars);
+	environ_fill(envdata, new_environ, 101, num_environ_vars);
 	environ_debug(envdata, "exec");
 
 	copyout_res = copyout_args(envdata, &userspace_env_ary, &sp_start);

@@ -122,7 +122,7 @@ static int copy_in_environ(char **new_environ, userptr_t envp, int *num_env_vars
     copy_res = copyinstr((const_userptr_t)entry, buf, 1025, &gotlen);
     if (copy_res != 0) {
       *err = copy_res;
-      panic("got here");
+      kfree(buf);
       return -1;
     }
     if (gotlen == 0) {
@@ -166,7 +166,13 @@ int sys_execve(userptr_t filename_ubuf, userptr_t argv, userptr_t envp, int *ret
   bzero(new_environ, 101 * sizeof(char*));
   int copy_env_err = 0;
   int num_env_vars = 0;
-  copy_in_environ(new_environ, envp, &num_env_vars, &copy_env_err);
+  int copy_environ_res = copy_in_environ(new_environ, envp, &num_env_vars, &copy_env_err);
+  if (copy_environ_res == -1) {
+    DEBUG(DB_SYSCALL, "sys_execv failed to copy in ENV array, %d (%s)\n", copy_env_err, strerror(copy_env_err));
+    *retval = -1;
+    splx(spl);
+    return copy_env_err;
+  }
 
   struct addrspace *as_old = proc_setas(NULL); // to reset in case of error
   //DEBUG(DB_SYSCALL, "sys_execv running for process %d\n", curproc->pid);
@@ -179,6 +185,7 @@ int sys_execve(userptr_t filename_ubuf, userptr_t argv, userptr_t envp, int *ret
   proc_setas(as_old);
   as_activate();
   argvdata_destroy(argdata);
+  proc_free_environ(new_environ, 101);
   splx(spl);
   *retval = -1;
   return res;
