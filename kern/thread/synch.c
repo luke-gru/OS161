@@ -81,6 +81,7 @@ sem_destroy(struct semaphore *sem)
 	/* wchan_cleanup will assert if anyone's waiting on it */
 	spinlock_cleanup(&sem->sem_lock);
 	wchan_destroy(sem->sem_wchan);
+	sem->sem_wchan = NULL;
 	kfree(sem->sem_name);
 	kfree(sem);
 }
@@ -147,7 +148,7 @@ lock_create(const char *name)
 	if (lock == NULL) {
 		return NULL;
 	}
-
+	KASSERT(name);
 	lock->lk_name = kstrdup(name);
 	if (lock->lk_name == NULL) {
 		kfree(lock);
@@ -173,17 +174,18 @@ void
 lock_destroy(struct lock *lock)
 {
 	KASSERT(lock != NULL);
+	KASSERT(lock->lk_wchan != NULL);
 	if (lock->locked) {
 		panic("attempt to destroy locked lock: %s\n", lock->lk_name);
 	}
 
-	// add stuff here as needed
-
 	kfree(lock->lk_name);
+	lock->lk_name = NULL;
 	lock->holder = NULL;
 	lock->locked = false;
 	spinlock_cleanup(&lock->lk_lock);
 	wchan_destroy(lock->lk_wchan);
+	lock->lk_wchan = NULL;
 	kfree(lock);
 }
 
@@ -238,6 +240,7 @@ struct cv *
 cv_create(const char *name)
 {
 	struct cv *cv;
+	KASSERT(name);
 
 	cv = kmalloc(sizeof(*cv));
 	if (cv == NULL) {
@@ -267,8 +270,10 @@ cv_destroy(struct cv *cv)
 	KASSERT(cv != NULL);
 	spinlock_cleanup(&cv->cv_wchan_lk);
 	wchan_destroy(cv->cv_wchan);
+	cv->cv_wchan = NULL;
 
 	kfree(cv->cv_name);
+	cv->cv_name = NULL;
 	kfree(cv);
 }
 
@@ -319,11 +324,23 @@ struct rwlock *rwlock_create(const char *name) {
 	}
 	rw->rwlock_name = kstrdup(name);
 	if (rw->rwlock_name == NULL) {
-		kfree(rw); return NULL;
+		kfree(rw);
+		return NULL;
 	}
 	rw->rw_wchan = wchan_create(rw->rwlock_name);
-	spinlock_init(&rw->rw_wchan_lk);
+	if (rw->rw_wchan == NULL) {
+		kfree(rw->rwlock_name);
+		kfree(rw);
+		return NULL;
+	}
 	rw->lock = lock_create(rw->rwlock_name);
+	if (rw->lock == NULL) {
+		wchan_destroy(rw->rw_wchan);
+		kfree(rw->rwlock_name);
+		kfree(rw);
+		return NULL;
+	}
+	spinlock_init(&rw->rw_wchan_lk);
 	rw->reader_count = 0;
 	rw->writer_count = 0;
 	rw->write_requests = 0;
@@ -333,12 +350,15 @@ struct rwlock *rwlock_create(const char *name) {
 void rwlock_destroy(struct rwlock *rw) {
 	KASSERT(rw != NULL);
 	wchan_destroy(rw->rw_wchan);
+	rw->rw_wchan = NULL;
 	spinlock_cleanup(&rw->rw_wchan_lk);
 	lock_destroy(rw->lock);
+	rw->lock = NULL;
 	rw->reader_count = 0;
 	rw->writer_count = 0;
 	rw->write_requests = 0;
 	kfree(rw->rwlock_name);
+	rw->rwlock_name = NULL;
 	kfree(rw);
 }
 

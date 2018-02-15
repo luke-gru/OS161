@@ -36,8 +36,7 @@
  * Example system call: get the time of day.
  */
 int
-sys___time(userptr_t user_seconds_ptr, userptr_t user_nanoseconds_ptr)
-{
+sys___time(userptr_t user_seconds_ptr, userptr_t user_nanoseconds_ptr) {
 	struct timespec ts;
 	int result;
 	gettime(&ts);
@@ -47,11 +46,11 @@ sys___time(userptr_t user_seconds_ptr, userptr_t user_nanoseconds_ptr)
 		return result;
 	}
 
-	result = copyout(&ts.tv_nsec, user_nanoseconds_ptr,
-			 sizeof(ts.tv_nsec));
-	if (result) {
-		return result;
+	if (user_nanoseconds_ptr != (userptr_t)0) {
+		result = copyout(&ts.tv_nsec, user_nanoseconds_ptr, sizeof(ts.tv_nsec));
+		if (result) {
+			return result;
+		}
 	}
-
 	return 0;
 }

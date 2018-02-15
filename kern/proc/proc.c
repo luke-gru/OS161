@@ -116,6 +116,11 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	struct filedes *file_des = kmalloc(sizeof(*file_des));
 	KASSERT(file_des);
 	file_des->pathname = kstrdup(pathname);
+	if (!file_des->pathname) {
+		kfree(file_des);
+		*errcode = ENOMEM;
+		return NULL;
+	}
 	file_des->ftype = FILEDES_TYPE_REG;
 	file_des->node = node;
 	file_des->pipe = NULL;
@@ -125,6 +130,12 @@ static struct filedes *filedes_create(struct proc *p, char *pathname, struct vno
 	file_des->refcount = 1;
 	file_des->flock_nodep = NULL;
 	file_des->lk = lock_create("file lock");
+	if (!file_des->lk) {
+		kfree(file_des->pathname);
+		kfree(file_des);
+		*errcode = ENOMEM;
+		return NULL;
+	}
 	file_des->latest_fd = -1;
 	int fd = filetable_put(p, file_des, table_idx);
 	if (fd == -1) {
@@ -182,10 +193,14 @@ static void filedes_destroy(struct proc *p, struct filedes *file_des) {
 		file_unlink(file_des->pathname);
 	}
 	kfree(file_des->pathname);
+	file_des->pathname = NULL;
 	vfs_close(file_des->node); // check success?
 	file_des->node = (void*)0xdeadbeef;
 	KASSERT(!lock_do_i_hold(file_des->lk));
-	lock_destroy(file_des->lk);
+	if (file_des->lk) {
+		lock_destroy(file_des->lk);
+	}
+	file_des->lk = NULL;
 	filetable_nullout(p, file_des);
 	file_des->refcount = 0;
 	file_des->flags = 0;
@@ -366,14 +381,15 @@ struct filedes *filetable_get(struct proc *p, int fd) {
 		return NULL;
 	}
 	if (!p) p = curproc;
-	return p->file_table[fd];
+	struct filedes *res = p->file_table[fd];
+	return res;
 }
 
 int filetable_nullout(struct proc *p, struct filedes *des) {
+	if (!des) return -1;
 	if (!p) p = curproc;
 	struct filedes **fd_tbl = p->file_table;
 	int num_nulled = 0;
-	if (!des) return -1;
 	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
 		if (fd_tbl[i] == des) {
 			fd_tbl[i] = NULL;
@@ -1067,7 +1083,7 @@ static char** proc_default_environ() {
 /*
  * Create a proc structure with empty address space and file table.
  */
-struct proc *proc_create(const char *name) {
+struct proc *proc_create(const char *name, int flags) {
 	struct proc *proc;
 
 	proc = kmalloc(sizeof(*proc));
@@ -1075,37 +1091,50 @@ struct proc *proc_create(const char *name) {
 		return NULL;
 	}
 	proc->p_name = kstrdup(name);
-	proc->p_parent = NULL;
-
 	if (proc->p_name == NULL) {
 		kfree(proc);
 		return NULL;
 	}
+	proc->p_parent = NULL;
+	proc->pid = INVALID_PID;
 
 	proc->p_numthreads = 0;
 
 	/* VM fields */
 	proc->p_addrspace = NULL;
+	proc->p_stacktop = 0;
+	proc->p_stacksize = 0;
 
 	/* VFS fields */
 	proc->p_cwd = NULL;
+
 	/* userspace environment variables array */
-	proc->p_environ = proc_default_environ();
-	proc->p_environ_ary_len = sizeof(default_proc_environ) / sizeof(char*);
+	if (flags & PROC_CREATEFL_EMPTY_ENV) {
+		proc->p_environ = NULL;
+		proc->p_environ_ary_len = 0;
+	} else {
+		proc->p_environ = proc_default_environ();
+		proc->p_environ_ary_len = sizeof(default_proc_environ) / sizeof(char*);
+	}
 	proc->p_uenviron = (userptr_t)0;
 
-	proc->pid = INVALID_PID;
-	proc->file_table = kmalloc(FILE_TABLE_LIMIT * sizeof(struct filedes*));
-	if (proc->file_table == NULL) {
-		kfree(proc->p_name);
-		kfree(proc);
-		return NULL;
+	if (flags & PROC_CREATEFL_EMPTY_FT) {
+		proc->file_table = NULL;
+		proc->file_table_refcount = 0;
+	} else {
+		proc->file_table = kmalloc(FILE_TABLE_LIMIT * sizeof(struct filedes*));
+		if (proc->file_table == NULL) {
+			kfree(proc->p_name);
+			kfree(proc);
+			return NULL;
+		}
+		bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
+		proc->file_table_refcount = 1;
 	}
-	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
-	proc->file_table_refcount = 1;
+
 	spinlock_init(&proc->p_lock);
 	proc->p_mutex = lock_create("proc mutex");
-
+	proc->p_rflags = 0;
 	return proc;
 }
 
@@ -1192,17 +1221,12 @@ void proc_destroy(struct proc *proc) {
 		 */
 		struct addrspace *as;
 
-		if (proc == curproc) {
-			DEBUG(DB_VM, "Calling as_deactivate in proc_destroy for %s\n", proc->p_name);
-			as = proc_setas(NULL);
-			as_deactivate();
+		as = proc->p_addrspace;
+		proc->p_addrspace = NULL;
+		if ((proc->p_rflags & PROC_RUNFL_SIGEXEC) == 0) { // don't destroy address space of parent if in a vfork!
+			DEBUG(DB_VM, "Calling as_destroy in proc_destroy for %s\n", proc->p_name);
+			as_destroy(as);
 		}
-		else {
-			as = proc->p_addrspace;
-			proc->p_addrspace = NULL;
-		}
-		DEBUG(DB_VM, "Calling as_destroy in proc_destroy for %s\n", proc->p_name);
-		as_destroy(as);
 	}
 
 	KASSERT(proc->p_numthreads == 0);
@@ -1216,19 +1240,20 @@ void proc_destroy(struct proc *proc) {
 			userprocs[i] = NULL;
 		}
 	}
-	if (proc->p_environ) {
-		proc_free_environ(proc->p_environ, proc->p_environ_ary_len);
-	}
-	proc->p_environ = NULL;
+	// if (proc->p_environ) {
+	// 	proc_free_environ(proc->p_environ, proc->p_environ_ary_len);
+	// }
+	// proc->p_environ = NULL;
 	kfree(proc->p_name);
 	lock_destroy(proc->p_mutex);
 	kfree(proc);
 }
 
-int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe *tf, int *err) {
+int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe *tf, int flags, int *err) {
 	KASSERT(is_current_userspace_proc(parent_pr));
 	struct proc *child_pr = NULL;
-	child_pr = proc_create(parent_pr->p_name);
+	int res;
+	child_pr = proc_create(parent_pr->p_name, PROC_CREATEFL_NORM);
 	if (!child_pr) {
 		*err = ENOMEM; // just a guess
 		return -1;
@@ -1237,17 +1262,34 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 	child_pr->p_addrspace = NULL;
 	child_pr->p_uenviron = parent_pr->p_uenviron;
 	lock_acquire(parent_pr->p_mutex);
-	int res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
-	if (res != 0) {
+	if (flags & PROC_FORKFL_NORM) {
+		res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
+		if (res != 0) {
+			lock_release(parent_pr->p_mutex);
+			proc_destroy(child_pr);
+			*err = res;
+			return -1;
+		}
+	} else if (flags & PROC_FORKFL_VFORK) {
+		child_pr->p_addrspace = parent_pr->p_addrspace;
+		child_pr->p_stacktop = parent_pr->p_stacktop;
+		child_pr->p_stacksize = parent_pr->p_stacksize;
+		// signal parent on exec or exit to wake him up, as parent auto-sleeps after call to vfork()
+		child_pr->p_rflags |= PROC_RUNFL_SIGEXEC;
+	} else { // invalid flags
 		lock_release(parent_pr->p_mutex);
 		proc_destroy(child_pr);
-		*err = res;
+		*err = EINVAL;
 		return -1;
 	}
+
 	KASSERT(child_pr->p_addrspace != NULL);
 	res = proc_inherit_filetable(parent_pr, child_pr);
 	if (res != 0) {
 		lock_release(parent_pr->p_mutex);
+		if (flags & PROC_FORKFL_VFORK) {
+			child_pr->p_addrspace = NULL; // make sure not to wipe parent's addrspace
+		}
 		proc_destroy(child_pr);
 		*err = res;
 		return -1;
@@ -1261,11 +1303,15 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 		parent_th,
 		child_pr,
 		tf,
+		flags,
 		&fork_errcode
 	);
 	if (res < 0) {
 		*err = fork_errcode;
 		lock_release(parent_pr->p_mutex);
+		if (flags & PROC_FORKFL_VFORK) {
+			child_pr->p_addrspace = NULL; // make sure not to wipe parent's addrspace
+		}
 		proc_destroy(child_pr);
 		return -1;
 	} else {
@@ -1318,11 +1364,14 @@ unsigned proc_numprocs(void) {
  * Create the process structure for the kernel.
  */
 void proc_bootstrap(void) {
-	kproc = proc_create("[kernel]");
+	kproc = proc_create(
+		"[kernel]",
+		PROC_CREATEFL_NORM |
+		PROC_CREATEFL_EMPTY_FT |
+		PROC_CREATEFL_EMPTY_ENV
+);
+	KASSERT(kproc);
 	kproc->pid = BOOTUP_PID;
-	if (kproc == NULL) {
-		panic("proc_create for kproc failed\n");
-	}
 	for (int i = 0; i < MAX_USERPROCS; i++) {
 		userprocs[i] = NULL;
 	}
@@ -1330,6 +1379,7 @@ void proc_bootstrap(void) {
 	devnull = kmalloc(sizeof(struct filedes));
 	KASSERT(devnull);
 	devnull->pathname = kstrdup("/dev/null");
+	KASSERT(devnull->pathname);
 	devnull->ftype = FILEDES_TYPE_REG;
 	devnull->node = NULL;
 	devnull->pipe = NULL;
@@ -1351,6 +1401,10 @@ void proc_bootstrap(void) {
 	flocklist_virt_tail = virt_tail;
 	file_locks = virt_head;
 	KASSERT(file_locks->fln_next->fln_prev == virt_head);
+}
+
+void proc_latestage_bootstrap(void) {
+	KASSERT(kproc);
 }
 
 /*
@@ -1510,7 +1564,7 @@ struct proc *proc_create_runprogram(const char *name) {
 		parent_proc = curproc;
 	}
 
-	newproc = proc_create(name);
+	newproc = proc_create(name, PROC_CREATEFL_NORM);
 	if (newproc == NULL) {
 		return NULL;
 	}
@@ -1570,7 +1624,7 @@ struct proc *proc_clone(struct proc *old, vaddr_t new_stacktop, size_t new_stack
 	size_t name_size = strlen(old->p_name)+1+8;
 	char *clone_name = kmalloc(name_size); // ' (clone)'
 	snprintf(clone_name, name_size, "%s (clone)", old->p_name);
-	struct proc *clone = proc_create(clone_name);
+	struct proc *clone = proc_create(clone_name, PROC_CREATEFL_EMPTY_FT);
 	if (!clone) {
 		DEBUG(DB_SYSCALL, "proc_clone failed: proc_create failure\n");
 		kfree(clone_name);
@@ -1580,13 +1634,12 @@ struct proc *proc_clone(struct proc *old, vaddr_t new_stacktop, size_t new_stack
 	kfree(clone_name); // proc_create() kstrdup's the name, so we can free it here
 	clone->p_addrspace = old->p_addrspace; // share address space with old process
 	clone->p_addrspace->refcount++;
-	clone->file_table_refcount++;
+	clone->file_table_refcount = old->file_table_refcount+1;
 	old->file_table_refcount++;
-	kfree(clone->file_table); // share file_table with old process
 	clone->file_table = old->file_table;
 	clone->p_parent = old->p_parent;
 	clone->p_cwd = old->p_cwd;
-	clone->pid = INVALID_PID; // given in thread_fork
+	clone->pid = INVALID_PID; // pid given in thread_fork
 	clone->p_stacktop = new_stacktop;
 	clone->p_stacksize = new_stacksize;
 	return clone;

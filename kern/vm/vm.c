@@ -55,6 +55,7 @@ void vm_bootstrap(void) {
 	paddr_t coremapaddr, temp;
 
 	ram_getsize(&firstaddr, &lastaddr);
+	lock_pagetable();
 
 	page_num = (lastaddr-firstaddr) / PAGE_SIZE;
 
@@ -66,6 +67,7 @@ void vm_bootstrap(void) {
 	coremap_size = ROUNDUP(coremapaddr, PAGE_SIZE) / PAGE_SIZE;
 
 	pages_in_coremap = page_num;
+
 
 	for (int i=0; i<page_num; i++) {
 
@@ -86,14 +88,16 @@ void vm_bootstrap(void) {
 	}
 
 	beforeVM = false;
+	unlock_pagetable();
 }
 
 void kswapd_bootstrap() {
-  struct proc *kswapd_proc = proc_create("kswapd");
+  struct proc *kswapd_proc = proc_create("kswapd", PROC_CREATEFL_NORM|PROC_CREATEFL_EMPTY_FT|PROC_CREATEFL_EMPTY_ENV);
   kswapproc = kswapd_proc;
   kswapd_proc->pid = KSWAPD_PID;
   kswapd_proc->p_parent = kproc;
   kswapd_proc->p_cwd = kproc->p_cwd;
+	return; // NOTE: not running right now
   struct addrspace *as = as_create(kswapd_proc->p_name);
   KASSERT(as);
 	as->no_heap_alloc = true;
@@ -101,6 +105,7 @@ void kswapd_bootstrap() {
   KASSERT(as_prepare_load(as) == 0); // allocate userspace stack pages so we can jump to entrypoint func
   struct page_table_entry *pte = as->pages;
   char *pte_name = as->name;
+	lock_pagetable();
   while (pte != NULL) {
     pte->debug_name = pte_name;
     KASSERT(pte->coremap_idx > 0);
@@ -109,6 +114,7 @@ void kswapd_bootstrap() {
     coremap[pte->coremap_idx].is_pinned = true;
     pte = pte->next;
   }
+	unlock_pagetable();
 	struct cpu *non_boot_cpu = thread_get_cpu(3);
   int fork_res = thread_fork_in_cpu("kswapd", kswapd_proc, non_boot_cpu, kswapd_start, NULL, 0);
 	KASSERT(fork_res == 0);
@@ -287,7 +293,7 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
 	}
 
 	if (pop && i < pages_in_coremap && coremap[i].state == PAGESTATE_FREE) {
-		//panic("already free");
+		panic("already free");
 		if (dolock) {
 			unlock_pagetable();
 		}

@@ -67,6 +67,16 @@ struct socket;
 
 #define PIPE_BUF_MAX 4096
 
+#define PROC_FORKFL_NORM 1
+#define PROC_FORKFL_VFORK 2
+
+#define PROC_RUNFL_SIGEXEC 1
+#define PROC_RUNFL_WAITEXEC 2
+
+#define PROC_CREATEFL_NORM 1
+#define PROC_CREATEFL_EMPTY_FT 2
+#define PROC_CREATEFL_EMPTY_ENV 4
+
 enum io_ready_type {
 	IO_TYPE_READ = 1,
 	IO_TYPE_WRITE = 2,
@@ -208,6 +218,7 @@ struct proc {
 	struct vnode *p_cwd;		/* current working directory */
 	struct filedes **file_table;
 	short file_table_refcount;
+	volatile int p_rflags; // runflags for process (change how the process runs, used internally by kernel)
 
 	/* add more material here as needed */
 };
@@ -218,7 +229,8 @@ extern struct proc *kswapproc;
 
 /* Call once during system startup to allocate data structures. */
 void proc_bootstrap(void);
-struct proc *proc_create(const char *name);
+void proc_latestage_bootstrap(void);
+struct proc *proc_create(const char *name, int flags);
 int proc_init_pid(struct proc *);
 struct proc *proc_lookup(pid_t pid);
 int proc_init_filetable(struct proc *);
@@ -252,7 +264,7 @@ void proc_free_environ(char **environ, size_t environ_ary_len);
 
 // Wait on child process to finish, collect its exitstatus and clean it up
 int proc_waitpid_sleep(pid_t pid, int *errcode);
-int proc_fork(struct proc *parent, struct thread *th, struct trapframe *tf, int *errcode);
+int proc_fork(struct proc *parent, struct thread *th, struct trapframe *tf, int flags, int *errcode);
 struct proc *proc_clone(struct proc *old, vaddr_t stacktop, size_t stacksize, int flags, int *errcode);
 bool proc_is_clone(struct proc *p);
 int proc_pre_exec(struct proc *p, char *progname);

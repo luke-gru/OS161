@@ -268,7 +268,7 @@ mips_trap(struct trapframe *tf)
 	}
 
 	// FIXME: hack for returning from threads, load invalid address and catch it here.
-	if (code == EX_ADEL && proc_is_clone(curproc) && tf->tf_vaddr == UINT32_MAX) {
+	if (code == EX_ADEL && tf->tf_vaddr == UINT32_MAX && proc_is_clone(curproc)) {
 		// thread exited
 		thread_exit(0);
 	}
@@ -360,6 +360,9 @@ mips_trap(struct trapframe *tf)
 	 * to find out now.
 	 */
 	KASSERT(SAME_STACK(cpustacks[curcpu->c_number]-1, (vaddr_t)tf));
+	if (curthread->t_pid == 4 && curthread->t_proc == NULL) {
+		DEBUG(DB_SYSCALL, "Returning from child exception\n");
+	}
 }
 
 /*

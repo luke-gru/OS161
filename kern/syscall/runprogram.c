@@ -41,12 +41,14 @@
 #include <thread.h>
 #include <copyinout.h>
 #include <spl.h>
+#include <wchan.h>
 
 #define ENV_VARS_MAX 100
 #define ENV_VAR_SINGLE_MAX 1024
 
 struct argvdata *argvdata_create(void) {
 	struct argvdata *args = kmalloc(sizeof(struct argvdata));
+	KASSERT(args);
 	bzero(args, sizeof(struct argvdata));
 	return args;
 }
@@ -110,6 +112,7 @@ static void environ_debug(struct argvdata *env, const char *msg) {
 
 int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int argc) {
 	argdata->offsets = kmalloc(sizeof(size_t) * argc);
+	KASSERT(argdata->offsets);
 	argdata->offsets[0] = 0;
 	size_t buflen = 0;
 	for (int i = 0; i < argc; i++) {
@@ -122,6 +125,7 @@ int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int arg
 	}
 	buflen+=1; // NULL byte to end args array
 	argdata->buffer = kmalloc(buflen);
+	KASSERT(argdata->buffer);
 	char *bufp = argdata->buffer;
 	// copy args into buffer
 	for (int i = 0; i < argc; i++) {
@@ -149,6 +153,7 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 	bzero(args, NARGS_MAX * sizeof(char*));
 	bzero(argbuf, ARG_SINGLE_MAX+1);
 	args[0] = kstrdup(progname); // default
+	KASSERT(args[0]);
 	for (int i = 0; argv_p[i] != 0 && i < NARGS_MAX; i++) {
 			size_t arglen_got = 0;
 			int copy_res = copyinstr((const_userptr_t)argv_p[i], argbuf, ARG_SINGLE_MAX, &arglen_got);
@@ -168,8 +173,10 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 	}
 	buflen+=1; // NULL byte to end args array
 	argdata->buffer = kmalloc(buflen);
+	KASSERT(argdata->buffer);
 	bzero(argdata->buffer, buflen);
 	argdata->offsets = kmalloc(sizeof(size_t) * nargs_given);
+	KASSERT(argdata->offsets);
 	argdata->offsets[0] = 0;
 	argdata->offsets[nargs_given-1] = 0;
 	char *bufp = argdata->buffer;
@@ -205,6 +212,7 @@ static int environ_fill(struct argvdata *argdata, char **environ, size_t environ
 				buflen += 1;
 			} else {
 				envp[i] = kstrdup(environ_p[i]);
+				KASSERT(envp[i]);
 				buflen += strlen(environ_p[i])+1;
 				num_vars_found++;
 			}
@@ -212,8 +220,10 @@ static int environ_fill(struct argvdata *argdata, char **environ, size_t environ
 	KASSERT(num_vars == num_vars_found);
 	buflen+=1; // NULL byte to end envp array
 	argdata->buffer = kmalloc(buflen);
+	KASSERT(argdata->buffer);
 	bzero(argdata->buffer, buflen);
 	argdata->offsets = kmalloc(sizeof(size_t) * environ_ary_len);
+	KASSERT(argdata->offsets);
 	argdata->offsets[0] = 0;
 	argdata->offsets[environ_ary_len-1]=0;
 	char *bufp = argdata->buffer;
@@ -333,6 +343,7 @@ int runprogram(char *progname, char **args, int nargs) {
 	}
 
 	char *prognamecpy = kstrdup(progname);
+	KASSERT(prognamecpy);
 
 	/* Open the file. */
 	result = vfs_open(prognamecpy, O_RDONLY, 0, &v);
@@ -470,7 +481,6 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 
 	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &sp_start);
 	if (copyout_res != 0) {
-		panic("panic");
 		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
 		as_destroy(as);
 		vfs_close(v);
@@ -479,7 +489,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 	int nargs = argdata->nargs;
 	struct argvdata *envdata = argvdata_create();
 	environ_fill(envdata, new_environ, 101, num_environ_vars);
-	environ_debug(envdata, "exec");
+	//environ_debug(envdata, "exec");
 
 	copyout_res = copyout_args(envdata, &userspace_env_ary, &sp_start);
 	if (copyout_res != 0) {
@@ -499,12 +509,29 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 		return pre_exec_res;
 	}
 	proc_close_cloexec_files(curproc);
+
 	curproc->p_uenviron = userspace_env_ary;
 	if (curproc->p_environ) {
 		proc_free_environ(curproc->p_environ, curproc->p_environ_ary_len);
 	}
 	curproc->p_environ = new_environ;
 	curproc->p_environ_ary_len = 101;
+
+	if (curproc->p_rflags & PROC_RUNFL_SIGEXEC) {
+		struct proc *parent = curproc->p_parent;
+		KASSERT(parent);
+		struct thread *parent_th = thread_find_by_id(parent->pid);
+		if (parent_th && parent_th->t_state == S_SLEEP && parent_th->t_wchan) {
+			DEBUG(DB_SYSCALL, "Child waking parent after vfork -> exec()\n");
+			spinlock_acquire(parent_th->t_wchan_lk);
+			bool woke_parent = wchan_wake_specific(parent_th, parent_th->t_wchan, parent_th->t_wchan_lk);
+			spinlock_release(parent_th->t_wchan_lk);
+			KASSERT(woke_parent);
+			curproc->p_rflags &= (~PROC_RUNFL_SIGEXEC);
+		} else {
+			KASSERT(0); // parent should be sleeping...
+		}
+	}
 
 	// DEBUG(DB_SYSCALL, "sys_execv entering new process %d\n", curproc->pid);
 	spl0();

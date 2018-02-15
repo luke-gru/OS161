@@ -80,7 +80,7 @@ kstrdup(const char *s)
 	z = kmalloc(strlen(s)+1);
 	if (z == NULL) {
 		return NULL;
-        }
+  }
 	strcpy(z, s);
 	return z;
 }

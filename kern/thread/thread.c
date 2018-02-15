@@ -193,6 +193,8 @@ static struct thread * thread_create(const char *name) {
 
 	strcpy(thread->t_name, name);
 	thread->t_wchan_name = "NEW";
+	thread->t_wchan = NULL;
+	thread->t_wchan_lk = NULL;
 	thread->t_state = S_READY;
 	thread->wakeup_at = 0;
 
@@ -557,10 +559,7 @@ thread_start_cpus(void)
  *
  * targetcpu might be curcpu; it might not be, too.
  */
-static
-void
-thread_make_runnable(struct thread *target, bool already_have_lock)
-{
+void thread_make_runnable(struct thread *target, bool already_have_lock) {
 	struct cpu *targetcpu;
 
 	/* Lock the run queue of the target thread's cpu. */
@@ -675,7 +674,7 @@ thread_fork_in_cpu(const char *name, struct proc *proc, struct cpu *cpu,
 // Otherwise returns PID > 0 of child process. The child process is setup to run on
 // some next context switch, to return 0 from the caller's trapframe into userland.
 // This is to be used from sys_fork() only!, and requires an interrupt trapframe.
-int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapframe *tf, int *errcode) {
+int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapframe *tf, int flags, int *errcode) {
 	int result;
 	struct thread *newthread;
 
@@ -729,23 +728,26 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 	KASSERT(is_valid_pid(parent_pid));
 	KASSERT(is_valid_pid(child_pid));
 
-	p->p_addrspace->pid = child_pid;
-	// now that this process has a pid, add the pid to the shared mmapped structures of the parent (or grandparent)
-	struct addrspace *as = p->p_addrspace;
-	struct mmap_reg *mmap = as->mmaps;
-	while (mmap) {
-		DEBUGASSERT(mmap->flags & MAP_SHARED);
-		struct proc *p = proc_lookup(mmap->opened_by);
-		if (p) {
-			struct mmap_reg *mmap_parent = p->p_addrspace->mmaps;
-			while (mmap_parent && mmap_parent->start_addr != mmap->start_addr) {
-				mmap_parent = mmap_parent->next;
+	// vforked processes share the same address space as the parent until an _exit() or exec(), so sharing mmaps doesn't make sense
+	if ((flags & PROC_FORKFL_VFORK) == 0) {
+		p->p_addrspace->pid = child_pid;
+		// now that this process has a pid, add the pid to the shared mmapped structures of the parent (or grandparent)
+		struct addrspace *as = p->p_addrspace;
+		struct mmap_reg *mmap = as->mmaps;
+		while (mmap) {
+			DEBUGASSERT(mmap->flags & MAP_SHARED);
+			struct proc *par = proc_lookup(mmap->opened_by);
+			if (par) {
+				struct mmap_reg *mmap_parent = par->p_addrspace->mmaps;
+				while (mmap_parent && mmap_parent->start_addr != mmap->start_addr) {
+					mmap_parent = mmap_parent->next;
+				}
+				if (mmap_parent) {
+					mmap_add_shared_pid(mmap_parent, child_pid);
+				}
 			}
-			if (mmap_parent) {
-				mmap_add_shared_pid(mmap_parent, child_pid);
-			}
+			mmap = mmap->next;
 		}
-		mmap = mmap->next;
 	}
 
 	switchframe_init(newthread, enter_forked_process, tf, 0);
@@ -818,9 +820,10 @@ int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
 	return child_pid;
 }
 
+// NOTE: putting t->wakeup_at to -1 is a generic way to sleep indefinitely to the threads_sleeping_wchan
 static bool thread_find_ready_sleeper_cb(struct thread *t, void *data) {
 	(void)data;
-	return t->wakeup_at == 0 || t->wakeup_at <= timestamp();
+	return t->wakeup_at == 0 || (t->wakeup_at <= timestamp() && t->wakeup_at != -1);
 }
 
 // NOTE: runs once a second
@@ -942,8 +945,8 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 		 */
 		 	//DEBUGASSERT(cur->t_wchan == NULL);
 			threadlist_addtail(&wc->wc_threads, cur);
-			//cur->t_wchan = wc;
-			//cur->t_wchan_lk = lk;
+			cur->t_wchan = wc;
+			cur->t_wchan_lk = lk;
 			spinlock_release(lk);
 			break;
 	  case S_ZOMBIE:
@@ -1049,6 +1052,8 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 
 
 	cur->t_wchan_name = NULL;
+	cur->t_wchan = NULL;
+	cur->t_wchan_lk = NULL;
 	cur->t_state = S_RUN;
 	spinlock_release(&curcpu->c_runqueue_lock);
 	as_activate();
@@ -1083,6 +1088,8 @@ thread_startup(void (*entrypoint)(void *data1, unsigned long data2),
 
 	/* Clear the wait channel and set the thread state. */
 	cur->t_wchan_name = NULL;
+	cur->t_wchan = NULL;
+	cur->t_wchan_lk = NULL;
 	cur->t_state = S_RUN;
 
 	/* Release the runqueue lock acquired in thread_switch. */
@@ -1124,7 +1131,7 @@ void thread_exit(int status) {
 	struct thread *cur_th;
 	struct proc *cur_p = curproc;
 	DEBUG(DB_SYSCALL, "exiting from process %d (%s), status: %d\n", cur_p->pid, cur_p->p_name, status);
-
+	splhigh();
 	cur_th = curthread;
 	// NOTE: during boot, we have to deal with cpu_hatch calling thread_exit()
 	// when curproc is the kernel process itself
@@ -1133,6 +1140,20 @@ void thread_exit(int status) {
 	}
 	if (cur_p == kswapproc) {
 		panic("kswapd exited");
+	}
+
+	// wake parent process if we vforked and exited, as our parent auto-slept because of the
+	// vfork
+	if (cur_p->p_rflags & PROC_RUNFL_SIGEXEC) {
+		struct proc *parent = cur_p->p_parent;
+		KASSERT(parent);
+		struct thread *parent_th = thread_find_by_id(parent->pid);
+		if (parent_th && parent_th->t_state == S_SLEEP && parent_th->t_wchan) {
+			DEBUG(DB_SYSCALL, "Child waking parent after vfork -> _exit()\n");
+			spinlock_acquire(parent_th->t_wchan_lk);
+			wchan_wake_specific(parent_th, parent_th->t_wchan, parent_th->t_wchan_lk);
+			spinlock_release(parent_th->t_wchan_lk);
+		}
 	}
 
 	if (cur_p && is_valid_user_pid(cur_p->pid)) {
@@ -1161,6 +1182,8 @@ void thread_exit(int status) {
 
 	/* Interrupts off on this processor */
 	splhigh();
+	DEBUG(DB_SYSCALL, "thread_exit() zombifying\n");
+
 	thread_switch(S_ZOMBIE, NULL, NULL); // run a new thread, current one gets destroyed during exorcise
 	panic("braaaaaaaiiiiiiiiiiinssssss\n");
 }
@@ -1377,17 +1400,32 @@ wchan_sleep(struct wchan *wc, struct spinlock *lk)
 	/* may not sleep in an interrupt handler */
 	KASSERT(!curthread->t_in_interrupt);
 
+	bool use_default_wchan = false;
+	if (!wc) {
+		use_default_wchan = true;
+		wc = threads_sleeping_wchan;
+		lk = &threads_sleeping_lock;
+		spinlock_acquire(lk);
+		curthread->wakeup_at = -1; // sleep indefinitely until woken up by wchan_wake() calls
+	}
+
 	/* must hold the spinlock */
 	KASSERT(spinlock_do_i_hold(lk));
 
 	/* must not hold other spinlocks */
 	KASSERT(curcpu->c_spinlocks == 1);
+
 	thread_switch(S_SLEEP, wc, lk); // releases spinlock
-	spinlock_acquire(lk);
+	if (curthread->wakeup_at == -1) {
+		curthread->wakeup_at = 0;
+	}
+	if (!use_default_wchan) {
+		spinlock_acquire(lk);
+	}
 }
 
-void wchan_sleep_no_reacquire_on_wake(struct wchan *wc, struct spinlock *lk)
-{
+// useful for when the wchan and lock could be freed by the caller right after waking us
+void wchan_sleep_no_reacquire_on_wake(struct wchan *wc, struct spinlock *lk) {
 	/* may not sleep in an interrupt handler */
 	KASSERT(!curthread->t_in_interrupt);
 
@@ -1399,6 +1437,7 @@ void wchan_sleep_no_reacquire_on_wake(struct wchan *wc, struct spinlock *lk)
 	thread_switch(S_SLEEP, wc, lk); // releases spinlock
 }
 
+// NOTE: timeouts are checked every second
 void register_wchan_timeout(struct thread *t, struct wchan *wchan, struct spinlock *lk, struct timeval *tv) {
 	struct timeout_node *node = kmalloc(sizeof(*node));
 	KASSERT(node);

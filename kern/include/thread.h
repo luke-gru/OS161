@@ -128,6 +128,8 @@ struct thread {
 
 	struct siginfo *t_pending_signals[PENDING_SIGNALS_MAX];
 	bool t_is_stopped; /* has been stopped by SIGSTOP */
+	struct wchan *t_wchan; // current channel we're waiting on, if any
+	struct spinlock *t_wchan_lk; // lock for channel we're waiting on
 };
 
 /*
@@ -173,7 +175,7 @@ int thread_fork_in_cpu(const char *name, struct proc *proc, struct cpu *cpu,
 int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
 											 	  userptr_t entrypoint, void *data1, int *errcode);
 struct cpu *thread_get_cpu(unsigned index);
-int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *tf, int *errcode);
+int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *tf, int flags, int *errcode);
 
 struct thread *thread_find_by_id(pid_t id);
 int thread_send_signal(struct thread *t, int sig);
@@ -192,6 +194,7 @@ void thread_exit(int status);
  * Interrupts need not be disabled.
  */
 void thread_yield(void);
+void thread_make_runnable(struct thread *target, bool already_have_lock);
 
 /*
  * Reshuffle the run queue. Called from the timer interrupt.

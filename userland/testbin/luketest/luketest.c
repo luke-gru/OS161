@@ -160,6 +160,34 @@ static int access_test(int argc, char **argv) {
   return 0;
 }
 
+static int vfork_test_exec(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  pid_t cpid = vfork();
+  if (cpid == 0) {
+    const char *args[2];
+    args[0] = "/bin/pwd";
+    args[1] = NULL;
+    int exec_res = execv(args[0], (char* const*)args);
+    errx(1, "Should not get here, exec failed with: %d", exec_res);
+  } else {
+    printf("child vforked, waiting for it to exit or exec...\n");
+    exit(0);
+  }
+}
+
+static int vfork_test_exit(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  pid_t cpid = vfork();
+  if (cpid == 0) {
+    _exit(0);
+  } else {
+    printf("child vforked, waiting for it to exit or exec...\n");
+    exit(0);
+  }
+}
+
 // multi-process flock tests
 static int flock2_test(int argc, char **argv) {
   if (argc != 3) {
@@ -1027,7 +1055,12 @@ int main(int argc, char *argv[]) {
     tmpfile_test(argc, argv);
   } else if (strcmp(argv[1], "getenv") == 0) {
     getenv_test(argc, argv);
+  } else if (strcmp(argv[1], "vfork1") == 0) {
+    vfork_test_exit(argc, argv);
+  } else if (strcmp(argv[1], "vfork2") == 0) {
+    vfork_test_exec(argc, argv);
   } else {
     errx(1, "Usage error!");
   }
+  exit(0);
 }

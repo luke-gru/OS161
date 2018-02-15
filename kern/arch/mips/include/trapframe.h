@@ -44,14 +44,14 @@ struct trapframe {
 	uint32_t tf_lo;
 	uint32_t tf_hi;
 	uint32_t tf_ra;		/* Saved register 31 */
-	uint32_t tf_at;		/* Saved register 1 (AT) */
-	uint32_t tf_v0;		/* Saved register 2 (v0) */
+	uint32_t tf_at;		/* Saved register 1 (AT) */ // assembler temporary
+	uint32_t tf_v0;		/* Saved register 2 (v0) */ // fn return reg
 	uint32_t tf_v1;		/* etc. */
-	uint32_t tf_a0;
+	uint32_t tf_a0; // first 4 args to function
 	uint32_t tf_a1;
 	uint32_t tf_a2;
 	uint32_t tf_a3;
-	uint32_t tf_t0;
+	uint32_t tf_t0; // temporary variables
 	uint32_t tf_t1;
 	uint32_t tf_t2;
 	uint32_t tf_t3;
@@ -59,7 +59,7 @@ struct trapframe {
 	uint32_t tf_t5;
 	uint32_t tf_t6;
 	uint32_t tf_t7;
-	uint32_t tf_s0;
+	uint32_t tf_s0; // function variables
 	uint32_t tf_s1;
 	uint32_t tf_s2;
 	uint32_t tf_s3;
@@ -67,11 +67,11 @@ struct trapframe {
 	uint32_t tf_s5;
 	uint32_t tf_s6;
 	uint32_t tf_s7;
-	uint32_t tf_t8;
+	uint32_t tf_t8; // 2 more temps
 	uint32_t tf_t9;
-	uint32_t tf_gp;
+	uint32_t tf_gp; // global pointer
 	uint32_t tf_sp; // userspace stack pointer
-	uint32_t tf_s8;
+	uint32_t tf_s8; // stack frame pointer/subroutine variable
 	uint32_t tf_epc;	/* coprocessor 0 epc register */
 };
 
