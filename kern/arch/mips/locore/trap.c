@@ -268,7 +268,7 @@ mips_trap(struct trapframe *tf)
 	}
 
 	// FIXME: hack for returning from threads, load invalid address and catch it here.
-	if (code == EX_ADEL && proc_is_clone(curproc) && tf->tf_vaddr == UINT32_MAX) {
+	if (code == EX_ADEL && tf->tf_vaddr == UINT32_MAX && proc_is_clone(curproc)) {
 		// thread exited
 		thread_exit(0);
 	}

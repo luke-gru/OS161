@@ -728,31 +728,30 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 	KASSERT(is_valid_pid(parent_pid));
 	KASSERT(is_valid_pid(child_pid));
 
-	p->p_addrspace->pid = child_pid;
-	// now that this process has a pid, add the pid to the shared mmapped structures of the parent (or grandparent)
-	struct addrspace *as = p->p_addrspace;
-	struct mmap_reg *mmap = as->mmaps;
-	while (mmap) {
-		DEBUGASSERT(mmap->flags & MAP_SHARED);
-		struct proc *par = proc_lookup(mmap->opened_by);
-		if (par) {
-			struct mmap_reg *mmap_parent = par->p_addrspace->mmaps;
-			while (mmap_parent && mmap_parent->start_addr != mmap->start_addr) {
-				mmap_parent = mmap_parent->next;
+	// vforked processes share the same address space as the parent until an _exit() or exec(), so sharing mmaps doesn't make sense
+	if ((flags & PROC_FORKFL_VFORK) == 0) {
+		p->p_addrspace->pid = child_pid;
+		// now that this process has a pid, add the pid to the shared mmapped structures of the parent (or grandparent)
+		struct addrspace *as = p->p_addrspace;
+		struct mmap_reg *mmap = as->mmaps;
+		while (mmap) {
+			DEBUGASSERT(mmap->flags & MAP_SHARED);
+			struct proc *par = proc_lookup(mmap->opened_by);
+			if (par) {
+				struct mmap_reg *mmap_parent = par->p_addrspace->mmaps;
+				while (mmap_parent && mmap_parent->start_addr != mmap->start_addr) {
+					mmap_parent = mmap_parent->next;
+				}
+				if (mmap_parent) {
+					mmap_add_shared_pid(mmap_parent, child_pid);
+				}
 			}
-			if (mmap_parent) {
-				mmap_add_shared_pid(mmap_parent, child_pid);
-			}
+			mmap = mmap->next;
 		}
-		mmap = mmap->next;
 	}
 
 	switchframe_init(newthread, enter_forked_process, tf, 0);
-	if (flags & PROC_FORKFL_VFORK) {
-		// don't make thread runnable yet...
-	} else {
-		thread_make_runnable(newthread, false);
-	}
+	thread_make_runnable(newthread, false);
 	splx(spl);
 	return child_pid;
 }
@@ -1143,6 +1142,8 @@ void thread_exit(int status) {
 		panic("kswapd exited");
 	}
 
+	// wake parent process if we vforked and exited, as our parent auto-slept because of the
+	// vfork
 	if (cur_p->p_rflags & PROC_RUNFL_SIGEXEC) {
 		struct proc *parent = cur_p->p_parent;
 		KASSERT(parent);
@@ -1153,7 +1154,6 @@ void thread_exit(int status) {
 			wchan_wake_specific(parent_th, parent_th->t_wchan, parent_th->t_wchan_lk);
 			spinlock_release(parent_th->t_wchan_lk);
 		}
-		curproc->p_rflags &= ~PROC_RUNFL_SIGEXEC;
 	}
 
 	if (cur_p && is_valid_user_pid(cur_p->pid)) {

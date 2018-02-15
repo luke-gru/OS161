@@ -109,15 +109,10 @@ int sys_vfork(struct trapframe *tf, int *retval) {
   } else { // in parent
     DEBUG(DB_SYSCALL, "process %d vforked, new pid: %d\n", curproc->pid, pid);
     KASSERT(is_valid_user_pid(pid));
-    struct thread *newthread = thread_find_by_id(pid);
-    KASSERT(newthread);
-    KASSERT(newthread->t_proc->p_rflags & PROC_RUNFL_SIGEXEC);
-    curthread->wakeup_at = -1;
-    splx(spl);
-    thread_make_runnable(newthread, false);
-    wchan_sleep(NULL, NULL); // sleep until child process wakes us upon _exit() or execv()
-
     *retval = pid;
+    splx(spl);
+    curthread->wakeup_at = -1;
+    wchan_sleep(NULL, NULL); // sleep until child process wakes us upon _exit() or exec()
   }
   return 0;
 }

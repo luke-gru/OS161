@@ -1114,7 +1114,9 @@ void proc_destroy(struct proc *proc) {
 			proc->p_addrspace = NULL;
 		}
 		DEBUG(DB_VM, "Calling as_destroy in proc_destroy for %s\n", proc->p_name);
-		as_destroy(as);
+		if ((proc->p_rflags & PROC_RUNFL_SIGEXEC) == 0) { // don't destroy address space of parent if in a vfork!
+			as_destroy(as);
+		}
 	}
 
 	KASSERT(proc->p_numthreads == 0);
@@ -1159,7 +1161,7 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 		child_pr->p_addrspace = parent_pr->p_addrspace;
 		child_pr->p_stacktop = parent_pr->p_stacktop;
 		child_pr->p_stacksize = parent_pr->p_stacksize;
-		// signal parent on exec to wake him up, as parent auto-sleeps after call to vfork()
+		// signal parent on exec or exit to wake him up, as parent auto-sleeps after call to vfork()
 		child_pr->p_rflags |= PROC_RUNFL_SIGEXEC;
 	} else { // invalid flags
 		lock_release(parent_pr->p_mutex);

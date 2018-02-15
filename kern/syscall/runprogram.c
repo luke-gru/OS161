@@ -41,6 +41,7 @@
 #include <thread.h>
 #include <copyinout.h>
 #include <spl.h>
+#include <wchan.h>
 
 struct argvdata *argvdata_create(void) {
 	struct argvdata *args = kmalloc(sizeof(struct argvdata));
@@ -373,6 +374,21 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 		return pre_exec_res;
 	}
 	proc_close_cloexec_files(curproc);
+	if (curproc->p_rflags & PROC_RUNFL_SIGEXEC) {
+		struct proc *parent = curproc->p_parent;
+		KASSERT(parent);
+		struct thread *parent_th = thread_find_by_id(parent->pid);
+		if (parent_th && parent_th->t_state == S_SLEEP && parent_th->t_wchan) {
+			DEBUG(DB_SYSCALL, "Child waking parent after vfork -> exec()\n");
+			spinlock_acquire(parent_th->t_wchan_lk);
+			bool woke_parent = wchan_wake_specific(parent_th, parent_th->t_wchan, parent_th->t_wchan_lk);
+			spinlock_release(parent_th->t_wchan_lk);
+			KASSERT(woke_parent);
+			curproc->p_rflags &= (~PROC_RUNFL_SIGEXEC);
+		} else {
+			KASSERT(0); // parent should be sleeping...
+		}
+	}
 
 	// DEBUG(DB_SYSCALL, "sys_execv entering new process %d\n", curproc->pid);
 	spl0();
