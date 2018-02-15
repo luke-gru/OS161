@@ -20,6 +20,6 @@ struct argvdata *argvdata_create(void);
 void argvdata_destroy(struct argvdata *argdata);
 void argvdata_debug(struct argvdata *argdata, const char *msg, char *progname);
 int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int argc);
-int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_t argv);
+int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_t argv, int *errcode);
 
 #endif

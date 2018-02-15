@@ -65,7 +65,8 @@ static int getenv_test(int argc, char **argv) {
     errx(1, "setenv() should have given ENOMEM after trying to add too many entries (100 should be max TOTAL)");
   }
 
-  char *args[3];
+  char *args[4];
+  args[3] = '\0';
   for (int i = 0; i < 3; i++) {
     if (i < 2) {
       args[i] = argv[i]; // PROGNAME getenv
@@ -73,7 +74,26 @@ static int getenv_test(int argc, char **argv) {
       args[i] = (char*)"INEXEC";
     }
   }
-  execv(argv[0], args);
+
+  pid_t cpid = fork();
+  if (cpid == -1) {
+    errx(1, "fork error: %d (%s)", errno, strerror(errno));
+  } else if (cpid == 0) { // child
+    char *path = getenv("PATH");
+    if (!path) {
+      errx(1, "Improper PATH (NULL) in forked child");
+    }
+    if (strcmp(path, "/myval:/other") != 0) {
+      errx(1, "Improper PATH in forked child: '%s'", path);
+    }
+    _exit(0);
+  } else { // parent
+    int exitstatus = 0;
+    waitpid(cpid, &exitstatus, 0);
+  }
+
+  int exec_res = execv(argv[0], args);
+  errx(1, "Error running execv %d (%d:%s)", exec_res, errno, strerror(errno));
 
   return 0;
 }
@@ -553,7 +573,7 @@ static int mmap_test1(int argc, char **argv) {
     printf("  in child, now B: %s\n", (char*)startaddr);
 
   } else { // parent
-    int exitstatus;
+    int exitstatus = 0;
     waitpid(pid, &exitstatus, 0);
     printf("  in parent, now B: %s\n", (char*)startaddr);
   }

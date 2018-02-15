@@ -561,7 +561,11 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	// KASSERT((as->heap_end & PAGE_FRAME) == as->heap_end);
 	KASSERT((as->pages->vaddr & PAGE_FRAME) == as->pages->vaddr);
 
+	if (curproc->p_stacksize != (VM_STACKPAGES * PAGE_SIZE)) {
+		curproc->p_stacksize = VM_STACKPAGES * PAGE_SIZE;
+	}
 	stackbase = curproc->p_stacktop - curproc->p_stacksize;
+	KASSERT(stackbase > 0);
 	stacktop = curproc->p_stacktop;
 
 	struct page_table_entry *pte;

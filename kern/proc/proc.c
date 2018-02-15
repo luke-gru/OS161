@@ -1035,7 +1035,9 @@ void proc_free_environ(char **environ, size_t environ_ary_len) {
 	DEBUGASSERT(environ);
 	size_t i = 0;
 	for (i = 0; i < environ_ary_len; i++) {
-		if (environ[i]) kfree(environ[i]);
+		if (environ[i] != NULL) {
+			 kfree(environ[i]);
+		}
 	}
 	kfree(environ);
 }
@@ -1214,7 +1216,9 @@ void proc_destroy(struct proc *proc) {
 			userprocs[i] = NULL;
 		}
 	}
-	proc_free_environ(proc->p_environ, proc->p_environ_ary_len);
+	if (proc->p_environ) {
+		proc_free_environ(proc->p_environ, proc->p_environ_ary_len);
+	}
 	proc->p_environ = NULL;
 	kfree(proc->p_name);
 	lock_destroy(proc->p_mutex);
@@ -1231,6 +1235,7 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 	}
 	child_pr->p_parent = parent_pr;
 	child_pr->p_addrspace = NULL;
+	child_pr->p_uenviron = parent_pr->p_uenviron;
 	lock_acquire(parent_pr->p_mutex);
 	int res = as_copy(parent_pr->p_addrspace, &child_pr->p_addrspace);
 	if (res != 0) {
@@ -1742,7 +1747,9 @@ struct addrspace *proc_setas(struct addrspace *newas) {
 void proc_define_stack(struct proc *p, vaddr_t stacktop, size_t stacksize) {
 	KASSERT(stacksize % PAGE_SIZE == 0);
 	KASSERT(stacksize >= PAGE_SIZE);
+	KASSERT((size_t)stacktop != stacksize);
 	p->p_stacktop = stacktop;
+	KASSERT(stacksize == VM_STACKPAGES * PAGE_SIZE);
 	p->p_stacksize = stacksize;
 }
 

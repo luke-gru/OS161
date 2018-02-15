@@ -140,7 +140,7 @@ int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int arg
 	return 0;
 }
 
-int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_t argv) {
+int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_t argv, int *errcode) {
 	char **argv_p = (char**)argv;
 	int nargs_given = 0;
 	size_t buflen = 0;
@@ -152,8 +152,11 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 	for (int i = 0; argv_p[i] != 0 && i < NARGS_MAX; i++) {
 			size_t arglen_got = 0;
 			int copy_res = copyinstr((const_userptr_t)argv_p[i], argbuf, ARG_SINGLE_MAX, &arglen_got);
-			if (copy_res != 0) {
-				panic("invalid copy for arg #%d: (%s)", i, argv_p[i]); // FIXME:
+			if (copy_res != 0 || arglen_got == 0) {
+				for (int j = 0; j < i; j++) { kfree(args[j]); }
+				*errcode = EFAULT;
+				return -1;
+				//panic("invalid copy for arg #%d: (%s)", i, argv_p[i]); // FIXME:
 			}
 			args[i] = (char*)kmalloc(arglen_got); // includes NULL byte, freed further down
 			memcpy(args[i], argbuf, arglen_got);
@@ -172,6 +175,7 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 		size_t arg_sz = strlen(args[i]) + 1; // with terminating NULL
 		memcpy(bufp, (const void *)args[i], arg_sz);
 		KASSERT(strcmp(bufp, args[i]) == 0);
+		kfree(args[i]);
 		if (i > 0) {
 			argdata->offsets[i] = bufp - argdata->buffer;
 		}
@@ -372,28 +376,25 @@ int runprogram(char *progname, char **args, int nargs) {
 	environ_debug(envdata, "runprogram");
 	userptr_t userspace_argv_ary;
 	userptr_t userspace_env_ary;
-	vaddr_t old_stacktop = curproc->p_stacktop;
-	if (copyout_args(argdata, &userspace_argv_ary, &curproc->p_stacktop) != 0) {
+	vaddr_t sp_start = curproc->p_stacktop;
+	if (copyout_args(argdata, &userspace_argv_ary, &sp_start) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args into user process\n");
 		argvdata_destroy(argdata);
 		argvdata_destroy(envdata);
 		kfree(prognamecpy);
-		curproc->p_stacktop = old_stacktop;
 		return -1;
 	}
 	argvdata_destroy(argdata);
-	if (copyout_args(envdata, &userspace_env_ary, &curproc->p_stacktop) != 0) {
+	if (copyout_args(envdata, &userspace_env_ary, &sp_start) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying env into user process\n");
 		argvdata_destroy(envdata);
 		kfree(prognamecpy);
-		curproc->p_stacktop = old_stacktop;
 		return -1;
 	}
 	argvdata_destroy(envdata);
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
 		kfree(prognamecpy);
-		curproc->p_stacktop = old_stacktop;
 		return pre_exec_res;
 	}
 	kfree(prognamecpy);
@@ -401,7 +402,7 @@ int runprogram(char *progname, char **args, int nargs) {
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
 			  userspace_env_ary /*userspace addr of environment*/,
-			  curproc->p_stacktop, entrypoint);
+			  sp_start, entrypoint);
 
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
@@ -454,15 +455,14 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 	}
 	/* Define the user stack in the address space */
 	if (curproc->p_stacksize == 0 || curproc->p_stacktop == 0) {
-		proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * STACK_SIZE);
+		proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * PAGE_SIZE);
 	}
-	vaddr_t old_stacktop = curproc->p_stacktop;
+	vaddr_t sp_start = curproc->p_stacktop;
 
-	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &curproc->p_stacktop);
+	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &sp_start);
 	if (copyout_res != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
 		as_destroy(as);
-		curproc->p_stacktop = old_stacktop;
 		vfs_close(v);
 		return copyout_res;
 	}
@@ -471,12 +471,11 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 	environ_fill(envdata, new_environ, (size_t)101, num_environ_vars);
 	environ_debug(envdata, "exec");
 
-	copyout_res = copyout_args(envdata, &userspace_env_ary, &curproc->p_stacktop);
+	copyout_res = copyout_args(envdata, &userspace_env_ary, &sp_start);
 	if (copyout_res != 0) {
 		DEBUG(DB_SYSCALL, "Error copying ENV during exec\n");
 		argvdata_destroy(envdata);
 		as_destroy(as);
-		curproc->p_stacktop = old_stacktop;
 		vfs_close(v);
 		return copyout_res;
 	}
@@ -487,7 +486,6 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 	int pre_exec_res;
 	if ((pre_exec_res = proc_pre_exec(curproc, progname)) != 0) {
 		as_destroy(as);
-		curproc->p_stacktop = old_stacktop;
 		return pre_exec_res;
 	}
 	proc_close_cloexec_files(curproc);
@@ -503,7 +501,7 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 	/* Warp to user mode. */
 	enter_new_process(nargs /*argc*/, userspace_argv_ary /*userspace addr of argv*/,
 				userspace_env_ary /*userspace addr of environment*/,
-				curproc->p_stacktop, entrypoint);
+				sp_start, entrypoint);
 
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");

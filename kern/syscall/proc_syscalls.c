@@ -150,7 +150,14 @@ int sys_execve(userptr_t filename_ubuf, userptr_t argv, userptr_t envp, int *ret
     return copy_res;
   }
   struct argvdata *argdata = argvdata_create();
-  argvdata_fill_from_uspace(argdata, fname, argv);
+  int fill_errcode = 0;
+  int fill_res = argvdata_fill_from_uspace(argdata, fname, argv, &fill_errcode);
+  if (fill_res == -1) {
+    DEBUG(DB_SYSCALL, "sys_execv failed to copy in ARGV array, %d (%s)\n", fill_errcode, strerror(fill_errcode));
+    *retval = -1;
+    splx(spl);
+    return fill_errcode;
+  }
   argvdata_debug(argdata, "exec", fname);
   if (envp == (userptr_t)0) {
     envp = curproc->p_uenviron;
