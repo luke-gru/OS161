@@ -100,8 +100,8 @@ static void environ_debug(struct argvdata *env, const char *msg) {
 	env->offsets[0] = 0;
 	for (int i = 0; i < env->nargs; i++) {
 		char *var = env->buffer + env->offsets[i];
-		if (var == NULL) {
-			DEBUG(DB_SYSCALL, "  ENV[%d]=NULL\n", i);
+		if (var == NULL || strlen(var) == 0) {
+			continue;
 		} else {
 			DEBUG(DB_SYSCALL, "  ENV[%d]=\"%s\"\n", i, var);
 		}
@@ -171,6 +171,7 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 	bzero(argdata->buffer, buflen);
 	argdata->offsets = kmalloc(sizeof(size_t) * nargs_given);
 	argdata->offsets[0] = 0;
+	argdata->offsets[nargs_given-1] = 0;
 	char *bufp = argdata->buffer;
 	// move arg strings into buffer
 	for (int i = 0; i < nargs_given; i++) {
@@ -214,6 +215,7 @@ static int environ_fill(struct argvdata *argdata, char **environ, size_t environ
 	bzero(argdata->buffer, buflen);
 	argdata->offsets = kmalloc(sizeof(size_t) * environ_ary_len);
 	argdata->offsets[0] = 0;
+	argdata->offsets[environ_ary_len-1]=0;
 	char *bufp = argdata->buffer;
 	// move env strings into buffer
 	for (size_t i = 0; i < environ_ary_len; i++) {
@@ -380,19 +382,20 @@ int runprogram(char *progname, char **args, int nargs) {
 	userptr_t userspace_argv_ary;
 	userptr_t userspace_env_ary;
 	vaddr_t sp_start = curproc->p_stacktop;
-	if (copyout_args(argdata, &userspace_argv_ary, &sp_start) != 0) {
+	int copy_res;
+	if ((copy_res = copyout_args(argdata, &userspace_argv_ary, &sp_start)) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying args into user process\n");
 		argvdata_destroy(argdata);
 		argvdata_destroy(envdata);
 		kfree(prognamecpy);
-		return -1;
+		return copy_res;
 	}
 	argvdata_destroy(argdata);
-	if (copyout_args(envdata, &userspace_env_ary, &sp_start) != 0) {
+	if ((copy_res = copyout_args(envdata, &userspace_env_ary, &sp_start)) != 0) {
 		DEBUG(DB_SYSCALL, "Error copying env into user process\n");
 		argvdata_destroy(envdata);
 		kfree(prognamecpy);
-		return -1;
+		return copy_res;
 	}
 	argvdata_destroy(envdata);
 	int pre_exec_res;
@@ -459,11 +462,15 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_envir
 	/* Define the user stack in the address space */
 	if (curproc->p_stacksize == 0 || curproc->p_stacktop == 0) {
 		proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * PAGE_SIZE);
+	// FIXME: not sure why we need this, p_stacktop seems to be changing somehow...
+	} else if (!proc_is_clone(curproc)) {
+		proc_define_stack(curproc, USERSTACK, VM_STACKPAGES * PAGE_SIZE);
 	}
 	vaddr_t sp_start = curproc->p_stacktop;
 
 	int copyout_res = copyout_args(argdata, &userspace_argv_ary, &sp_start);
 	if (copyout_res != 0) {
+		panic("panic");
 		DEBUG(DB_SYSCALL, "Error copying args during exec\n");
 		as_destroy(as);
 		vfs_close(v);

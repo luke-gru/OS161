@@ -268,6 +268,8 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
 	unsigned long i;
   if (spinlock_do_i_hold(&stealmem_lock)) {
 		dolock = false;
+	} else {
+		dolock = true;
 	}
 
   if (dolock) {
@@ -275,13 +277,29 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
 	}
 
 	for (i=0; i<pages_in_coremap; i++){
-		if (pagetype == PAGETYPE_KERN && coremap[i].va == addr) {
+		if (pagetype == PAGETYPE_KERN && coremap[i].va == addr && coremap[i].is_kern_page) {
 			pop = coremap[i].partofpage;
 			break;
-		} else if (pagetype == PAGETYPE_USER && coremap[i].pa == addr) {
+		} else if (pagetype == PAGETYPE_USER && coremap[i].pa == addr && !coremap[i].is_kern_page) {
       pop = coremap[i].partofpage;
       break;
     }
+	}
+
+	if (pop && i < pages_in_coremap && coremap[i].state == PAGESTATE_FREE) {
+		//panic("already free");
+		if (dolock) {
+			unlock_pagetable();
+		}
+		return;
+	}
+
+	if (pop == 0 && i == pages_in_coremap) {
+		//panic("page not found");
+		if (dolock) {
+			unlock_pagetable();
+		}
+		return;
 	}
 
 	int pages_freed = 0;
