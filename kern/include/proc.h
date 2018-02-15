@@ -201,6 +201,7 @@ struct proc {
 	char **p_environ; // array of environment variable strings, ex: { "PATH=/bin:", NULL }
 	// userspace environment pointer, we need this for fork/exec, because a process can mutate its environment
 	// array with calls to userspace functions like putenv(3)/clearenv(3)/setenv(3)/unsetenv(3)
+	size_t p_environ_ary_len;
 	userptr_t p_uenviron;
 
 	/* VFS */
@@ -247,6 +248,7 @@ int proc_addthread(struct proc *proc, struct thread *t);
 void proc_remthread(struct thread *t);
 
 int proc_environ_numvars(struct proc *p);
+void proc_free_environ(char **environ, size_t environ_ary_len);
 
 // Wait on child process to finish, collect its exitstatus and clean it up
 int proc_waitpid_sleep(pid_t pid, int *errcode);

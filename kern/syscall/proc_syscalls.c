@@ -105,7 +105,40 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
   return 0;
 }
 
-int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
+// envp is a pointer to the bottom of the userspace **env array, which is ALWAYS 100 entries
+// large, with empty entries filled with NULL. The envp array may have non-empty entries after a NULL
+// entry (if that entry is not the last).
+static int copy_in_environ(char **new_environ, userptr_t envp, int *num_env_vars, int *err) {
+  DEBUGASSERT(new_environ);
+  DEBUGASSERT(envp != (userptr_t)0);
+  char *entry = *(char**)envp;
+  char *buf = kmalloc(1025); // max env entry length
+  int copy_res;
+  size_t gotlen = 0;
+  int num_vars_found = 0;
+  for (int i = 0; i < 100; i++) {
+    bzero(buf, 1025);
+    gotlen = 0;
+    copy_res = copyinstr((const_userptr_t)entry, buf, 1025, &gotlen);
+    if (copy_res != 0) {
+      *err = copy_res;
+      panic("got here");
+      return -1;
+    }
+    if (gotlen == 0) {
+      new_environ[i] = NULL;
+    } else {
+      new_environ[i] = kstrdup(buf);
+      num_vars_found++;
+    }
+    entry = *((char**)envp+i+1);
+  }
+  *num_env_vars = num_vars_found;
+  kfree(buf);
+  return 0;
+}
+
+int sys_execve(userptr_t filename_ubuf, userptr_t argv, userptr_t envp, int *retval) {
   int spl = splhigh();
   char fname[PATH_MAX+1];
   memset(fname, 0, PATH_MAX+1);
@@ -119,10 +152,18 @@ int sys_execv(userptr_t filename_ubuf, userptr_t argv, int *retval) {
   struct argvdata *argdata = argvdata_create();
   argvdata_fill_from_uspace(argdata, fname, argv);
   argvdata_debug(argdata, "exec", fname);
+  if (envp == (userptr_t)0) {
+    envp = curproc->p_uenviron;
+  }
+  char **new_environ = kmalloc(101 * sizeof(char*));
+  bzero(new_environ, 101 * sizeof(char*));
+  int copy_env_err = 0;
+  int num_env_vars = 0;
+  copy_in_environ(new_environ, envp, &num_env_vars, &copy_env_err);
 
   struct addrspace *as_old = proc_setas(NULL); // to reset in case of error
   //DEBUG(DB_SYSCALL, "sys_execv running for process %d\n", curproc->pid);
-  int res = runprogram_uspace(fname, argdata);
+  int res = runprogram_uspace(fname, argdata, new_environ, num_env_vars);
   if (res == 0) {
     panic("shouldn't get here on success");
   }

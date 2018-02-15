@@ -43,7 +43,7 @@
 #include <spl.h>
 
 #define ENV_VARS_MAX 100
-#define ENV_VAR_SINGLE_MAX 256
+#define ENV_VAR_SINGLE_MAX 1024
 
 struct argvdata *argvdata_create(void) {
 	struct argvdata *args = kmalloc(sizeof(struct argvdata));
@@ -101,10 +101,10 @@ static void environ_debug(struct argvdata *env, const char *msg) {
 	for (int i = 0; i < env->nargs; i++) {
 		char *var = env->buffer + env->offsets[i];
 		if (var == NULL) {
-			DEBUG(DB_SYSCALL, "  ENV has invalid var #%d, is NULL!\n", i);
-			continue;
+			DEBUG(DB_SYSCALL, "  ENV[%d]=NULL\n", i);
+		} else {
+			DEBUG(DB_SYSCALL, "  ENV[%d]=\"%s\"\n", i, var);
 		}
-		DEBUG(DB_SYSCALL, "  ENV[%d]=\"%s\"\n", i, var);
 	}
 }
 
@@ -184,38 +184,55 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 	return 0;
 }
 
-static int environ_fill(struct argvdata *argdata, char **environ, int num_vars) {
+static int environ_fill(struct argvdata *argdata, char **environ, size_t environ_ary_len, int num_vars) {
+	DEBUGASSERT((int)environ_ary_len <= (ENV_VARS_MAX+1));
 	char **environ_p = environ;
 	size_t buflen = 0;
 	int num_vars_found = 0;
-	char *envp[ENV_VARS_MAX];
-	bzero(envp, ENV_VARS_MAX * sizeof(char*));
-	for (int i = 0; environ_p[i] != 0 && i < ENV_VARS_MAX; i++) {
-			envp[i] = kstrdup(environ_p[i]);
-			buflen += strlen(environ_p[i])+1;
-			num_vars_found++;
+	char **envp = kmalloc((ENV_VARS_MAX+1) * sizeof(char*));
+	KASSERT(envp);
+	bzero(envp, (ENV_VARS_MAX+1) * sizeof(char*));
+	for (size_t i = 0; i < environ_ary_len; i++) {
+			if (environ_p[i] == 0) {
+				envp[i] = NULL;
+				buflen += 1;
+			} else {
+				envp[i] = kstrdup(environ_p[i]);
+				buflen += strlen(environ_p[i])+1;
+				num_vars_found++;
+			}
 	}
 	KASSERT(num_vars == num_vars_found);
-	buflen+=1; // NULL byte to end args array
+	buflen+=1; // NULL byte to end envp array
 	argdata->buffer = kmalloc(buflen);
 	bzero(argdata->buffer, buflen);
-	argdata->offsets = kmalloc(sizeof(size_t) * num_vars_found);
+	argdata->offsets = kmalloc(sizeof(size_t) * environ_ary_len);
 	argdata->offsets[0] = 0;
 	char *bufp = argdata->buffer;
-	// move arg strings into buffer
-	for (int i = 0; i < num_vars; i++) {
-		size_t arg_sz = strlen(envp[i]) + 1; // with terminating NULL
-		memcpy(bufp, (const void *)envp[i], arg_sz);
-		KASSERT(strcmp(bufp, envp[i]) == 0);
-		if (i > 0) {
-			argdata->offsets[i] = bufp - argdata->buffer;
+	// move env strings into buffer
+	for (size_t i = 0; i < environ_ary_len; i++) {
+		if (envp[i] == 0) {
+			memset(bufp, 0, 1);
+			if (i > 0) {
+				argdata->offsets[i] = bufp - argdata->buffer;
+			}
+			KASSERT((argdata->buffer + argdata->offsets[i]) == bufp);
+			bufp += 2;
+		} else {
+			size_t arg_sz = strlen(envp[i]) + 1; // with terminating NULL
+			memcpy(bufp, (const void *)envp[i], arg_sz);
+			KASSERT(strcmp(bufp, envp[i]) == 0);
+			if (i > 0) {
+				argdata->offsets[i] = bufp - argdata->buffer;
+			}
+			KASSERT((argdata->buffer + argdata->offsets[i]) == bufp);
+			bufp += arg_sz + 1;
 		}
-		KASSERT((argdata->buffer + argdata->offsets[i]) == bufp);
-		bufp += arg_sz + 1;
 	}
 	argdata->bufend = argdata->buffer + buflen + 1;
-	argdata->nargs = num_vars_found;
+	argdata->nargs = (int)environ_ary_len-1;
 	argdata->nargs_max = ENV_VARS_MAX;
+	kfree(envp);
 	return 0;
 }
 
@@ -349,7 +366,9 @@ int runprogram(char *progname, char **args, int nargs) {
 	struct argvdata *envdata = argvdata_create();
 	argvdata_fill(argdata, progname, args, nargs);
 	argvdata_debug(argdata, "runprogram", progname);
-	environ_fill(envdata, curproc->p_environ, proc_environ_numvars(curproc));
+	int num_envvars = proc_environ_numvars(curproc);
+	size_t envvars_ary_len = (size_t)num_envvars+1;
+	environ_fill(envdata, curproc->p_environ, envvars_ary_len, num_envvars);
 	environ_debug(envdata, "runprogram");
 	userptr_t userspace_argv_ary;
 	userptr_t userspace_env_ary;
@@ -396,7 +415,7 @@ TODO: I think we're leaking kernel thread stack space each time we do an execv, 
 curthread->t_stack isn't freed and then reallocated. If we do this, we need interrupts
 * to be disabled so we aren't pre-empted and return to an invalid stack.
 */
-int	runprogram_uspace(char *progname, struct argvdata *argdata) {
+int	runprogram_uspace(char *progname, struct argvdata *argdata, char **new_environ, int num_environ_vars) {
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint;
@@ -449,7 +468,8 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	}
 	int nargs = argdata->nargs;
 	struct argvdata *envdata = argvdata_create();
-	environ_fill(envdata, curproc->p_environ, proc_environ_numvars(curproc));
+	environ_fill(envdata, new_environ, (size_t)101, num_environ_vars);
+	environ_debug(envdata, "exec");
 
 	copyout_res = copyout_args(envdata, &userspace_env_ary, &curproc->p_stacktop);
 	if (copyout_res != 0) {
@@ -472,6 +492,11 @@ int	runprogram_uspace(char *progname, struct argvdata *argdata) {
 	}
 	proc_close_cloexec_files(curproc);
 	curproc->p_uenviron = userspace_env_ary;
+	if (curproc->p_environ) {
+		proc_free_environ(curproc->p_environ, curproc->p_environ_ary_len);
+	}
+	curproc->p_environ = new_environ;
+	curproc->p_environ_ary_len = 101;
 
 	// DEBUG(DB_SYSCALL, "sys_execv entering new process %d\n", curproc->pid);
 	spl0();

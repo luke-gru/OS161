@@ -1031,23 +1031,22 @@ int proc_environ_numvars(struct proc *p) {
 	return i;
 }
 
-static void proc_free_environ(char **environ) {
+void proc_free_environ(char **environ, size_t environ_ary_len) {
 	DEBUGASSERT(environ);
-	int i = 0;
-	while (environ[i] != NULL) {
-		kfree(environ[i]);
-		i++;
+	size_t i = 0;
+	for (i = 0; i < environ_ary_len; i++) {
+		if (environ[i]) kfree(environ[i]);
 	}
 	kfree(environ);
 }
 
-static char **proc_dup_environ(const char **environ_proto, size_t num_vars/* includes NULL */) {
+static char **proc_dup_environ(const char **environ_proto, size_t ary_len/* includes NULL */) {
 	DEBUGASSERT(environ_proto);
-	if (num_vars == 0) {
-		while (environ_proto[num_vars] != NULL) { num_vars++; }
-		num_vars++; // 1 more for NULL
+	if (ary_len == 0) {
+		while (environ_proto[ary_len] != NULL) { ary_len++; }
+		ary_len++; // 1 more for NULL
 	}
-	char **env = kmalloc(num_vars);
+	char **env = kmalloc(ary_len * sizeof(char*));
 	KASSERT(env);
 	int i = 0;
 	while (environ_proto[i] != NULL) {
@@ -1060,7 +1059,7 @@ static char **proc_dup_environ(const char **environ_proto, size_t num_vars/* inc
 }
 
 static char** proc_default_environ() {
-	return proc_dup_environ(default_proc_environ, sizeof(default_proc_environ));
+	return proc_dup_environ(default_proc_environ, sizeof(default_proc_environ) / sizeof(char*));
 }
 
 /*
@@ -1090,6 +1089,7 @@ struct proc *proc_create(const char *name) {
 	proc->p_cwd = NULL;
 	/* userspace environment variables array */
 	proc->p_environ = proc_default_environ();
+	proc->p_environ_ary_len = sizeof(default_proc_environ) / sizeof(char*);
 	proc->p_uenviron = (userptr_t)0;
 
 	proc->pid = INVALID_PID;
@@ -1214,7 +1214,7 @@ void proc_destroy(struct proc *proc) {
 			userprocs[i] = NULL;
 		}
 	}
-	proc_free_environ(proc->p_environ);
+	proc_free_environ(proc->p_environ, proc->p_environ_ary_len);
 	proc->p_environ = NULL;
 	kfree(proc->p_name);
 	lock_destroy(proc->p_mutex);

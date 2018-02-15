@@ -113,6 +113,7 @@
 /* Required. */
 __DEAD void _exit(int code);
 int execv(const char *prog, char *const *args);
+int execve(const char *prog, char *const *args, char *const envp);
 pid_t fork(void);
 pid_t waitpid(pid_t pid, int *returncode, int flags);
 /*

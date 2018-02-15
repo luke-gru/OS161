@@ -10,6 +10,18 @@
 static int getenv_test(int argc, char **argv) {
   (void)argc;
   (void)argv;
+  if (argc == 3 && strcmp(argv[2], "INEXEC") == 0) {
+    // check that after an exec, the environment is the same as before
+    char *path = getenv("PATH");
+    if (!path) {
+      errx(1, "PATH unset after exec");
+    }
+    if (strcmp(path, "/myval:/other") != 0) {
+      errx(1, "PATH is different from before exec: %s", path);
+    }
+    return 0;
+  }
+
   char *path = getenv("PATH");
   if (!path) {
     errx(1, "env PATH not set properly (NULL)");
@@ -52,6 +64,17 @@ static int getenv_test(int argc, char **argv) {
   if (i == 100) {
     errx(1, "setenv() should have given ENOMEM after trying to add too many entries (100 should be max TOTAL)");
   }
+
+  char *args[3];
+  for (int i = 0; i < 3; i++) {
+    if (i < 2) {
+      args[i] = argv[i]; // PROGNAME getenv
+    } else if (i == 2) {
+      args[i] = (char*)"INEXEC";
+    }
+  }
+  execv(argv[0], args);
+
   return 0;
 }
 
@@ -923,8 +946,8 @@ static void files_test(int argc, char **argv) {
 }
 
 int main(int argc, char *argv[]) {
-  //char *path = getenv("PATH");
-  //printf("PATH: %s\n", path);
+  if (argc < 2) { errx(1, "Usage error!"); }
+
   if (strcmp(argv[1], "fcntl") == 0) {
     fcntl_test(argc, argv);
   } else if (strcmp(argv[1], "pipe1") == 0) {
@@ -970,6 +993,6 @@ int main(int argc, char *argv[]) {
   } else if (strcmp(argv[1], "getenv") == 0) {
     getenv_test(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe[1-3]|files|atexit|sleep|mmap[1-6]|msync|select|socket|flock1|access|tmpfile|getenv OPTIONS\n");
+    errx(1, "Usage error!");
   }
 }

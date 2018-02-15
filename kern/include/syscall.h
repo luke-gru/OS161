@@ -54,7 +54,7 @@ __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
 		       vaddr_t stackptr, vaddr_t entrypoint);
 __DEAD void enter_cloned_process(void *data1, unsigned long data2);
 
-int runprogram_uspace(char *progname, struct argvdata *argdata);
+int runprogram_uspace(char *progname, struct argvdata *argdata, char **environ, int num_env_vars);
 
 /*
  * Prototypes for IN-KERNEL entry points for system call implementations.
@@ -82,7 +82,7 @@ int sys_flock(int fd, int op, int *retval);
 int sys_fork(struct trapframe *tf, int *retval);
 int sys_waitpid(pid_t child_pid, userptr_t status, int options, int *retval);
 void sys_exit(int status);
-int sys_execv(userptr_t filename, userptr_t argv, int *retval);
+int sys_execve(userptr_t filename, userptr_t argv, userptr_t envp, int *retval);
 int sys_clone(userptr_t func, uint32_t child_stack_top, size_t stacksize, int flags, int *retval);
 
 int sys_sbrk(size_t increment, int *retval);
