@@ -86,10 +86,25 @@ static int getenv_test(int argc, char **argv) {
     if (strcmp(path, "/myval:/other") != 0) {
       errx(1, "Improper PATH in forked child: '%s'", path);
     }
+    res = setenv("PATH", "/val/in/child", 1);
+    if (res != 0) {
+      errx(1, "error setting PATH in child: %d (%s)", errno, strerror(errno));
+    }
+    path = getenv("PATH");
+    if (strcmp(path, "/val/in/child") != 0) {
+      errx(1, "Improper PATH in forked child after setenv: '%s'", path);
+    }
     _exit(0);
   } else { // parent
     int exitstatus = 0;
     waitpid(cpid, &exitstatus, 0);
+    if (exitstatus != 0) {
+      errx(1, "child failed");
+    }
+    path = getenv("PATH");
+    if (strcmp(path, "/myval:/other") != 0) {
+      errx(1, "child modified parent's PATH env: '%s'", path);
+    }
   }
 
   int exec_res = execv(argv[0], args);
