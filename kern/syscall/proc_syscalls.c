@@ -118,6 +118,10 @@ int sys_vfork(struct trapframe *tf, int *retval) {
 }
 
 int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *retval) {
+  if (!is_valid_user_pid(child_pid)) {
+    *retval = -1;
+    return EINVAL;
+  }
   int err = 0; // should be set below
   (void)options;
   DEBUG(DB_SYSCALL, "process %d waiting for %d\n", (int)curproc->pid, (int)child_pid);
@@ -135,7 +139,10 @@ int sys_waitpid(pid_t child_pid, userptr_t exitstatus_buf, int options, int *ret
     waitstatus
   );
 
-  copyout((const void*)&waitstatus, exitstatus_buf, sizeof(int));
+  if (exitstatus_buf != (userptr_t)0) {
+    copyout((const void*)&waitstatus, exitstatus_buf, sizeof(int));
+  }
+
   *retval = 0;
   return 0;
 }
@@ -187,27 +194,46 @@ static int copy_in_environ(char **new_environ, userptr_t envp, int *num_env_vars
 
 int sys_execve(userptr_t filename_ubuf, userptr_t argv, userptr_t envp, int *retval) {
   int spl = splhigh();
-  char fname[PATH_MAX+1];
-  memset(fname, 0, PATH_MAX+1);
-  int copy_res = copyinstr(filename_ubuf, fname, PATH_MAX+1, NULL);
-  if (copy_res != 0) {
+  char fname[PATH_MAX];
+  memset(fname, 0, PATH_MAX);
+  size_t gotlen;
+  int copy_res = copyinstr(filename_ubuf, fname, sizeof(fname), &gotlen);
+  if (copy_res != 0 || gotlen <= 1) {
     DEBUG(DB_SYSCALL, "sys_execv failed to copy filename, %d (%s)\n", copy_res, strerror(copy_res));
     *retval = -1;
     splx(spl);
-    return copy_res;
+    if (copy_res == 0) { // empty filename_buf
+      return EINVAL;
+    } else {
+      return copy_res;
+    }
   }
+  if (vm_userptr_oob(argv, curproc)) {
+    panic("got here");
+    *retval = -1;
+    splx(spl);
+    return EFAULT;
+  }
+
   struct argvdata *argdata = argvdata_create();
   int fill_errcode = 0;
   int fill_res = argvdata_fill_from_uspace(argdata, fname, argv, &fill_errcode);
   if (fill_res == -1) {
     DEBUG(DB_SYSCALL, "sys_execv failed to copy in ARGV array, %d (%s)\n", fill_errcode, strerror(fill_errcode));
     *retval = -1;
+    argvdata_destroy(argdata);
     splx(spl);
     return fill_errcode;
   }
   argvdata_debug(argdata, "exec", fname);
   if (envp == (userptr_t)0) {
     envp = curproc->p_uenviron;
+  }
+  if (vm_userptr_oob(envp, curproc)) {
+    *retval = -1;
+    argvdata_destroy(argdata);
+    splx(spl);
+    return EFAULT;
   }
   char **new_environ = kmalloc(101 * sizeof(char*));
   KASSERT(new_environ);
@@ -218,6 +244,8 @@ int sys_execve(userptr_t filename_ubuf, userptr_t argv, userptr_t envp, int *ret
   if (copy_environ_res == -1) {
     DEBUG(DB_SYSCALL, "sys_execv failed to copy in ENV array, %d (%s)\n", copy_env_err, strerror(copy_env_err));
     *retval = -1;
+    proc_free_environ(new_environ, 101);
+    argvdata_destroy(argdata);
     splx(spl);
     return copy_env_err;
   }

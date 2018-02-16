@@ -113,6 +113,7 @@ static void environ_debug(struct argvdata *env, const char *msg) {
 int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int argc) {
 	argdata->offsets = kmalloc(sizeof(size_t) * argc);
 	KASSERT(argdata->offsets);
+	bzero(argdata->offsets, sizeof(size_t)*argc);
 	argdata->offsets[0] = 0;
 	size_t buflen = 0;
 	for (int i = 0; i < argc; i++) {
@@ -123,9 +124,10 @@ int argvdata_fill(struct argvdata *argdata, char *progname, char **args, int arg
 
 		buflen += strlen(args[i]) + 1; // add 1 for NULL character
 	}
-	buflen+=1; // NULL byte to end args array
+	buflen += sizeof(userptr_t); // NULL bytes at end of string buffer for safety (zeroed out anyway)
 	argdata->buffer = kmalloc(buflen);
 	KASSERT(argdata->buffer);
+	bzero(argdata->buffer, buflen);
 	char *bufp = argdata->buffer;
 	// copy args into buffer
 	for (int i = 0; i < argc; i++) {
@@ -158,7 +160,8 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 			size_t arglen_got = 0;
 			int copy_res = copyinstr((const_userptr_t)argv_p[i], argbuf, ARG_SINGLE_MAX, &arglen_got);
 			if (copy_res != 0 || arglen_got == 0) {
-				DEBUG(DB_SYSCALL, "Invalid copy for ARGV arg #%d\n", i);
+				panic("got here");
+				DEBUG(DB_SYSCALL, "Invalid copy for ARGV arg #%d\n", i+1);
 				for (int j = 0; j < i; j++) { kfree(args[j]); }
 				*errcode = EFAULT;
 				return -1;
@@ -171,7 +174,7 @@ int argvdata_fill_from_uspace(struct argvdata *argdata, char *progname, userptr_
 			nargs_given++;
 			buflen += arglen_got;
 	}
-	buflen+=1; // NULL byte to end args array
+	buflen+=sizeof(userptr_t); // NULL bytes at end of string buffer for safety (zeroed out anyway)
 	argdata->buffer = kmalloc(buflen);
 	KASSERT(argdata->buffer);
 	bzero(argdata->buffer, buflen);
@@ -218,19 +221,19 @@ static int environ_fill(struct argvdata *argdata, char **environ, size_t environ
 			}
 	}
 	KASSERT(num_vars == num_vars_found);
-	buflen+=1; // NULL byte to end envp array
+	buflen+=sizeof(userptr_t); // NULL bytes to end string buffer for safety (zeroed out)
 	argdata->buffer = kmalloc(buflen);
 	KASSERT(argdata->buffer);
 	bzero(argdata->buffer, buflen);
 	argdata->offsets = kmalloc(sizeof(size_t) * environ_ary_len);
 	KASSERT(argdata->offsets);
+	bzero(argdata->offsets, sizeof(size_t)*environ_ary_len);
 	argdata->offsets[0] = 0;
-	argdata->offsets[environ_ary_len-1]=0;
 	char *bufp = argdata->buffer;
 	// move env strings into buffer
 	for (size_t i = 0; i < environ_ary_len; i++) {
 		if (envp[i] == 0) {
-			memset(bufp, 0, 1);
+			memset(bufp, 0, 1); // copy NULL byte
 			if (i > 0) {
 				argdata->offsets[i] = bufp - argdata->buffer;
 			}
@@ -267,7 +270,7 @@ static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
 	int i, result;
 
 	/* we use the buflen a lot, precalc it */
-	buflen = ad->bufend - ad->buffer;
+	buflen = (ad->bufend - ad->buffer);
 
 	/* begin the stack at the passed in top */
 	stack = *stackptr;
@@ -312,10 +315,7 @@ static int copyout_args(struct argvdata *ad, userptr_t *argv, vaddr_t *stackptr)
 	int nargs = ad->nargs;
 	arg = NULL;
 	while (nargs <= ad->nargs_max) {
-		result = copyout(&arg, userargv, sizeof(userptr_t));
-		if (result) {
-			return result;
-		}
+		memset((void*)userargv, 0, sizeof(userptr_t));
 		userargv += sizeof(userptr_t);
 		nargs++;
 	}

@@ -46,26 +46,33 @@
 
 int sys_chdir(userptr_t dirbuf, int *retval) {
   char fname[PATH_MAX];
-  int copy_res = copyinstr(dirbuf, fname, sizeof(fname), NULL);
+  size_t gotlen;
+  int copy_res = copyinstr(dirbuf, fname, sizeof(fname), &gotlen);
   if (copy_res != 0) {
     *retval = -1;
     return copy_res;
   }
-  //kprintf("dir: '%s'\n", fname);
-  if (strcmp(fname, "") == 0) {
+  if (gotlen <= 1) {
     *retval = -1;
     return EINVAL;
   }
-  *retval = vfs_chdir(fname); // sets curproc->p_pwd
-  if (*retval != 0) {
+  int res = vfs_chdir(fname); // sets curproc->p_pwd on success
+  if (res != 0) {
     DEBUG(DB_SYSCALL, "Error in sys_chdir: process %d: code=%d (%s)\n",
-      curproc->pid, *retval, strerror(*retval));
+      curproc->pid, res, strerror(res));
+    *retval = -1;
+    return res;
   }
-  return *retval; // 0 on success
+  *retval = 0;
+  return 0;
 }
 
 int sys_close(int fd, int *retval) {
   struct filedes *file_des = filetable_get(curproc, fd);
+  if (!file_des) {
+    *retval = -1;
+    return EBADF;
+  }
   if (file_des->ftype == FILEDES_TYPE_PIPE && file_des->pipe->is_writer) {
     // notify reader if it's blocked
     if (!file_des->pipe->pair->is_closed && file_des->pipe->pair->buflen > 0) {
@@ -78,9 +85,11 @@ int sys_close(int fd, int *retval) {
   if (res != 0) {
     DEBUG(DB_SYSCALL, "Error in sys_close: fd %d for process %d: code=%d (%s)\n",
       fd, curproc->pid, res, strerror(res));
+    *retval = -1;
+    return res;
   }
-  *retval = res;
-  return res;
+  *retval = 0;
+  return 0;
 }
 
 int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
@@ -100,7 +109,12 @@ int sys_fstat(int fd, userptr_t stat_buf, int *retval) {
     *retval = -1;
     return errcode;
   }
-  copyout(&st, stat_buf, sizeof(struct stat));
+  int copy_res = copyout(&st, stat_buf, sizeof(struct stat));
+  if (copy_res != 0) {
+    DEBUG(DB_SYSCALL, "Error in sys_fstat: user stat_buf invalid\n");
+    *retval = -1;
+    return copy_res;
+  }
   *retval = 0;
   return 0;
 }
@@ -130,10 +144,15 @@ int sys_access(userptr_t pathname, int mode, int *retval) {
     return EFAULT;
   }
   char path[PATH_MAX];
-  copyinstr(pathname, path, sizeof(path), NULL);
-  if (strlen(path) == 0) {
+  size_t gotlen;
+  int copy_res = copyinstr(pathname, path, sizeof(path), &gotlen);
+  if (copy_res != 0 || gotlen <= 1) {
     *retval = -1;
-    return ENOENT;
+    if (copy_res == 0) { // 0-length pathname
+      return ENOENT;
+    } else {
+      return copy_res;
+    }
   }
   int access_err = 0;
   int access_res = file_access(path, mode, &access_err);
@@ -169,10 +188,15 @@ int sys_lseek(int fd, int32_t offset, int whence, int *retval) {
 
 int sys_remove(userptr_t filename, int *retval) {
   char path[PATH_MAX];
-  copyinstr(filename, (void*)&path, sizeof(path), NULL);
-  if (strlen(path) == 0) {
+  size_t gotlen;
+  int copy_res = copyinstr(filename, (void*)&path, sizeof(path), &gotlen);
+  if (copy_res != 0 || gotlen <= 1) {
     *retval = -1;
-    return EBADF;
+    if (copy_res == 0) { // empty filename
+      return EINVAL;
+    } else {
+      return copy_res;
+    }
   }
   int res = file_unlink(path);
   if (res != 0) {
@@ -269,7 +293,16 @@ int sys_flock(int fd, int op, int *retval) {
 
 int sys_mkdir(userptr_t pathname, mode_t mode, int *retval) {
   char path[PATH_MAX];
-  copyinstr(pathname, (void*)&path, sizeof(path), NULL);
+  size_t gotlen;
+  int copy_res = copyinstr(pathname, path, sizeof(path), &gotlen);
+  if (copy_res != 0 || gotlen <= 1) {
+    *retval = -1;
+    if (copy_res == 0) {
+      return EINVAL;
+    } else {
+      return copy_res;
+    }
+  }
   int result = vfs_mkdir(path, mode);
   *retval = result;
   return result;
@@ -277,7 +310,16 @@ int sys_mkdir(userptr_t pathname, mode_t mode, int *retval) {
 
 int sys_rmdir(userptr_t pathname, int *retval) {
   char path[PATH_MAX];
-  copyinstr(pathname, (void*)&path, sizeof(path), NULL);
+  size_t gotlen;
+  int copy_res = copyinstr(pathname, path, sizeof(path), &gotlen);
+  if (copy_res != 0 || gotlen <= 1) {
+    *retval = -1;
+    if (copy_res == 0) {
+      return EINVAL;
+    } else {
+      return copy_res;
+    }
+  }
   int result = vfs_rmdir(path);
   *retval = result;
   return result;
@@ -322,8 +364,17 @@ int sys_pipe(userptr_t pipes_ary, size_t buflen, int *retval) {
     *retval = -1;
     return pipe_creat_res;
   }
-  copyout(&reader_fd, pipes_ary, sizeof(int));
-  copyout(&writer_fd, pipes_ary + sizeof(int), sizeof(int));
+  int copy_res;
+  copy_res = copyout(&reader_fd, pipes_ary, sizeof(int));
+  if (copy_res != 0) {
+    *retval = -1;
+    return copy_res;
+  }
+  copy_res = copyout(&writer_fd, pipes_ary + sizeof(int), sizeof(int));
+  if (copy_res != 0) {
+    *retval = -1;
+    return copy_res;
+  }
   *retval = 0;
   return 0;
 }
@@ -339,7 +390,7 @@ int sys_select(int nfds, userptr_t readfds, userptr_t writefds,
   struct timeval timeout;
   struct timeval *timeout_p;
   int copy_res;
-  if (nfds <= 0) { // we don't support this, just use nanosleep() for sleeping
+  if (nfds <= 0) { // we don't support this, just use nanosleep() for sleeping instead of select(0,0,0,0,0)
     *retval = -1;
     return EINVAL;
   }
@@ -375,13 +426,16 @@ int sys_select(int nfds, userptr_t readfds, userptr_t writefds,
     return errcode;
   }
   if (readfds != (userptr_t)0) {
-    copyout(&reads, readfds, sizeof(struct fd_set));
+    copy_res = copyout(&reads, readfds, sizeof(struct fd_set));
+    DEBUGASSERT(copy_res == 0);
   }
   if (writefds != (userptr_t)0) {
-    copyout(&writes, writefds, sizeof(struct fd_set));
+    copy_res = copyout(&writes, writefds, sizeof(struct fd_set));
+    DEBUGASSERT(copy_res == 0);
   }
   if (exceptfds != (userptr_t)0) {
-    copyout(&exceptions, exceptfds, sizeof(struct fd_set));
+    copy_res = copyout(&exceptions, exceptfds, sizeof(struct fd_set));
+    DEBUGASSERT(copy_res == 0);
   }
   *retval = num_ready;
   return 0;

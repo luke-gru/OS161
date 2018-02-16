@@ -223,7 +223,11 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
   unsigned long block_count = npages;
   unsigned long i;
   if (dolock) {
-		lock_pagetable();
+		if (spinlock_do_i_hold(&stealmem_lock)) {
+			dolock = false;
+		} else {
+			lock_pagetable();
+		}
 	}
 	if (beforeVM){
 		addr = ram_stealmem(npages);
@@ -343,6 +347,19 @@ static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
   if (dolock) {
 		unlock_pagetable();
 	}
+}
+
+// Is the given userptr out of bounds for the process given?
+// FIXME: doesn't work if proc p is a cloned proc
+bool vm_userptr_oob(userptr_t ptr, struct proc *p) {
+	if (ptr == (userptr_t)0) {
+		return true;
+	}
+	struct addrspace *as = p->p_addrspace;
+	vaddr_t addr = (vaddr_t)ptr;
+	// NOTE: relies on first page in as->pages to be the bottom-most virtual page of memory, which it
+	// always is.
+	return addr < as->pages->vaddr || addr > USERSTACK;
 }
 
 /* Allocate/free some kernel-space virtual pages */

@@ -658,7 +658,7 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 		return ENOMEM;
 	}
 	lock_pagetable();
-	if (corefree() < npages) {
+	if (corefree() < npages) { // FIXME: lazily allocate core only when used!
 		unlock_pagetable();
 		return ENOMEM;
 	}
@@ -711,7 +711,6 @@ int as_growheap(struct addrspace *as, size_t bytes) {
 int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
   							int flags, int fd, off_t file_offset, vaddr_t *mmap_startaddr,
 								int *errcode) {
-	(void)file_offset;
 	struct mmap_reg *reg = NULL;
 	size_t npages;
 	size_t nbytes_orig = nbytes;
@@ -761,6 +760,7 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 	npages = nbytes / PAGE_SIZE;
 	DEBUGASSERT(npages > 0);
 	lock_pagetable();
+	// FIXME: only check corefree() if we're mapping a file, otherwise lazily allocate core
 	if (corefree() < npages || (as->heap_end + nbytes) >= as_heaptop(as)) {
 		unlock_pagetable();
 		*errcode = ENOMEM;
@@ -821,7 +821,8 @@ int as_add_mmap(struct addrspace *as, size_t nbytes, int prot,
 	if (fd > 0) {
 		// initialize physical memory pages with contents of file. Since pages aren't
 		// necessarily contiguous, we iterate over them and copy the proper bytes into the
-		// pages.
+		// pages. TODO: lazily initialize memory with contents from file, only when they
+		// touch the memory or perform operations on it.
 		off_t file_size = filedes_size(file_des, errcode);
 		if (file_size == -1) {
 			return -1; // errcode set above
