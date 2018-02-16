@@ -526,6 +526,7 @@ bool vm_region_contains_other(vaddr_t reg1_btm, vaddr_t reg1_top, vaddr_t reg2_b
 	}
 }
 
+// NOTE: unused right now, need to find way to properly implement stack growth
 static struct page_table_entry *alloc_stack_page(struct addrspace *as, vaddr_t faultaddr, paddr_t *paddr_out) {
 	struct page_table_entry *pte = kmalloc(sizeof(*pte));
 	KASSERT(pte);
@@ -671,7 +672,12 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 		}
 	}
 
-	if (paddr == 0 && faultaddress < stackbase && faultaddress > as->heap_end) {
+	// FIXME: not sure what to do here, we can't allocate arbitrary stack pages in
+	// case the access isn't a stack access (for example, it's an invalid heap access).
+	// There doesn't seem to be a way to support sparse stacks and to fault on invalid heap
+	// accesses.
+	if (false && paddr == 0 && faultaddress < stackbase && faultaddress > as->heap_end) {
+		panic("allocating stack page");
 		pte = alloc_stack_page(as, faultaddress, &paddr);
 		if (!pte) {
 			//panic("no more memory!");
@@ -680,7 +686,7 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	}
 
 	if (paddr == 0) {
-		panic("unhandled fault");
+		//panic("unhandled fault");
 		return EFAULT;
 	}
 
