@@ -218,7 +218,7 @@ struct proc {
 	struct vnode *p_cwd;		/* current working directory */
 	struct filedes **file_table;
 	short file_table_refcount;
-	volatile int p_rflags; // runflags for process (change how the process runs, used internally by kernel)
+	int p_rflags; // runflags for process (change how the process runs, used internally by kernel)
 
 	/* add more material here as needed */
 };

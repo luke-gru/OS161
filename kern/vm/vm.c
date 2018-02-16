@@ -12,6 +12,7 @@
 #include <proc.h>
 #include <cpu.h>
 #include <limits.h>
+#include <kern/unistd.h>
 
 static bool beforeVM = true;
 static unsigned long pages_in_coremap;
@@ -389,6 +390,7 @@ paddr_t find_upage_for_entry(struct page_table_entry *pte, int page_flags, bool 
 		coremap[idx].va = pte->vaddr;
 	}
   pte->coremap_idx = idx;
+	pte->paddr = addr;
 	if (dolock)
   	unlock_pagetable();
   return addr;
@@ -507,6 +509,44 @@ bool vm_region_contains_other(vaddr_t reg1_btm, vaddr_t reg1_top, vaddr_t reg2_b
 	}
 }
 
+static struct page_table_entry *alloc_stack_page(struct addrspace *as, vaddr_t faultaddr, paddr_t *paddr_out) {
+	struct page_table_entry *pte = kmalloc(sizeof(*pte));
+	KASSERT(pte);
+	bzero(pte, sizeof(*pte));
+	vaddr_t pg_sz = (vaddr_t)PAGE_SIZE;
+	pte->vaddr = ROUNDDOWN(faultaddr, pg_sz);
+	pte->page_entry_type = PAGE_ENTRY_TYPE_STACK;
+	pte->debug_name = as->name;
+	pte->permissions = PROT_READ|PROT_WRITE|PROT_EXEC;
+	pte->is_dirty = true;
+	pte->coremap_idx = -1;
+	pte->tlb_idx = -1;
+	pte->cpu_idx = curcpu->c_number;
+	paddr_t paddr = find_upage_for_entry(pte, 0, true);
+	if (paddr == 0) {
+		kfree(pte);
+		return NULL;
+	}
+	memset((void*)PADDR_TO_KVADDR(paddr), 0, PAGE_SIZE);
+	int old_num_pages = as_num_pages(as);
+	KASSERT(pte->coremap_idx >= 0);
+	pte->paddr = paddr;
+	struct page_table_entry *last_stack_pte = as->stack;
+	while (last_stack_pte->next && last_stack_pte->next->page_entry_type == PAGE_ENTRY_TYPE_STACK) {
+		last_stack_pte = last_stack_pte->next;
+	}
+	KASSERT(last_stack_pte);
+	struct page_table_entry *old_next = last_stack_pte->next;
+	last_stack_pte->next = pte;
+	pte->next = old_next;
+	KASSERT(as_num_pages(as) == old_num_pages+1);
+	*paddr_out = paddr;
+	if (as->heap_top > pte->vaddr) {
+		as->heap_top = pte->vaddr;
+	}
+	return pte;
+}
+
 void
 vm_tlbshootdown_all(void)
 {
@@ -585,7 +625,7 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 	// KASSERT((as->heap_end & PAGE_FRAME) == as->heap_end);
 	KASSERT((as->pages->vaddr & PAGE_FRAME) == as->pages->vaddr);
 
-	if (curproc->p_stacksize != (VM_STACKPAGES * PAGE_SIZE)) {
+	if (curproc->p_stacksize < (VM_STACKPAGES * PAGE_SIZE)) {
 		curproc->p_stacksize = VM_STACKPAGES * PAGE_SIZE;
 	}
 	stackbase = curproc->p_stacktop - curproc->p_stacksize;
@@ -603,7 +643,6 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 			}
 			pte = pte->next;
 		}
-
 	} else {
 		pte = as->pages;
 		while (pte != NULL) {
@@ -612,6 +651,14 @@ int vm_fault(int faulttype, vaddr_t faultaddress) {
 				break;
 			}
 			pte = pte->next;
+		}
+	}
+
+	if (paddr == 0 && faultaddress < stackbase && faultaddress > as->heap_end) {
+		pte = alloc_stack_page(as, faultaddress, &paddr);
+		if (!pte) {
+			//panic("no more memory!");
+			return ENOMEM;
 		}
 	}
 

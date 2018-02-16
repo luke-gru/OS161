@@ -26,3 +26,4 @@
 * Implement CPU thread migration (medium)
 * Add process accounting info, like CPU time, wall time, sleep time, etc. (easy)
 * Implement O_NONBLOCK for pipe reads [DONE]
+* Pass testbin/stacktest (allocate stack pages on demand, and allow stacksize to be dynamic)

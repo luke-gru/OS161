@@ -199,6 +199,7 @@ void kprintf_bootstrap(void);
 
 #define DIVROUNDUP(a,b) (((a)+(b)-1)/(b))
 #define ROUNDUP(a,b)    (DIVROUNDUP(a,b)*(b))
+#define ROUNDDOWN(a,b) (a-(a%b))
 #define MINVAL(a,b) ((a)>(b)?(b):(a))
 #define MAXVAL(a,b) ((a)<(b)?(b):(a))
 

@@ -47,6 +47,8 @@ struct addrspace;
 #define VM_FAULT_READONLY    2    /* A write to a readonly page was attempted*/
 
 #define VM_STACKPAGES    12
+#define VM_STACKPAGES_MAX 200
+#define VM_STACKSIZE_MAX (VM_STACKPAGES_MAX*PAGE_SIZE)
 
 #define VM_PIN_PAGE 1
 #define VM_PAGE_AGE_MAX 100
