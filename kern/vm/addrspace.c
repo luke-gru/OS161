@@ -530,7 +530,7 @@ int as_prepare_load(struct addrspace *as) {
 				}
 				pages->next->paddr = paddr;
 			}
-
+			memset((void*)PADDR_TO_KVADDR(paddr), 0, PAGE_SIZE);
 			vaddr += PAGE_SIZE;
 		}
 
@@ -586,6 +586,7 @@ int as_prepare_load(struct addrspace *as) {
 	if (paddr == 0) {
 		return ENOMEM;
 	}
+	memset((void*)PADDR_TO_KVADDR(paddr), 0, PAGE_SIZE);
 	heap_page->paddr = paddr;
 
 	as->heap_start = vaddr; // starts at end of loaded data region
