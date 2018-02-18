@@ -709,6 +709,7 @@ struct proc *proc_create(const char *name) {
 	}
 	proc->current_sigact = NULL; // current user signal handler action
 	proc->current_signo = 0;
+	proc->p_sigaltstack = NULL;
 
 	proc->file_table_refcount = 1;
 	spinlock_init(&proc->p_lock);
@@ -831,6 +832,9 @@ void proc_destroy(struct proc *proc) {
 		KASSERT(sigact);
 		kfree(sigact);
 		proc->p_sigacts[i] = NULL;
+	}
+	if (proc->p_sigaltstack) {
+		kfree(proc->p_sigaltstack);
 	}
 
 	kfree(proc->p_name);

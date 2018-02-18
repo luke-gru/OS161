@@ -90,6 +90,9 @@
 
 #define PENDING_SIGNALS_MAX 10
 
+#define	MINSIGSTKSZ	8192			/* minimum allowable stack */
+#define	SIGSTKSZ	(MINSIGSTKSZ + 32768)	/* recommended stack size */
+
 const char *sys_signame[_NSIG+2]; // begins and ends with NULL
 
 /* Type for a set of signals; used by e.g. sigprocmask(). */
@@ -119,6 +122,8 @@ void _sigfn_core(int);
 void _sigfn_ign(int);
 void _sigfn_stop(int);
 void _sigfn_cont(int);
+
+int sigonstack(size_t sp);
 
 extern __sigfunc default_sighandlers[_NSIG+1];
 
@@ -174,15 +179,21 @@ struct sigaction {
 	void (*sa_restorer)(void); // address of signal trampoline code
 };
 
+// we're currently executing on this stack
+#define SS_ONSTACK 1
+// this stack is disabled and won't be used
+#define SS_DISABLE 2
+
 /*
  * Struct for sigaltstack().
- * (not very important)
  */
 struct sigaltstack {
-	void *ss_sp;
-	size_t ss_size;
+	void *ss_sp; // starting address
+	size_t ss_size; // number of bytes of stack
 	unsigned ss_flags;
 };
+
+typedef struct sigaltstack stack_t;
 
 // our simple siginfo struct (kernel only), not to be confused with siginfo_t
 struct siginfo {

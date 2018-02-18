@@ -66,6 +66,10 @@ int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext) {
     sigact_p->sa_sigaction = NULL;
     sigact_p->sa_flags &= (~SA_RESETHAND);
   }
+  struct sigaltstack *sigstack_p = curproc->p_sigaltstack;
+  if (sigstack_p && (sigstack_p->ss_flags & SS_DISABLE) == 0) {
+    sigstack_p->ss_flags &= (~SS_ONSTACK);
+  }
   return 0;
 }
 
@@ -322,6 +326,72 @@ int sys_sigaction(int signo, const_userptr_t action, userptr_t old_action, int *
   return 0;
 }
 
+int sys_sigaltstack(const_userptr_t u_newstack, userptr_t u_oldstack, int *retval) {
+  struct sigaltstack *curstack_p = curproc->p_sigaltstack;
+  struct sigaltstack newaltstack;
+  bzero(&newaltstack, sizeof(newaltstack));
+  int copy_res;
+  if (u_oldstack != (userptr_t)0) {
+    if (!curstack_p) {
+      copy_res = copyout(&newaltstack, u_oldstack, sizeof(newaltstack)); // copy out a zeroed out struct
+    } else {
+      copy_res = copyout(curstack_p, u_oldstack, sizeof(*curstack_p));
+    }
+    if (copy_res != 0) {
+      DEBUG(DB_SYSCALL, "sigaltstack: copyout failed\n");
+      *retval = -1;
+      return EFAULT;
+    }
+    if (u_newstack == (const_userptr_t)0) {
+      *retval = 0;
+      return 0;
+    }
+  }
+
+  if (u_newstack == (const_userptr_t)0) {
+    *retval = -1;
+    return EINVAL;
+  }
+
+  // Can't update the alternate stack if we're executing on it...
+  if (curstack_p && (curstack_p->ss_flags & SS_ONSTACK)) {
+    *retval = -1;
+    return EPERM;
+  }
+
+  copy_res = copyin(u_newstack, &newaltstack, sizeof(newaltstack));
+  if (copy_res != 0) {
+    DEBUG(DB_SYSCALL, "sigaltstack: copyin failed\n");
+    *retval = -1;
+    return EFAULT;
+  }
+
+  if (newaltstack.ss_sp == NULL) {
+    DEBUG(DB_SYSCALL, "sigaltstack: ss_sp = NULL ptr\n");
+    *retval = -1;
+    return EINVAL;
+  }
+  vaddr_t stackbtm = (vaddr_t)newaltstack.ss_sp;
+  vaddr_t stacktop = stackbtm + newaltstack.ss_size;
+  struct addrspace *as = proc_getas();
+  if (stackbtm < as->heap_start || stacktop > as->heap_top) {
+    DEBUG(DB_SYSCALL, "sigaltstack: stack out of bounds\n");
+    *retval = -1;
+    return EFAULT;
+  }
+  if (newaltstack.ss_size < MINSIGSTKSZ) {
+    DEBUG(DB_SYSCALL, "sigaltstack: stack size too low\n");
+    *retval = -1;
+    return ENOMEM;
+  }
+  struct sigaltstack *newaltstack_p = kmalloc(sizeof(newaltstack));
+  KASSERT(newaltstack_p);
+  memcpy(newaltstack_p, &newaltstack, sizeof(newaltstack));
+  curproc->p_sigaltstack = newaltstack_p;
+  *retval = 0;
+  return 0;
+}
+
 // Causes current thread to sleep until it catches a signal and runs its handler
 int sys_pause(int *retval) {
   curthread->t_is_paused = true;
@@ -330,7 +400,7 @@ int sys_pause(int *retval) {
   return EINTR;
 }
 
-// TODO: sys_sigaction, sys_pause, sys_kill, sys_sigpending, sys_sigprocmask, sys_sigsuspend
+// TODO: sys_kill, sys_sigpending, sys_sigprocmask, sys_sigsuspend, sigaltstack
 
 int sys_getpid(int *retval) {
   *retval = (int)curproc->pid;

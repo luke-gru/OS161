@@ -22,6 +22,63 @@ static void my_sigusr1_handler(int signo) {
   handled_sigusr1 = 1;
 }
 
+size_t altstack_btm;
+size_t altstack_top;
+static void my_sigusr1_handler_altstack(int signo) {
+  printf(in_sig_msg, signo);
+  struct sigaction sigact;
+  struct sigaction *sigact_p = &sigact;
+  if ((size_t)sigact_p < altstack_btm || (size_t)sigact_p > altstack_top) {
+    errx(1, "not running on alternate stack!");
+  }
+  handled_sigusr1 = 1;
+}
+
+// run this in the background from the shell:
+// $ b testbin/luketest sigaltstack
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
+static int sigaltstack_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_flags = SA_ONSTACK;
+  sigact.sa_handler = my_sigusr1_handler_altstack;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  stack_t altstack;
+  memset(&altstack, 0, sizeof(altstack));
+  void *stackptr = malloc(MINSIGSTKSZ);
+  if (!stackptr) {
+    errx(1, "malloc error");
+  }
+  altstack_btm = (size_t)stackptr;
+  altstack_top = altstack_btm + MINSIGSTKSZ;
+  altstack.ss_sp = stackptr;
+  altstack.ss_size = MINSIGSTKSZ;
+  altstack.ss_flags = 0;
+  int setup_stack_res = sigaltstack((const stack_t*)&altstack, NULL);
+  if (setup_stack_res != 0) {
+    errx(1, "sigaltstack returned non-0: %d: errno=%d (%s)", setup_stack_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      exit(0);
+    }
+  }
+}
+
+// run this in the background from the shell:
+// $ b testbin/luketest sigaction
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
 static int sigaction_test(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -514,6 +571,8 @@ int main(int argc, char *argv[]) {
     pause_test(argc, argv);
   } else if (strcmp(argv[1], "sigaction") == 0) {
     sigaction_test(argc, argv);
+  } else if (strcmp(argv[1], "sigaltstack") == 0) {
+    sigaltstack_test(argc, argv);
   } else {
     errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-5]|signal OPTIONS\n");
   }

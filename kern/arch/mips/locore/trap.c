@@ -389,7 +389,20 @@ static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapfr
 	sctx.sc_tf = *tf; // copy trapframe
 	size_t framesize = sizeof(struct sigframe);
 	struct sigframe *fp;
-	fp = (struct sigframe *)(tf->tf_sp - framesize);
+	struct sigaltstack *sigstack_p = curproc->p_sigaltstack;
+	if ((sigact->sa_flags & SA_ONSTACK) && sigstack_p) {
+		if ((sigstack_p->ss_flags & SS_DISABLE) == 0 && !sigonstack(tf->tf_sp)) {
+			fp = (struct sigframe *)(sigstack_p->ss_sp + sigstack_p->ss_size - framesize);
+		} else {
+			fp = (struct sigframe *)(tf->tf_sp - framesize);
+		}
+		if ((sigstack_p->ss_flags & SS_DISABLE) == 0) {
+			sigstack_p->ss_flags |= SS_ONSTACK;
+		}
+	} else {
+		fp = (struct sigframe *)(tf->tf_sp - framesize);
+	}
+
 	int copy_res;
 	uint32_t sighandler;
 	if (sigact->sa_flags & SA_SIGINFO) {

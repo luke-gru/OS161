@@ -59,3 +59,18 @@ void _sigfn_cont(int signo) {
   DEBUG(DB_SIG, "Continuing curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[signo]);
   curthread->t_is_stopped = false;
 }
+
+int sigonstack(size_t sp) {
+	struct sigaltstack *ss = curproc->p_sigaltstack;
+	KASSERT(ss);
+	if (ss->ss_flags & SS_DISABLE) {
+		return 0;
+	}
+
+	size_t diff = sp -(size_t)ss->ss_sp;
+	if (diff > 0 && diff < ss->ss_size) {
+		return 1;
+	} else {
+		return 0;
+	}
+}

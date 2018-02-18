@@ -173,6 +173,7 @@ struct proc {
 
 	struct sigaction *p_sigacts[NSIG+1]; // +1 because p_sigacts[0] is NULL
 	struct sigaction *current_sigact;
+	struct sigaltstack *p_sigaltstack;
 	int current_signo;
 };
 
