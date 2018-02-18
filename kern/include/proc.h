@@ -172,7 +172,7 @@ struct proc {
 	short file_table_refcount;
 
 	struct sigaction *p_sigacts[NSIG+1]; // +1 because p_sigacts[0] is NULL
-	vaddr_t current_sig_handler;
+	struct sigaction *current_sigact;
 	int current_signo;
 };
 

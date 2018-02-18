@@ -99,6 +99,7 @@ typedef __u32 sigset_t;
 #define SA_ONSTACK	1	/* Use sigaltstack() stack. */
 #define SA_RESTART	2	/* Restart syscall instead of interrupting. */
 #define SA_RESETHAND	4	/* Clear handler after one usage. */
+#define SA_SIGINFO 8
 
 /* codes for sigprocmask() */
 #define SIG_BLOCK	1	/* Block selected signals. */
@@ -121,13 +122,56 @@ void _sigfn_cont(int);
 
 extern __sigfunc default_sighandlers[_NSIG+1];
 
+typedef union sigval {
+    int sival_int;
+    void *sival_ptr;
+} sigval_t;
+
+typedef long int clock_t;
+
+typedef struct _siginfo {
+	int      si_signo;     /* Signal number */
+	int      si_errno;     /* An errno value */
+	int      si_code;      /* Signal code */
+	int      si_trapno;    /* Trap number that caused
+														hardware-generated signal
+														(unused on most architectures) */
+	pid_t    si_pid;       /* Sending process ID */
+	uid_t    si_uid;       /* Real user ID of sending process */
+	int      si_status;    /* Exit value or signal */
+	clock_t  si_utime;     /* User time consumed */
+	clock_t  si_stime;     /* System time consumed */
+	sigval_t si_value;     /* Signal value */
+	int      si_int;       /* POSIX.1b signal */
+	void    *si_ptr;       /* POSIX.1b signal */
+	int      si_overrun;   /* Timer overrun count;
+														POSIX.1b timers */
+	int      si_timerid;   /* Timer ID; POSIX.1b timers */
+	void    *si_addr;      /* Memory location which caused fault */
+	long     si_band;      /* Band event (was int in
+														glibc 2.3.2 and earlier) */
+	int      si_fd;        /* File descriptor */
+	short    si_addr_lsb;  /* Least significant bit of address
+														(since Linux 2.6.32) */
+	void    *si_call_addr; /* Address of system call instruction
+														(since Linux 3.5) */
+	int      si_syscall;   /* Number of attempted system call
+														(since Linux 3.5) */
+	unsigned int si_arch;  /* Architecture of attempted system call
+														(since Linux 3.5) */
+} siginfo_t;
+
+typedef void (*__sigfunc_siginfo)(int, siginfo_t *, void *);
 /*
  * Struct for sigaction().
  */
 struct sigaction {
 	__sigfunc sa_handler;
+	// pointer to user handler if sa_flags is given SA_SIGINFO flag
+	void (*sa_sigaction)(int signo, siginfo_t *siginfo, void *restorer);
 	sigset_t sa_mask;
 	unsigned sa_flags;
+	void (*sa_restorer)(void); // address of signal trampoline code
 };
 
 /*
@@ -140,10 +184,10 @@ struct sigaltstack {
 	unsigned ss_flags;
 };
 
+// our simple siginfo struct (kernel only), not to be confused with siginfo_t
 struct siginfo {
 	pid_t pid;
 	int sig;
 };
-
 
 #endif /* _KERN_SIGNAL_H_ */

@@ -9,10 +9,45 @@
 
 const char *in_sig_msg = "Got into my handler for sig %d!\n";
 int handled_sigusr1 = 0;
-static void my_sigusr1_handler(int signo) {
-  (void)signo;
+
+static void my_sigusr1_handler_siginfo(int signo, siginfo_t *siginfo, void *restorer) {
+  (void)restorer;
+  (void)siginfo;
   printf(in_sig_msg, signo);
   handled_sigusr1 = 1;
+}
+
+static void my_sigusr1_handler(int signo) {
+  printf(in_sig_msg, signo);
+  handled_sigusr1 = 1;
+}
+
+static int sigaction_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_flags = SA_SIGINFO|SA_RESETHAND;
+  sigact.sa_sigaction = my_sigusr1_handler_siginfo;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      bzero(&sigact, sizeof(sigact));
+      sigact_res = sigaction(SIGUSR1, NULL, &sigact);
+      if (sigact_res != 0) {
+        errx(1, "sigaction returned non-0 when getting current sigaction value: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+      }
+      if (sigact.sa_handler != SIG_DFL || sigact.sa_sigaction != 0) {
+        errx(1, "SA_RESETHAND didn't reset the handler to the default after calling the signal handler");
+      }
+      exit(0);
+    }
+  }
 }
 
 // run this in the background from the shell:
@@ -56,7 +91,6 @@ static int signal_test(int argc, char **argv) {
   if (res == SIG_ERR) {
     errx(1, "Error setting signal handler for SIGUSR1");
   }
-  //pause(); TODO, add this syscall
   while (1) {
     sleep(5);
     if (handled_sigusr1) {
@@ -478,6 +512,8 @@ int main(int argc, char *argv[]) {
     signal_test(argc, argv);
   } else if (strcmp(argv[1], "pause") == 0) {
     pause_test(argc, argv);
+  } else if (strcmp(argv[1], "sigaction") == 0) {
+    sigaction_test(argc, argv);
   } else {
     errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-5]|signal OPTIONS\n");
   }

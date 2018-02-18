@@ -58,6 +58,14 @@ int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext) {
   int copy_res = copyin(sigcontext, &sctx, sizeof(sctx));
   DEBUGASSERT(copy_res == 0);
   *tf = sctx.sc_tf;
+  struct sigaction *sigact_p = curproc->p_sigacts[sctx.signo];
+  KASSERT(sigact_p);
+  // reset handler to default if necessary
+  if (sigact_p->sa_flags & SA_RESETHAND) {
+    sigact_p->sa_handler = SIG_DFL;
+    sigact_p->sa_sigaction = NULL;
+    sigact_p->sa_flags &= (~SA_RESETHAND);
+  }
   return 0;
 }
 
@@ -253,7 +261,7 @@ int sys_munmap(uint32_t startaddr, int *retval) {
 // NOTE: user_handler can be a ptr to a function or the special values
 // SIG_DFL or SIG_IGN
 int sys_signal(int signo, vaddr_t user_handler, int *retval) {
-  if (signo < 1 || signo > NSIG) {
+  if (signo < 1 || signo > NSIG || signo == SIGKILL || signo == SIGSTOP) {
     *retval = (int)SIG_ERR;
     return EINVAL;
   }
@@ -263,6 +271,54 @@ int sys_signal(int signo, vaddr_t user_handler, int *retval) {
   }
   curproc->p_sigacts[signo]->sa_handler = (__sigfunc)user_handler;
   *retval = (int)prev_handler;
+  return 0;
+}
+
+// Set and/or get user-supplied signal handler.
+int sys_sigaction(int signo, const_userptr_t action, userptr_t old_action, int *retval) {
+  if (signo < 1 || signo > NSIG || signo == SIGKILL || signo == SIGSTOP) {
+    *retval = -1;
+    return EINVAL;
+  }
+  struct sigaction *cursigact_p = curproc->p_sigacts[signo];
+  struct sigaction cursigact;
+  if (action == 0 && old_action == 0) {
+    *retval = -1;
+    return EINVAL;
+  }
+  if (!cursigact_p) {
+    bzero(&cursigact, sizeof(cursigact));
+  } else {
+    cursigact = *cursigact_p; // copy fields
+  }
+  int copy_res;
+  if (old_action) {
+    copy_res = copyout(&cursigact, old_action, sizeof(cursigact));
+    if (copy_res != 0) {
+      *retval = -1;
+      return EFAULT;
+    }
+    if (!action) {
+      *retval = 0;
+      return 0;
+    }
+  }
+  struct sigaction *newsigact_p = kmalloc(sizeof(*newsigact_p));
+  KASSERT(newsigact_p);
+  copy_res = copyin(action, newsigact_p, sizeof(*newsigact_p));
+  if (copy_res != 0) {
+    kfree(newsigact_p);
+    *retval = -1;
+    return EFAULT;
+  }
+  if ((newsigact_p->sa_flags & SA_SIGINFO) && !newsigact_p->sa_sigaction) {
+    kfree(newsigact_p);
+    *retval = -1;
+    return EINVAL;
+  }
+
+  curproc->p_sigacts[signo] = newsigact_p;
+
   return 0;
 }
 

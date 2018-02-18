@@ -45,6 +45,7 @@
 #include <kern/time.h>
 #include <kern/unistd.h>
 #include <kern/wait.h>
+#include <kern/signal.h>
 
 
 /*
@@ -161,6 +162,7 @@ int fcntl(int filehandle, int cmd, int flag);
 int clone(int (*fn)(void *), void *child_stacktop, size_t stack_size, int flags);
 
 void *signal(int signo, void (*sighandler)(int));
+int sigaction(int signo, const struct sigaction *act, struct sigaction *oldact);
 int pause(void);
 
 int pageout_region(__u32 startaddr, size_t nbytes);

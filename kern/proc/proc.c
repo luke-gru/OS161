@@ -701,10 +701,13 @@ struct proc *proc_create(const char *name) {
 		sigact = kmalloc(sizeof(struct sigaction));
 		KASSERT(sigact);
 		sigact->sa_mask = 0;
+		sigact->sa_flags = 0;
 		sigact->sa_handler = SIG_DFL;
+		sigact->sa_sigaction = NULL;
+		sigact->sa_restorer = NULL;
 		proc->p_sigacts[i] = sigact;
 	}
-	proc->current_sig_handler = (vaddr_t)0; // current user signal handler
+	proc->current_sigact = NULL; // current user signal handler action
 	proc->current_signo = 0;
 
 	proc->file_table_refcount = 1;

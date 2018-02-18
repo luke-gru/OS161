@@ -1680,9 +1680,13 @@ void thread_stop(void) {
 // Returns < 0 on error.
 int thread_handle_signal(struct siginfo siginf) {
 	__sigfunc handler;
+	__sigfunc_siginfo si_handler;
+	struct sigaction *sigact_p;
 	if (siginf.sig <= _NSIG) {
-		handler = curthread->t_proc->p_sigacts[siginf.sig]->sa_handler;
-		if (handler == SIG_DFL) {
+		sigact_p = curthread->t_proc->p_sigacts[siginf.sig];
+		si_handler = sigact_p->sa_sigaction;
+		handler = sigact_p->sa_handler;
+		if (!si_handler && handler == SIG_DFL) {
 			__sigfunc os_handler = default_sighandlers[siginf.sig];
 			os_handler(siginf.sig);
 			if (os_handler == _sigfn_ign) {
@@ -1690,11 +1694,11 @@ int thread_handle_signal(struct siginfo siginf) {
 			} else {
 				return 0;
 			}
-		} else if (handler == SIG_IGN) {
+		} else if (!si_handler && handler == SIG_IGN) {
 			// do nothing
 			return 2;
 		} else { // user handler
-			curthread->t_proc->current_sig_handler = (vaddr_t)handler;
+			curthread->t_proc->current_sigact = sigact_p;
 			curthread->t_proc->current_signo = siginf.sig;
 			return 1;
 		}

@@ -39,6 +39,7 @@
  * whatever userlevel execution context the signal interrupted.
  */
 struct sigcontext {
+	int signo;
 	struct trapframe sc_tf;
 };
 
