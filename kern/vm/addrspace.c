@@ -532,6 +532,31 @@ int as_prepare_load(struct addrspace *as) {
 		regionlst = regionlst->next;
 	}
 
+	// Allocate one page for injected code. This is always the last executable page in as->pages
+	// Right now this page is only used for injecting 12 bytes of assembly code for the return from signal
+	// handler trampoline... so it's sort of a waste.
+	// TODO: use unused space in executable pages, if available.
+	if (as->pages) {
+		struct page_table_entry *last_page = as->pages;
+		for (last_page=as->pages; last_page->next!=NULL; last_page=last_page->next) {}
+		DEBUGASSERT(last_page->page_entry_type == PAGE_ENTRY_TYPE_EXEC);
+		struct page_table_entry *injected = kmalloc(sizeof(*injected));
+		bzero(injected, sizeof(*injected));
+		injected->vaddr = vaddr;
+		injected->as = as;
+		injected->permissions = PROT_READ|PROT_EXEC;
+		injected->next = NULL;
+		injected->page_entry_type = PAGE_ENTRY_TYPE_EXEC;
+		paddr = find_upage_for_entry(injected, VM_PIN_PAGE, true);
+		if (paddr == 0){
+			return ENOMEM;
+		}
+		injected->paddr = paddr;
+		injected->flags |= PAGE_ENTRY_FLAG_INJECTED;
+		last_page->next = injected;
+		vaddr += PAGE_SIZE;
+	}
+
 	vaddr_t stackvaddr = USERSTACK - VM_STACKPAGES * PAGE_SIZE;
 	if (as->pages) {
 		for (pages=as->pages; pages->next!=NULL; pages=pages->next) {}
@@ -541,7 +566,7 @@ int as_prepare_load(struct addrspace *as) {
 		KASSERT(stack);
 		memset(stack, 0, sizeof(*stack));
 		stack->page_entry_type = PAGE_ENTRY_TYPE_STACK;
-		stack->permissions = PF_R|PF_W;
+		stack->permissions = PROT_READ|PROT_WRITE;
 		stack->as = as;
 		if (pages) {
 			pages->next = stack;
@@ -949,11 +974,24 @@ bool pte_can_handle_fault_type(struct page_table_entry *pte, int faulttype) {
 	}
 }
 
-int as_complete_load(struct addrspace *as) {
-	/*
-	 * TODO: zero out stack?
-	 */
+static int as_inject_code(struct addrspace *as) {
+	void *fn_ptr = sigcode;
+	struct page_table_entry *pte = as->pages;
+	while ((pte->flags & PAGE_ENTRY_FLAG_INJECTED) == 0) { pte = pte->next; }
+	if (!pte) { return -1; }
+	DEBUGASSERT(pte->page_entry_type == PAGE_ENTRY_TYPE_EXEC);
+	vaddr_t vaddr = pte->vaddr;
+	paddr_t paddr = pte->paddr;
+	DEBUGASSERT(paddr > 0);
+	// copy instructions from user signal handler return assembly code to address space of user,
+	// so we can jump to it after we call the user's signal handler to return control to the OS.
+	memcpy((void*)PADDR_TO_KVADDR(paddr), (const void*)fn_ptr, SIGRETCODE_BYTESIZE);
+	as->sigretcode = vaddr;
+	return 0;
+}
 
+int as_complete_load(struct addrspace *as) {
+	as_inject_code(as);
 	struct page_table_entry *pte = as->pages;
 	while (pte) {
 		pte->is_dirty = true;

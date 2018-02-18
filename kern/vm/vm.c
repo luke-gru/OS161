@@ -96,6 +96,7 @@ void kswapd_bootstrap() {
   kswapd_proc->p_cwd = kproc->p_cwd;
   struct addrspace *as = as_create(kswapd_proc->p_name);
   KASSERT(as);
+	return;
 	as->no_heap_alloc = true;
   kswapd_proc->p_addrspace = as;
   KASSERT(as_prepare_load(as) == 0); // allocate userspace stack pages so we can jump to entrypoint func
@@ -261,7 +262,7 @@ paddr_t getppages(unsigned long npages, enum page_t pagetype, unsigned long *cor
 	return addr; // physical address start (bottom addr of block of pages or page)
 }
 
-// Marks the page or pages that start at given addr as free. Doesn't zero out the page 
+// Marks the page or pages that start at given addr as free. Doesn't zero out the page
 // or pages, the caller has to do this if that's what's necessary.
 static void free_pages(unsigned long addr, enum page_t pagetype, bool dolock) {
   int pop = 0;

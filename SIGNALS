@@ -9,4 +9,13 @@ Asynchronous Signals (such as from kill)
 2) Process wakes up, and before entering back into user mode checks its pending signals
 3) It has one, and it's a user signal, so it sets up its current trapframe to point into
 the new handler, and sets the return address of the trapframe to point back to the original
-trapframe stack pointer
+trapframe stack pointer.
+
+TODO: figure out how this MIPS32 deals with stackframes and calling conventions by looking at disassembly of simple programs
+1) prologue moves sp down 16 bytes + (num S registers saving + saving RA)*4
+
+Need a way to return control back to the OS after executing a signal handler, so instead of executing a signal handler directly, I'll execute my
+own function that I put into the user's address space at a specific address that takes a pointer to the handler function, calls it, then calls a syscall to return control
+to the OS right before returning from the function (signal_ret syscall or something).
+
+1) Inject assembly instructions at specific address, make it readable and executable, NOT writable [DONE]

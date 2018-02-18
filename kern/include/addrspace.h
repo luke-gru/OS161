@@ -50,6 +50,7 @@ enum page_entry_type {
   PAGE_ENTRY_TYPE_HEAP = 3, // page for user heap
   PAGE_ENTRY_TYPE_MMAP = 4 // page for mmapped regions
 };
+#define PAGE_ENTRY_FLAG_INJECTED 2
 
 struct page_table_entry {
   struct addrspace *as;
@@ -57,6 +58,7 @@ struct page_table_entry {
 	vaddr_t vaddr;
 	paddr_t paddr;
 	int permissions; // read/write/execute memory permissions
+  int flags;
   enum page_entry_type page_entry_type;
   bool is_swapped; // is this entry swapped to disk and not resident in physical memory
   // Dirty means the contents of the page are different from the saved contents on disk
@@ -136,6 +138,7 @@ struct addrspace {
         vaddr_t heap_end; // end of heap pages, always divisible by PAGE_SIZE
         vaddr_t heap_brk; // end of heap available to userspace, growable with sbrk()
         vaddr_t heap_top; // top of heap, decreases if stack size increases or mmapped regions are added
+        vaddr_t sigretcode; // sigreturncode
         struct spinlock spinlock;
         time_t last_activation; // last time that this address space began its time slice
         bool destroying;

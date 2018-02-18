@@ -32,8 +32,24 @@
 
 /* In-kernel signal definitions. Get both the MD and MI parts. */
 
+#include <types.h>
 #include <kern/machine/signal.h>
 #include <kern/signal.h>
+
+#define SIGRETCODE_BYTESIZE 12
+// NOTE: this function is copied into the address space of user processes!
+// It's only a few instructions long, defined in exception-mips.S
+void sigcode(void);
+
+// placed on userspace stack so we can retrieve the sigcontext
+struct sigframe {
+  int	sf_signo;		/* signo for handler */
+	//siginfo_t *sf_sip;		/* pointer to siginfo_t */
+	//struct	sigcontext *sf_scp;	/* context ptr for handler */
+	//sig_t	sf_handler;		/* handler addr for u_sigc */
+	struct	sigcontext sf_sc;	/* actual context */
+	//siginfo_t sf_si;
+};
 
 
 #endif /* _SIGNAL_H_ */

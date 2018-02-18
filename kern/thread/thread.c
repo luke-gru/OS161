@@ -1593,7 +1593,9 @@ static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
 
 static void thread_wakeup(struct thread *t) {
 	struct spinlock *lk = t->t_wchan_lk;
-	KASSERT(lk != NULL);
+	if (lk == NULL) {
+		return; // thread just woke up...
+	}
 	spinlock_acquire(lk);
 	KASSERT(t->t_state == S_SLEEP);
 	KASSERT(t->t_wchan != NULL);

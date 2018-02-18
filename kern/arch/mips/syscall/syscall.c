@@ -185,6 +185,15 @@ syscall(struct trapframe *tf)
 		case SYS_signal:
 			err = sys_signal((int)tf->tf_a0, (vaddr_t)tf->tf_a1, &retval);
 			break;
+		case SYS_sigret:
+			err = sys_sigreturn(tf, (userptr_t)tf->tf_a0);
+			if (!err) {
+				KASSERT(curthread->t_curspl == 0);
+				KASSERT(curthread->t_iplhigh_count == 0);
+				return;
+			} else {
+				KASSERT(0);
+			}
 		case SYS__exit:
 			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread
 			panic("shouldn't return from exit");

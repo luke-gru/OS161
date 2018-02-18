@@ -39,8 +39,7 @@
  * whatever userlevel execution context the signal interrupted.
  */
 struct sigcontext {
-  int signo;
-	struct trapframe saved_tf;
+	struct trapframe sc_tf;
 };
 
 #endif /* _KERN_MIPS_SIGNAL_H_ */

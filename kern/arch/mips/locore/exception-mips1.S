@@ -364,3 +364,13 @@ asm_usermode:
    j exception_return
    addiu sp, a0, -16		/* in delay slot */
    .end asm_usermode
+
+   .text
+   .globl sigcode
+   .type sigcode,@function
+   .ent sigcode
+sigcode:
+    add a0, sp, 4
+    li v0, 11
+    syscall
+   .end sigcode

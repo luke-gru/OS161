@@ -92,6 +92,7 @@
 #define DB_ALL DB_LOCORE|DB_SYSCALL|DB_INTERRUPT|DB_DEVICE|DB_THREADS|DB_VM|DB_EXEC|DB_VFS|DB_SEMFS|DB_SFS|DB_NET|DB_NETFS|DB_KMALLOC
 #define DB_LUKE DB_THREADS|DB_SYSCALL
 #define DB_SIG				 0x2000
+#define DB_UIO 				 0x4000
 #define DB_NONE 			 0x0000
 
 extern uint32_t dbflags; // to be set by debugger, normally
@@ -112,7 +113,7 @@ extern uint32_t dbflags; // to be set by debugger, normally
  *
  * DEBUG is a varargs macro. These were added to the language in C99.
  */
-#define DEBUG(d, ...) ((dbflags & (d)) ? kprintf(__VA_ARGS__) : 0)
+#define DEBUG(d, ...) ((dbflags & (d)) ? kprintf("[DEBUG] " __VA_ARGS__) : 0)
 
 /*
  * Random number generator, using the random device.

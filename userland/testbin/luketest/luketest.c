@@ -7,10 +7,11 @@
 #include <errno.h>
 #include <signal.h>
 
+const char *in_sig_msg = "Got into my handler for sig %d!\n";
 int handled_sigusr1 = 0;
 static void my_sigusr1_handler(int signo) {
   (void)signo;
-  printf("Got into my handler for sig!\n");
+  printf(in_sig_msg, signo);
   handled_sigusr1 = 1;
 }
 

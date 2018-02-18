@@ -40,6 +40,7 @@
 #include <mainbus.h>
 #include <syscall.h>
 #include <addrspace.h>
+#include <copyinout.h>
 
 
 /* in exception-*.S */
@@ -361,31 +362,36 @@ mips_trap(struct trapframe *tf)
 	 * to find out now.
 	 */
 	KASSERT(SAME_STACK(cpustacks[curcpu->c_number]-1, (vaddr_t)tf));
-	user_return_from_trap(tf, code);
+	if (tf->tf_sp > USERSPACETOP) { // probably an interrupt while in kernel mode, we're not returning to usermode
+	} else {
+		user_return_from_trap(tf, code);
+	}
 }
 
 static void setup_sig_handler(vaddr_t sighandler, int signo, struct trapframe *tf) {
-	// struct sigcontext sctx;
-	// bzero(&sctx, sizeof(sigcontext));
-	// sctx.signo = signo;
-	// sctx.saved_tf = *tf;
-	//uint32_t sp = tf->tf_sp;
-	// setup new stack space for the handler function
-	//sp -= sizeof(struct sigcontext);
-	(void)sighandler;
-	(void)signo;
-	(void)tf;
+	struct sigcontext sctx;
+	bzero(&sctx, sizeof(sctx));
+	sctx.sc_tf = *tf; // copy trapframe
+	size_t framesize = sizeof(struct sigframe);
+	struct sigframe *fp;
+	fp = (struct sigframe *)(tf->tf_sp - framesize);
+	int copy_res;
+	copy_res = copyout(&sctx, (userptr_t)&fp->sf_sc, sizeof(struct sigcontext)); // copy sigcontext into sigframe on user's stack
+	DEBUGASSERT(copy_res == 0);
+	copy_res = copyout(&signo, (userptr_t)&fp->sf_signo, sizeof(int)); // copy signo into sigframe on user's stack
+	DEBUGASSERT(copy_res == 0);
+	tf->tf_sp = (uint32_t)fp; // change user's stack pointer
+	tf->tf_ra = curproc->p_addrspace->sigretcode;
+	tf->tf_epc = (uint32_t)sighandler;
+	tf->tf_a0 = (uint32_t)signo;
+	curproc->current_sig_handler = 0;
 }
 
 void user_return_from_trap(struct trapframe *tf, uint32_t code) {
 	//kprintf("returning from trap, code: %u (%s)\n", code, trapcodenames[code]);
 	if (curproc && curproc->current_sig_handler) {
-		setup_sig_handler(curproc->current_sig_handler, curproc->current_signo, tf);
 		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
-		tf->tf_ra = tf->tf_sp;
-		tf->tf_epc = curproc->current_sig_handler;
-		tf->tf_sp = tf->tf_sp - 16;
-		curproc->current_sig_handler = 0;
+		setup_sig_handler(curproc->current_sig_handler, curproc->current_signo, tf);
 	}
 	(void)code;
 	spl0();

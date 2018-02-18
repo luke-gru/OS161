@@ -126,15 +126,18 @@ copycheck(const_userptr_t userptr, size_t len, size_t *stoplen)
 
 	if (top < bot) {
 		/* addresses wrapped around */
+		DEBUG(DB_UIO, "copycheck, ptr wraparound error\n");
 		return EFAULT;
 	}
 
 	if (bot >= USERSPACETOP) {
+		DEBUG(DB_UIO, "copycheck, ptr above USERSPACETOP\n");
 		/* region is within the kernel */
 		return EFAULT;
 	}
 
-	if (top >= USERSPACETOP) {
+	if (top >= USERSPACETOP) { // 2147483648 (0x80000000)
+		DEBUG(DB_UIO, "copycheck, copy too long (overlaps with kernel space)\n");
 		/* region overlaps the kernel. adjust the max length. */
 		*stoplen = USERSPACETOP - bot;
 	}

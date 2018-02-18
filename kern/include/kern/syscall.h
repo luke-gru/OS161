@@ -61,6 +61,7 @@
 #define SYS_munmap       9
 #define SYS_mprotect     10
 
+#define SYS_sigret       11 // return from user-defined signal handler
 //#define SYS_madvise    11
 //#define SYS_mincore    12
 //#define SYS_mlock      13

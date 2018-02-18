@@ -51,6 +51,15 @@ void sys_exit(int status) {
   thread_exit(status);
 }
 
+int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext) {
+  struct sigcontext sctx;
+  bzero(&sctx, sizeof(sctx));
+  int copy_res = copyin(sigcontext, &sctx, sizeof(sctx));
+  DEBUGASSERT(copy_res == 0);
+  *tf = sctx.sc_tf;
+  return 0;
+}
+
 int sys_fork(struct trapframe *tf, int *retval) {
   int err = 0;
   // disable interrupts so the trapframe that we use for the parent (current) process
