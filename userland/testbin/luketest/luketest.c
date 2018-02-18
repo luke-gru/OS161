@@ -16,6 +16,35 @@ static void my_sigusr1_handler(int signo) {
 }
 
 // run this in the background from the shell:
+// $ b testbin/luketest pause
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
+static int pause_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *res = signal(SIGUSR1, my_sigusr1_handler);
+  if (res == SIG_ERR) {
+    errx(1, "Error setting signal handler for SIGUSR1");
+  }
+  if (res != SIG_DFL) {
+    errx(1, "previous handler should have been SIG_DFL");
+  }
+  printf("Pausing...\n");
+  int pause_res = pause();
+  printf("Woke up from pause\n");
+  if (pause_res != -1 || errno != EINTR) {
+    errx(1, "bad return value or errno not properly set: ret=%d, errno=%d (%s)\n", pause_res, errno, strerror(errno));
+  }
+  if (handled_sigusr1) {
+    printf("handled sigusr1, exiting\n");
+    exit(0);
+  } else {
+    errx(1, "handled_sigusr1 var should be set");
+  }
+}
+
+// run this in the background from the shell:
 // $ b testbin/luketest signal
 // pid: 3
 // $ sig SIGUSR1 3
@@ -447,6 +476,8 @@ int main(int argc, char *argv[]) {
     mmap_test5(argc, argv);
   } else if (strcmp(argv[1], "signal") == 0) {
     signal_test(argc, argv);
+  } else if (strcmp(argv[1], "pause") == 0) {
+    pause_test(argc, argv);
   } else {
     errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-5]|signal OPTIONS\n");
   }

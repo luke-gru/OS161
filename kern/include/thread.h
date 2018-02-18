@@ -128,6 +128,7 @@ struct thread {
 
 	struct siginfo *t_pending_signals[PENDING_SIGNALS_MAX];
 	bool t_is_stopped; /* has been stopped by SIGSTOP */
+	bool t_is_paused; /* has been paused by pause() syscall (unpauses after receiving a signal)*/
 };
 
 /*
@@ -152,6 +153,8 @@ void thread_panic(void);
 
 /* Call during system shutdown to offline other CPUs. */
 void thread_shutdown(void);
+
+void thread_stop(void);
 
 /*
  * Make a new thread, which will start executing at "func". The thread

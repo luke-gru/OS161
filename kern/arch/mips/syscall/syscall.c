@@ -185,6 +185,9 @@ syscall(struct trapframe *tf)
 		case SYS_signal:
 			err = sys_signal((int)tf->tf_a0, (vaddr_t)tf->tf_a1, &retval);
 			break;
+		case SYS_pause:
+			err = sys_pause(&retval);
+			break;
 		case SYS_sigret:
 			err = sys_sigreturn(tf, (userptr_t)tf->tf_a0);
 			if (!err) {

@@ -694,18 +694,19 @@ struct proc *proc_create(const char *name) {
 	}
 	bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
 
-	proc->p_sigdescrs[0] = NULL;
-	struct sigdescr *sig_descr;
+	// initialize signal action table
+	proc->p_sigacts[0] = NULL;
+	struct sigaction *sigact;
 	for (int i = 1; i <= NSIG; i++) {
-		sig_descr = kmalloc(sizeof(struct sigdescr));
-		KASSERT(sig_descr);
-		sig_descr->signo = i;
-		sig_descr->is_blocked = false;
-		sig_descr->user_handler = 0;
-		proc->p_sigdescrs[i] = sig_descr;
+		sigact = kmalloc(sizeof(struct sigaction));
+		KASSERT(sigact);
+		sigact->sa_mask = 0;
+		sigact->sa_handler = SIG_DFL;
+		proc->p_sigacts[i] = sigact;
 	}
-	proc->current_sig_handler = (vaddr_t)0;
+	proc->current_sig_handler = (vaddr_t)0; // current user signal handler
 	proc->current_signo = 0;
+
 	proc->file_table_refcount = 1;
 	spinlock_init(&proc->p_lock);
 	proc->p_mutex = lock_create("proc mutex");
@@ -821,12 +822,12 @@ void proc_destroy(struct proc *proc) {
 		}
 	}
 
-	struct sigdescr *sig_descr;
+	struct sigaction *sigact;
 	for (int i = 1; i <= NSIG; i++) {
-		sig_descr = proc->p_sigdescrs[i];
-		KASSERT(sig_descr);
-		kfree(sig_descr);
-		proc->p_sigdescrs[i] = NULL;
+		sigact = proc->p_sigacts[i];
+		KASSERT(sigact);
+		kfree(sigact);
+		proc->p_sigacts[i] = NULL;
 	}
 
 	kfree(proc->p_name);

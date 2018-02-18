@@ -80,44 +80,43 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 
 	KASSERT(code < NTRAPCODES);
 	switch (code) {
-	    case EX_IRQ:
-	    case EX_IBE:
-	    case EX_DBE:
-	    case EX_SYS:
+	  case EX_IRQ:
+	  case EX_IBE:
+	  case EX_DBE:
+	  case EX_SYS:
 		/* should not be seen */
-		KASSERT(0);
-		sig = SIGABRT;
-		break;
-	    case EX_MOD:
-	    case EX_TLBL:
-	    case EX_TLBS:
-		sig = SIGSEGV;
-		break;
-	    case EX_ADEL:
-	    case EX_ADES:
-		sig = SIGBUS;
-		break;
-	    case EX_BP:
-		sig = SIGTRAP;
-		break;
-	    case EX_RI:
-		sig = SIGILL;
-		break;
-	    case EX_CPU:
-		sig = SIGSEGV;
-		break;
-	    case EX_OVF:
-		sig = SIGFPE;
-		break;
+			KASSERT(0);
+			sig = SIGABRT;
+			break;
+	  case EX_MOD:
+	  case EX_TLBL:
+	  case EX_TLBS:
+			sig = SIGSEGV;
+			break;
+    case EX_ADEL:
+    case EX_ADES:
+			sig = SIGBUS;
+			break;
+	  case EX_BP:
+			sig = SIGTRAP;
+			break;
+	  case EX_RI:
+			sig = SIGILL;
+			break;
+	  case EX_CPU:
+			sig = SIGSEGV;
+			break;
+	  case EX_OVF:
+			sig = SIGFPE;
+			break;
+		default:
+			sig = SIGTERM;
+			break;
 	}
-
-	/*
-	 * You will probably want to change this.
-	 */
 
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
-	panic("I don't know how to handle this\n");
+	thread_send_signal(curthread, sig);
 }
 
 /*
@@ -362,8 +361,23 @@ mips_trap(struct trapframe *tf)
 	 * to find out now.
 	 */
 	KASSERT(SAME_STACK(cpustacks[curcpu->c_number]-1, (vaddr_t)tf));
+
 	if (tf->tf_sp > USERSPACETOP) { // probably an interrupt while in kernel mode, we're not returning to usermode
 	} else {
+		struct siginfo *siginf;
+		int sig_idx;
+		if (curproc && !curproc->current_sig_handler) {
+			while ((sig_idx = thread_has_pending_signal()) != -1) {
+				KASSERT(thread_remove_pending_signal(sig_idx, &siginf) == 0);
+				DEBUG(DB_SIG, "handling pending signal %s\n", sys_signame[siginf->sig]);
+				KASSERT(siginf->pid == curproc->pid);
+				int handle_res = thread_handle_signal(*siginf);
+				kfree(siginf);
+				if (handle_res == 1) { // userlevel signal queued, let it run before we handle other signals
+					break;
+				}
+			}
+		}
 		user_return_from_trap(tf, code);
 	}
 }
@@ -385,10 +399,10 @@ static void setup_sig_handler(vaddr_t sighandler, int signo, struct trapframe *t
 	tf->tf_epc = (uint32_t)sighandler;
 	tf->tf_a0 = (uint32_t)signo;
 	curproc->current_sig_handler = 0;
+	curproc->current_signo = signo;
 }
 
 void user_return_from_trap(struct trapframe *tf, uint32_t code) {
-	//kprintf("returning from trap, code: %u (%s)\n", code, trapcodenames[code]);
 	if (curproc && curproc->current_sig_handler) {
 		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
 		setup_sig_handler(curproc->current_sig_handler, curproc->current_signo, tf);

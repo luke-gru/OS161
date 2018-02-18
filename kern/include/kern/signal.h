@@ -90,8 +90,7 @@
 
 #define PENDING_SIGNALS_MAX 10
 
-const char *sys_signame[34]; // begins and ends with NULL
-
+const char *sys_signame[_NSIG+2]; // begins and ends with NULL
 
 /* Type for a set of signals; used by e.g. sigprocmask(). */
 typedef __u32 sigset_t;
@@ -112,6 +111,15 @@ typedef void (*__sigfunc)(int);
 /* Magic values for signal handlers. */
 #define SIG_DFL		((__sigfunc) 0)		/* Default behavior. */
 #define SIG_IGN		((__sigfunc) 1)		/* Ignore the signal. */
+#define SIG_ERR   ((__sigfunc)-1)
+
+void _sigfn_term(int);
+void _sigfn_core(int);
+void _sigfn_ign(int);
+void _sigfn_stop(int);
+void _sigfn_cont(int);
+
+extern __sigfunc default_sighandlers[_NSIG+1];
 
 /*
  * Struct for sigaction().

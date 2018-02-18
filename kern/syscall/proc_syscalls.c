@@ -42,6 +42,7 @@
 #include <clock.h>
 #include <lib.h>
 #include <kern/errno.h>
+#include <signal.h>
 
 void sys_exit(int status) {
   // Detaches current thread from process, and turns it into zombie, then exits
@@ -249,16 +250,31 @@ int sys_munmap(uint32_t startaddr, int *retval) {
 }
 
 // set user-supplied signal handler for given signal
+// NOTE: user_handler can be a ptr to a function or the special values
+// SIG_DFL or SIG_IGN
 int sys_signal(int signo, vaddr_t user_handler, int *retval) {
-  if (signo < 1 || signo > NSIG || user_handler == 0) {
-    *retval = -1;
+  if (signo < 1 || signo > NSIG) {
+    *retval = (int)SIG_ERR;
     return EINVAL;
   }
-  vaddr_t prev_handler = curproc->p_sigdescrs[signo]->user_handler;
-  curproc->p_sigdescrs[signo]->user_handler = user_handler;
+  __sigfunc prev_handler = curproc->p_sigacts[signo]->sa_handler;
+  if (!prev_handler) {
+    prev_handler = SIG_DFL;
+  }
+  curproc->p_sigacts[signo]->sa_handler = (__sigfunc)user_handler;
   *retval = (int)prev_handler;
   return 0;
 }
+
+// Causes current thread to sleep until it catches a signal and runs its handler
+int sys_pause(int *retval) {
+  curthread->t_is_paused = true;
+  thread_stop();
+  *retval = -1;
+  return EINTR;
+}
+
+// TODO: sys_sigaction, sys_pause, sys_kill, sys_sigpending, sys_sigprocmask, sys_sigsuspend
 
 int sys_getpid(int *retval) {
   *retval = (int)curproc->pid;

@@ -91,6 +91,7 @@
 #define SYS_sigreturn    32
 //#define SYS_sigaltstack 33
 #define SYS_signal 33
+#define SYS_pause 34
 //                              (resource tracking and usage)
 //#define SYS_wait4      34
 //#define SYS_getrusage  35

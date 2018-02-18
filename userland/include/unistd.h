@@ -161,7 +161,7 @@ int fcntl(int filehandle, int cmd, int flag);
 int clone(int (*fn)(void *), void *child_stacktop, size_t stack_size, int flags);
 
 void *signal(int signo, void (*sighandler)(int));
-#define SIG_ERR ((void*)-1)
+int pause(void);
 
 int pageout_region(__u32 startaddr, size_t nbytes);
 int lock_region(__u32 startaddr, size_t nbytes);

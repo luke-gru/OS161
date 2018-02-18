@@ -1029,14 +1029,17 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 	spinlock_release(&curcpu->c_runqueue_lock);
 	as_activate();
 	exorcise();
-	int sig_idx = thread_has_pending_signal();
-	if (sig_idx != -1) {
-		struct siginfo *siginf;
+	struct siginfo *siginf;
+	int sig_idx;
+	while ((sig_idx = thread_has_pending_signal()) != -1) {
 		KASSERT(thread_remove_pending_signal(sig_idx, &siginf) == 0);
 		DEBUG(DB_SIG, "handling pending signal %s\n", sys_signame[siginf->sig]);
 		KASSERT(siginf->pid == curproc->pid);
-		thread_handle_signal(*siginf);
+		int handle_res = thread_handle_signal(*siginf);
 		kfree(siginf);
+		if (handle_res == 1) { // userlevel signal queued, let it run before we handle other signals
+			break;
+		}
 	}
 	splx(spl);
 }
@@ -1581,6 +1584,7 @@ const char *threadstate_name(threadstate_t state) {
 	}
 }
 
+// FIXME: newly added signals should always be added to the end
 static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
 	for (int i = 0; i < PENDING_SIGNALS_MAX; i++) {
 		if (!t->t_pending_signals[i]) {
@@ -1594,7 +1598,7 @@ static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
 static void thread_wakeup(struct thread *t) {
 	struct spinlock *lk = t->t_wchan_lk;
 	if (lk == NULL) {
-		return; // thread just woke up...
+		return; // thread probably just woke up...
 	}
 	spinlock_acquire(lk);
 	KASSERT(t->t_state == S_SLEEP);
@@ -1603,6 +1607,8 @@ static void thread_wakeup(struct thread *t) {
 	spinlock_release(lk);
 }
 
+// Adds a pending signal to thread so it can handle it upon wakeup or re-entry to user level.
+// If `t` is the current thread, it's handled directly instead of added to the queue.
 int thread_send_signal(struct thread *t, int sig) {
 	DEBUGASSERT(sig > 0 && sig <= NSIG);
 	struct siginfo *si = kmalloc(sizeof(struct siginfo));
@@ -1617,14 +1623,22 @@ int thread_send_signal(struct thread *t, int sig) {
 		DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
 		int add_res = thread_add_pending_signal(t, si);
 		if (add_res == -1) {
+			DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d failed (queue full)\n", sys_signame[sig], (int)t->t_pid);
 			kfree(si);
 			return -1;
 		}
 		// make the thread runnable so it can handle its signal
 		if (t->t_state == S_SLEEP) {
 			DEBUG(DB_SIG, "Waking thread %d from sleep (wchan %s) due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
+			if (t->t_is_paused) {
+				// TODO: only unpause if the given sigaction for the signal isn't ignored
+				t->t_is_paused = false;
+			}
 			thread_wakeup(t);
 		} else {
+			if (t->t_state == S_ZOMBIE) {
+				return -1;
+			}
 			if (t->t_state != S_RUN && t->t_state != S_READY) {
 				thread_make_runnable(t, false);
 			}
@@ -1651,41 +1665,41 @@ int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out) 
 	if (!inf) return -1;
 	*siginfo_out = inf;
 	curthread->t_pending_signals[sigidx] = NULL;
+	// FIXME: memmove the signals after it to take its space so the array acts as a LIFO queue
 	return 0;
 }
 
-static void thread_stop() {
-	DEBUG(DB_SIG, "Stopping curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGSTOP]);
+void thread_stop(void) {
 	curthread->t_is_stopped = true;
 	spinlock_acquire(&threads_stopped_lock);
 	thread_switch(S_SLEEP, threads_stopped_wchan, &threads_stopped_lock);
 }
 
+// Returns 0, signal has been handled by OS. Returns 1, sigaction is a userlevel signal handler and
+// has been set to run on next entry to userland. Returns 2, signal has been ignored.
+// Returns < 0 on error.
 int thread_handle_signal(struct siginfo siginf) {
-	vaddr_t handler;
-	switch (siginf.sig) {
-		case SIGSTOP:
-			thread_stop();
-			break;
-		case SIGCONT:
-			DEBUG(DB_SIG, "Continuing curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGCONT]);
-			curthread->t_is_stopped = false;
-			/* continue as normal, curthread is awake now */
-			break;
-		case SIGKILL:
-			DEBUG(DB_SIG, "Exiting curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGKILL]);
-			thread_exit(1);
-			panic("unreachable");
-		case SIGUSR1:
-			handler = curthread->t_proc->p_sigdescrs[SIGUSR1]->user_handler;
-			if (handler > 0) {
-				curthread->t_proc->current_sig_handler = handler;
-				curthread->t_proc->current_signo = SIGUSR1;
+	__sigfunc handler;
+	if (siginf.sig <= _NSIG) {
+		handler = curthread->t_proc->p_sigacts[siginf.sig]->sa_handler;
+		if (handler == SIG_DFL) {
+			__sigfunc os_handler = default_sighandlers[siginf.sig];
+			os_handler(siginf.sig);
+			if (os_handler == _sigfn_ign) {
+				return 2;
+			} else {
+				return 0;
 			}
-			break;
-		default:
-			panic("not implemented");
-			return -1;
+		} else if (handler == SIG_IGN) {
+			// do nothing
+			return 2;
+		} else { // user handler
+			curthread->t_proc->current_sig_handler = (vaddr_t)handler;
+			curthread->t_proc->current_signo = siginf.sig;
+			return 1;
+		}
+	} else {
+		return -1;
 	}
 	return 0;
 }
