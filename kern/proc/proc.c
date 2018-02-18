@@ -1216,16 +1216,10 @@ int proc_send_signal(struct proc *p, int sig, int *errcode) {
 		*errcode = ESRCH;
 		return -1;
 	}
-	switch (sig) {
-	case SIGSTOP:
-	case SIGCONT:
-	case SIGKILL:
-	case SIGUSR1:
-		return thread_send_signal(t, sig);
-	// not yet implemented
-	default:
-		*errcode = EINVAL;
+	if (sig < 1 || sig > NSIG) {
 		return -1;
+	} else {
+		return thread_send_signal(t, sig);
 	}
 }
 

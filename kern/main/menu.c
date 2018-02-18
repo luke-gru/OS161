@@ -208,8 +208,10 @@ static int cmd_sig(int nargs, char **args) {
 		sig = SIGKILL;
 	} else if (strcmp(args[1], "SIGUSR1") == 0) {
 		sig = SIGUSR1;
+	} else if (strcmp(args[1], "SIGTERM") == 0) {
+		sig = SIGTERM;
 	} else {
-		kprintf("Only SIGSTOP, SIGCONT, SIGKILL, SIGUSR1 are supported\n");
+		kprintf("Only SIGSTOP, SIGCONT, SIGKILL, SIGTERM, SIGUSR1 are supported\n");
 		return EINVAL;
 	}
 	pid = atoi(args[2]);
