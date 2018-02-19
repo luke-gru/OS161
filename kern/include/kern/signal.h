@@ -109,6 +109,9 @@ typedef __u32 sigset_t;
 #define SIG_UNBLOCK	2	/* Unblock selected signals. */
 #define SIG_SETMASK	3	/* Set mask to the selected signals. */
 
+// kernel-only use
+#define SIG_ISBLOCKED -2
+
 /* Type for a signal handler function. */
 typedef void (*__sigfunc)(int);
 
@@ -200,5 +203,42 @@ struct siginfo {
 	pid_t pid;
 	int sig;
 };
+
+#define _sigmask(m)	(1U << ((m)-1))
+#define	sigcantmask	(_sigmask(SIGKILL) | _sigmask(SIGSTOP))
+
+static inline int sigaddset(sigset_t *__set, int __signo) {
+	if (__signo <= 0 || __signo > NSIG) {
+		return -1;
+	}
+	*__set |= (1U << ((__signo)-1));
+	return 0;
+}
+
+static inline int sigdelset(sigset_t *__set, int __signo) {
+	if (__signo <= 0 || __signo > NSIG) {
+		return -1;
+	}
+	*__set &= ~(1U << ((__signo)-1));
+	return 0;
+}
+
+static inline int sigismember(const sigset_t *__set, int __signo) {
+	if (__signo <= 0 || __signo > NSIG) {
+		return -1;
+	}
+	return ((*__set & (1U << ((__signo)-1))) != 0);
+}
+
+static inline int sigemptyset(sigset_t *__set) {
+	*__set = 0;
+	return 0;
+}
+
+static inline int sigfillset(sigset_t *__set) {
+	*__set = ~(sigset_t)0;
+	return 0;
+}
+
 
 #endif /* _KERN_SIGNAL_H_ */

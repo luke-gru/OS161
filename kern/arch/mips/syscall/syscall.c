@@ -191,6 +191,9 @@ syscall(struct trapframe *tf)
 		case SYS_sigaltstack:
 			err = sys_sigaltstack((const_userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1, &retval);
 			break;
+		case SYS_sigprocmask:
+			err = sys_sigprocmask((int)tf->tf_a0, (const_userptr_t)tf->tf_a1, (userptr_t)tf->tf_a2, &retval);
+			break;
 		case SYS_pause:
 			err = sys_pause(&retval);
 			break;

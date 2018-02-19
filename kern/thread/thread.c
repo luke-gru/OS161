@@ -210,6 +210,8 @@ static struct thread * thread_create(const char *name) {
 	thread->t_pid = INVALID_PID;
 	bzero(thread->t_pending_signals, sizeof(thread->t_pending_signals));
 	thread->t_is_stopped = false;
+	thread->t_is_paused = false;
+	thread->t_sigmask = (sigset_t)0;
 
 	spinlock_acquire(&allthreads_lock);
 	threadarray_add(&allthreads, thread, NULL);
@@ -1611,6 +1613,9 @@ static void thread_wakeup(struct thread *t) {
 // If `t` is the current thread, it's handled directly instead of added to the queue.
 int thread_send_signal(struct thread *t, int sig) {
 	DEBUGASSERT(sig > 0 && sig <= NSIG);
+	if (sigismember(&t->t_sigmask, sig)) {
+		return SIG_ISBLOCKED;
+	}
 	struct siginfo *si = kmalloc(sizeof(struct siginfo));
 	KASSERT(si);
 	si->sig = sig;

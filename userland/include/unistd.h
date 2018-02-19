@@ -47,7 +47,6 @@
 #include <kern/wait.h>
 #include <kern/signal.h>
 
-
 /*
  * Prototypes for OS/161 system calls.
  *
@@ -164,6 +163,7 @@ int clone(int (*fn)(void *), void *child_stacktop, size_t stack_size, int flags)
 void *signal(int signo, void (*sighandler)(int));
 int sigaction(int signo, const struct sigaction *act, struct sigaction *oldact);
 int sigaltstack(const stack_t *ss, stack_t *oss);
+int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 int pause(void);
 
 int pageout_region(__u32 startaddr, size_t nbytes);

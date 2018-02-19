@@ -400,7 +400,49 @@ int sys_pause(int *retval) {
   return EINTR;
 }
 
-// TODO: sys_kill, sys_sigpending, sys_sigprocmask, sys_sigsuspend, sigaltstack
+// TODO: sys_kill, sys_sigpending, sys_sigsuspend
+
+int sys_sigprocmask(int how, const_userptr_t u_set, userptr_t u_oldset, int *retval) {
+  int copy_res;
+  if (u_oldset != (userptr_t)0) {
+    copy_res = copyout(&curthread->t_sigmask, u_oldset, sizeof(sigset_t));
+    if (copy_res != 0) {
+      *retval = -1;
+      return EFAULT;
+    }
+    if (u_set == (const_userptr_t)0) {
+      *retval = 0;
+      return 0;
+    }
+  }
+  if (!u_set) { // do nothing
+    *retval = 0;
+    return 0;
+  }
+  sigset_t set;
+  copy_res = copyin(u_set, &set, sizeof(sigset_t));
+  if (copy_res != 0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  set &= (~sigcantmask);
+  switch(how) {
+    case SIG_BLOCK:
+      curthread->t_sigmask |= set;
+      break;
+    case SIG_UNBLOCK:
+      curthread->t_sigmask &= (~set);
+      break;
+    case SIG_SETMASK:
+      curthread->t_sigmask = set;
+      break;
+    default:
+    *retval = -1;
+    return EINVAL;
+  }
+  *retval = 0;
+  return 0;
+}
 
 int sys_getpid(int *retval) {
   *retval = (int)curproc->pid;

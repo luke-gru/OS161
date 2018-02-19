@@ -98,6 +98,7 @@ int sys_pipe(userptr_t pipes_ary, size_t buflen, int *retval);
 int sys_signal(int signo, vaddr_t user_handler, int *retval);
 int sys_sigaction(int signo, const_userptr_t action, userptr_t old_action, int *retval);
 int sys_sigaltstack(const_userptr_t newstack, userptr_t oldstack, int *retval);
+int sys_sigprocmask(int how, const_userptr_t u_set, userptr_t u_oldset, int *retval);
 int sys_pause(int *retval);
 int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext);
 

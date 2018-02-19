@@ -35,6 +35,37 @@ static void my_sigusr1_handler_altstack(int signo) {
 }
 
 // run this in the background from the shell:
+// $ b testbin/luketest sigprocmask
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
+static int sigprocmask_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_handler = my_sigusr1_handler;
+  sigset_t sigmask;
+  sigemptyset(&sigmask);
+  sigaddset(&sigmask, SIGUSR1);
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  int sigmask_res = sigprocmask(SIG_SETMASK, (const sigset_t*)&sigmask, NULL);
+  if (sigmask_res != 0) {
+    errx(1, "sigprocmask returned non-0 when setting new mask: %d, errno=%d (%s)\n", sigmask_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      exit(0);
+    }
+  }
+}
+
+// run this in the background from the shell:
 // $ b testbin/luketest sigaltstack
 // pid: 3
 // $ sig SIGUSR1 3
@@ -573,6 +604,8 @@ int main(int argc, char *argv[]) {
     sigaction_test(argc, argv);
   } else if (strcmp(argv[1], "sigaltstack") == 0) {
     sigaltstack_test(argc, argv);
+  } else if (strcmp(argv[1], "sigprocmask") == 0) {
+    sigprocmask_test(argc, argv);
   } else {
     errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-5]|signal OPTIONS\n");
   }

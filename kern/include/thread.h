@@ -129,6 +129,7 @@ struct thread {
 	struct siginfo *t_pending_signals[PENDING_SIGNALS_MAX];
 	bool t_is_stopped; /* has been stopped by SIGSTOP */
 	bool t_is_paused; /* has been paused by pause() syscall (unpauses after receiving a signal)*/
+	sigset_t t_sigmask;
 };
 
 /*
