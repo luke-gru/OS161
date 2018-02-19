@@ -16,7 +16,7 @@
 * Implement vfork (no copying of pages for new process, and wait for child to execv or exit before continuing)
 * Implement copy on write for forked processes
 * Implement clone() for user-level threads [DONE, except for exitstatus of new threads]
-* Implement signals (hard!)
+* Implement signals [DONE] (mostly)
 * allow lseeking for sparse files (files with holes in them, see lseek(2)
 * Implement fcntl to set fd flags [DONE] (for O_CLOEXEC)
 * get atexit functions working [DONE]

@@ -116,7 +116,11 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
-	thread_send_signal(curthread, sig);
+	siginfo_t siginfo;
+	init_siginfo(&siginfo, sig);
+	siginfo.si_trapno = code;
+	siginfo.si_addr = (void*)vaddr;
+	thread_send_signal(curthread, sig, &siginfo);
 }
 
 /*
@@ -409,10 +413,12 @@ static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapfr
 	if (sigact->sa_flags & SA_SIGINFO) {
 		sighandler = (uint32_t)sigact->sa_sigaction;
 		DEBUGASSERT(sighandler);
-		siginfo_t siginfo;
-		bzero(&siginfo, sizeof(siginfo));
-		// TODO: fill siginfo struct properly
-		tf->tf_a1 = (uint32_t)&siginfo;
+		copy_res = copyout(curproc->current_siginf, (userptr_t)&fp->sf_si, sizeof(siginfo_t)); // copy siginfo into sigframe on user's stack
+		DEBUGASSERT(copy_res == 0);
+		void *sf_sip = (void*)fp + sizeof(int) + sizeof(struct sigcontext) + sizeof(siginfo_t*);
+		copy_res = copyout(sf_sip, (userptr_t)&fp->sf_sip, sizeof(void*));
+		DEBUGASSERT(copy_res == 0);
+		tf->tf_a1 = (uint32_t)sf_sip;
 		tf->tf_a2 = (uint32_t)curproc->p_addrspace->sigretcode;
 	} else {
 		sighandler = (uint32_t)sigact->sa_handler;
@@ -422,6 +428,7 @@ static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapfr
 	DEBUGASSERT(copy_res == 0);
 	copy_res = copyout(&signo, (userptr_t)&fp->sf_signo, sizeof(int)); // copy signo into sigframe on user's stack
 	DEBUGASSERT(copy_res == 0);
+
 	tf->tf_sp = (uint32_t)fp; // change user's stack pointer
 	tf->tf_ra = curproc->p_addrspace->sigretcode;
 	tf->tf_epc = sighandler;
@@ -432,13 +439,14 @@ static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapfr
 	newmask &= (~sigcantmask);
 	curthread->t_sigmask = newmask;
 	curproc->current_sigact = NULL;
-	curproc->current_signo = signo;
+	kfree(curproc->current_siginf);
+	curproc->current_siginf = NULL;
 }
 
 void user_return_from_trap(struct trapframe *tf, uint32_t code) {
 	if (curproc && curproc->current_sigact) {
 		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
-		setup_sig_handler(curproc->current_sigact, curproc->current_signo, tf);
+		setup_sig_handler(curproc->current_sigact, curproc->current_siginf->si_signo, tf);
 	}
 	(void)code;
 	spl0();

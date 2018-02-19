@@ -725,7 +725,8 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 	KASSERT(is_valid_pid(child_pid));
 
 	p->p_addrspace->pid = child_pid;
-	// now that this process has a pid, add the pid to the shared mmapped structures of the parent (or grandparent)
+	// now that this process has a pid, add the pid to the shared mmapped structures
+	// of the parent (or grandparent). TODO: move this code to addrspace.c
 	struct addrspace *as = p->p_addrspace;
 	struct mmap_reg *mmap = as->mmaps;
 	while (mmap) {
@@ -743,6 +744,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 		mmap = mmap->next;
 	}
 
+	newthread->t_sigmask = parent_th->t_sigmask;
 	switchframe_init(newthread, enter_forked_process, tf, 0);
 	thread_make_runnable(newthread, false);
 	splx(spl);
@@ -1607,12 +1609,17 @@ static void thread_wakeup(struct thread *t) {
 
 // Adds a pending signal to thread so it can handle it upon wakeup or re-entry to user level.
 // If `t` is the current thread, it's handled directly instead of added to the queue.
-int thread_send_signal(struct thread *t, int sig) {
+int thread_send_signal(struct thread *t, int sig, siginfo_t *info) {
 	DEBUGASSERT(sig > 0 && sig <= NSIG);
 	struct siginfo *si = kmalloc(sizeof(struct siginfo));
 	KASSERT(si);
+	bzero(si, sizeof(struct siginfo));
 	si->sig = sig;
 	si->pid = t->t_pid;
+	if (info) {
+		si->info = *info;
+	}
+
 	bool sig_is_blocked = sigismember(&t->t_sigmask, sig);
 	if (curthread == t && !sig_is_blocked) {
 		thread_handle_signal(*si);
@@ -1687,14 +1694,15 @@ void thread_stop(void) {
 // has been set to run on next entry to userland. Returns 2, signal has been ignored.
 // Returns < 0 on error.
 int thread_handle_signal(struct siginfo siginf) {
+	KASSERT(curthread->t_proc->current_sigact == NULL);
 	if (sigismember(&curthread->t_sigmask, siginf.sig)) {
-		KASSERT(0); // shouldn't get here!
-		return SIG_ISBLOCKED;
+		 // shouldn't get here! Caller shouldn't call this function if signal is currently blocked
+		KASSERT(0);
 	}
 	__sigfunc handler;
 	__sigfunc_siginfo si_handler;
 	struct sigaction *sigact_p;
-	if (siginf.sig <= _NSIG) {
+	if (siginf.sig <= NSIG) {
 		sigact_p = curthread->t_proc->p_sigacts[siginf.sig];
 		si_handler = sigact_p->sa_sigaction;
 		handler = sigact_p->sa_handler;
@@ -1709,6 +1717,15 @@ int thread_handle_signal(struct siginfo siginf) {
 				newmask |= sigact_p->sa_mask;
 				newmask &= (~sigcantmask);
 				curthread->t_sigmask = newmask;
+				// if stopping or terminating the process, send SIGCHLD to parent process
+				if (sigfn_stop_or_term(os_handler)) {
+					struct proc *parent = curproc->p_parent;
+					if (parent && (!NULL_OR_FREED(parent->p_mainthread)) && parent->p_mainthread->t_state != S_ZOMBIE) {
+						siginfo_t siginfo;
+						init_siginfo(&siginfo, SIGCHLD);
+						proc_send_signal(parent, SIGCHLD, &siginfo, NULL);
+					}
+				}
 				os_handler(siginf.sig);
 				curthread->t_sigmask = oldmask;
 				return 0;
@@ -1718,7 +1735,20 @@ int thread_handle_signal(struct siginfo siginf) {
 			return 2;
 		} else { // user handler
 			curthread->t_proc->current_sigact = sigact_p;
-			curthread->t_proc->current_signo = siginf.sig;
+			if (!siginf.info.si_pid || !siginf.info.si_signo) {
+				siginfo_t siginfo;
+				init_siginfo(&siginfo, siginf.sig);
+				siginf.info = siginfo;
+			}
+			siginfo_t *siginfo_p = curthread->t_proc->current_siginf;
+			KASSERT(siginfo_p == NULL);
+			siginfo_p = kmalloc(sizeof(siginfo_t));
+			KASSERT(siginfo_p);
+			memcpy(siginfo_p, &siginf.info, sizeof(siginfo_t));
+			curthread->t_proc->current_siginf = siginfo_p;
+			// TODO: set current_siginf to be a pointer to allocated siginfo memory, then
+			// set it in the sigcontext if it's non-zero so that sigreturn can use it if it wants, and send
+			// it to the sigaction, if necessary.
 			return 1;
 		}
 	} else {

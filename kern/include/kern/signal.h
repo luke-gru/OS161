@@ -122,6 +122,7 @@ void _sigfn_core(int);
 void _sigfn_ign(int);
 void _sigfn_stop(int);
 void _sigfn_cont(int);
+int sigfn_stop_or_term(__sigfunc);
 
 int sigonstack(size_t sp);
 
@@ -197,14 +198,17 @@ struct sigaltstack {
 
 typedef struct sigaltstack stack_t;
 
-// our simple siginfo struct (kernel only), not to be confused with siginfo_t
+// our simple siginfo wrapper struct (kernel only), not to be confused with siginfo_t
 struct siginfo {
 	pid_t pid;
 	int sig;
+	siginfo_t info;
 };
 
 #define _sigmask(m)	(1U << ((m)-1))
 #define	sigcantmask	(_sigmask(SIGKILL) | _sigmask(SIGSTOP))
+
+void init_siginfo(siginfo_t *, int signo);
 
 static inline int sigaddset(sigset_t *__set, int __signo) {
 	if (__signo <= 0 || __signo > NSIG) {

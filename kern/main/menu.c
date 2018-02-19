@@ -229,7 +229,7 @@ static int cmd_sig(int nargs, char **args) {
 		kprintf("Process %d not found\n", pid);
 		return ESRCH;
 	}
-	int res = proc_send_signal(p, sig, &errcode);
+	int res = proc_send_signal(p, sig, NULL, &errcode);
 	if (res == -1) {
 		kprintf("Error sending signal\n");
 		return errcode;

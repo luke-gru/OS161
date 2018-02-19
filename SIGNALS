@@ -22,5 +22,8 @@ to the OS right before returning from the function (signal_ret syscall or someth
 2) Get signal handling to run and return using sigreturn syscall [DONE]
 3) Get signal handling masking (blocking) to work [DONE]
 4) Implement child to parent signals when child dies, etc (SIGCHLD)
+  * Get fork working for inheriting various signal fields (mask, pending signals, signal actions, etc.) [DONE]
+  * Test fork and signal handling [DONE]
 5) Fix pending signals array to make it larger and work for multiple pending signals, see what openBSD does [DONE]
 6) Test multiple pending signals in an easy way from the menu (queuesig and runsigs commands)
+7) Get interrupted signal handlers working (signals handled in the middle of handling other signals)

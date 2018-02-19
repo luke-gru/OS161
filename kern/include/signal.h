@@ -42,13 +42,14 @@
 void sigcode(void);
 
 // placed on userspace stack so we can retrieve the sigcontext
+// NOTE: the order of these fields matters, so don't re-order them haphazardly!
 struct sigframe {
   int	sf_signo;		/* signo for handler */
-	//siginfo_t *sf_sip;		/* pointer to siginfo_t */
 	//struct	sigcontext *sf_scp;	/* context ptr for handler */
 	//sig_t	sf_handler;		/* handler addr for u_sigc */
 	struct	sigcontext sf_sc;	/* actual context */
-	//siginfo_t sf_si;
+  siginfo_t *sf_sip;		/* pointer to siginfo_t */
+	siginfo_t sf_si;
 };
 
 

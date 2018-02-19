@@ -73,6 +73,8 @@
 	((expr) ? (void)0 : badassert(#expr, __FILE__, __LINE__, __func__))
 #endif
 
+#define NULL_OR_FREED(ptr) (ptr == NULL || ptr == (void*)0xdeadbeef)
+
 /*
  * Bit flags for DEBUG()
  */

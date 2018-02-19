@@ -157,6 +157,7 @@ struct proc {
 
 	pid_t pid; // set on thread_fork
 	struct proc *p_parent;
+	struct thread *p_mainthread; // main thread has same pid as the process
 
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
@@ -174,7 +175,7 @@ struct proc {
 	struct sigaction *p_sigacts[NSIG+1]; // +1 because p_sigacts[0] is NULL
 	struct sigaltstack *p_sigaltstack;
 	struct sigaction *current_sigact;
-	int current_signo;
+	siginfo_t *current_siginf;
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
@@ -188,6 +189,7 @@ int proc_init_pid(struct proc *);
 struct proc *proc_lookup(pid_t pid);
 int proc_init_filetable(struct proc *);
 int proc_inherit_filetable(struct proc *parent, struct proc *child);
+int proc_inherit_sigacts(struct proc *parent, struct proc *child);
 void proc_close_filetable(struct proc *p, bool include_std_streams);
 inline pid_t proc_ppid(struct proc *p);
 inline pid_t proc_ppid(struct proc *p) {
@@ -231,7 +233,7 @@ struct addrspace *proc_setas(struct addrspace *);
 bool is_current_userspace_proc(struct proc *p);
 
 // signals
-int proc_send_signal(struct proc *p, int sig, int *errcode);
+int proc_send_signal(struct proc *p, int sig, siginfo_t *info, int *errcode);
 
 // pipes
 int file_create_pipe_pair(int *reader_fd, int *writer_fd, size_t buflen);

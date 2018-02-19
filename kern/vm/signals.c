@@ -38,6 +38,11 @@ __sigfunc default_sighandlers[NSIG+1] = {
 	_sigfn_ign, // SIGPWR
 };
 
+int sigfn_stop_or_term(__sigfunc handler) {
+	KASSERT(handler);
+	return (handler != _sigfn_ign && handler != _sigfn_cont) ? 1: 0;
+}
+
 void _sigfn_term(int signo) {
   (void)signo;
   DEBUG(DB_SIG, "Exiting curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[signo]);
@@ -73,4 +78,13 @@ int sigonstack(size_t sp) {
 	} else {
 		return 0;
 	}
+}
+
+void init_siginfo(siginfo_t *siginfo, int signo) {
+	KASSERT(siginfo);
+	KASSERT(signo > 0 && signo <= NSIG);
+	bzero(siginfo, sizeof(siginfo_t));
+	siginfo->si_pid = curproc->pid;
+	siginfo->si_signo = signo;
+	// TODO: set other members
 }

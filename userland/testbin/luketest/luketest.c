@@ -12,8 +12,11 @@ int handled_sigusr1 = 0;
 
 static void my_sigusr1_handler_siginfo(int signo, siginfo_t *siginfo, void *restorer) {
   (void)restorer;
-  (void)siginfo;
-  printf(in_sig_msg, signo);
+  int signo_from_siginfo = siginfo->si_signo;
+  printf(in_sig_msg, signo_from_siginfo);
+  if (signo != signo_from_siginfo) {
+    errx(1, "siginfo didn't get set properly");
+  }
   handled_sigusr1 = 1;
 }
 
@@ -50,6 +53,45 @@ static void my_sigusr1_handler_sigprocmask2(int signo) {
   }
   handled_sigusr1 = 1;
 }
+
+static void my_sigchld_handler(int signo, siginfo_t *info, void *_restorer) {
+  (void)_restorer;
+  (void)signo;
+  printf("Parent received SIGCHLD from pid %d\n", (int)info->si_pid);
+}
+// Test that parent receives SIGCHLD signal when child is stopped or terminated
+// run this in the background from the shell:
+// $ b testbin/luketest sigchld
+// pid: 3
+// => child pid: 4
+// $ sig SIGSTOP 4
+// => Parent received SIGCHLD from pid 4
+// Signal sent successfully
+static int sigchld_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_sigaction = my_sigchld_handler;
+  sigact.sa_flags = SA_SIGINFO;
+  int sigact_res = sigaction(SIGCHLD, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  pid_t cpid = fork();
+  if (cpid == -1) {
+    errx(1, "fork failed");
+  }
+  if (cpid == 0) /* child */ {
+    while (1) { sleep(10); }
+  } else /* parent */ {
+    printf("child pid: %d\n", cpid);
+    pause(); // wait for a signal (SIGCHLD)
+    exit(0);
+  }
+
+}
+
 // Test proper signals are blocked during execution of user-defined handler
 // run this in the background from the shell:
 // $ b testbin/luketest sigprocmask2
@@ -668,6 +710,8 @@ int main(int argc, char *argv[]) {
     sigprocmask_test1(argc, argv);
   } else if (strcmp(argv[1], "sigprocmask2") == 0) {
     sigprocmask_test2(argc, argv);
+  } else if (strcmp(argv[1], "sigchld") == 0) {
+    sigchld_test(argc, argv);
   } else {
     errx(1, "Usage error!\n");
   }
