@@ -423,7 +423,12 @@ int sys_sigsuspend(const_userptr_t u_newsigmask, int *retval) {
   curthread->t_is_suspended = true;
   curthread->t_sigoldmask = curthread->t_sigmask;
   curthread->t_sigmask = newsigmask;
-  thread_stop();
+  if (thread_has_pending_unblocked_signal()) {
+    // don't stop the thread, run the signal handlers instead
+    // FIXME: only do this if the pending signals aren't set to ignore
+  } else {
+    thread_stop();
+  }
   // NOTE: the thread is marked as unsuspended only after the handler runs (in sys_sigreturn)
   DEBUGASSERT(curthread->t_is_suspended);
   *retval = -1;

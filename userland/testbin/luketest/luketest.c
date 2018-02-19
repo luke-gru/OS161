@@ -59,6 +59,63 @@ static void my_sigchld_handler(int signo, siginfo_t *info, void *_restorer) {
   (void)signo;
   printf("Parent received SIGCHLD from pid %d\n", (int)info->si_pid);
 }
+
+int can_exit_crit_section = 0;
+static void my_sigsusp_sigusr1_handler(int signo) {
+  (void)signo;
+  can_exit_crit_section = 1;
+}
+// Test that sigsuspend replaces signal mask with given mask (for critical sections)
+// run this in the background from the shell:
+// $ b testbin/luketest sigsuspend
+// pid: 3
+// => Entering critical section, masking out signals. Try sending me some!
+// => Send me SIGUSR1 so I can exit the crit. section and receive the other signals again.
+// $ sig SIGTERM 3
+// => Signal blocked (added to pending list)
+// $ sig SIGUSR1 3
+// => Exiting critical section (should run pending signal handlers).
+// => [DEBUG] handling pending signal SIGTERM
+// => [DEBUG] Exiting curthread (3) due to signal [SIGTERM]
+static int sigsuspend_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_handler = my_sigsusp_sigusr1_handler;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  sigset_t newmask;
+  sigfillset(&newmask);
+  sigdelset(&newmask, SIGUSR1); // block all signals except SIGUSR1
+  sigset_t oldmask;
+  int sigmask_res = sigprocmask(SIG_SETMASK, &newmask, &oldmask);
+  if (sigmask_res != 0) {
+    errx(1, "sigprocmask failed with non-0 return: %d", sigmask_res);
+  }
+  printf("Entering critical section, masking out signals. Try sending me some!\n");
+  printf("Send me SIGUSR1 so I can exit the crit. section and receive the other signals again.\n");
+  while (1) {
+    if (can_exit_crit_section) {
+      break;
+    }
+    sleep(10);
+  }
+  printf("Exiting critical section (should run pending signal handlers now)\n");
+  sigset_t sigspending;
+  sigemptyset(&sigspending);
+  int sigpend_res = sigpending(&sigspending);
+  if (sigpend_res != 0) {
+    errx(1, "sigpending returned non-0: %d", sigpend_res);
+  }
+  int num_sigs_pending = signumset(&sigspending);
+  printf("Signals pending: %d\n", num_sigs_pending);
+  sigsuspend(&oldmask);
+  exit(0);
+}
+
 // Test that parent receives SIGCHLD signal when child is stopped or terminated
 // run this in the background from the shell:
 // $ b testbin/luketest sigchld
@@ -712,6 +769,8 @@ int main(int argc, char *argv[]) {
     sigprocmask_test2(argc, argv);
   } else if (strcmp(argv[1], "sigchld") == 0) {
     sigchld_test(argc, argv);
+  } else if (strcmp(argv[1], "sigsuspend") == 0) {
+    sigsuspend_test(argc, argv);
   } else {
     errx(1, "Usage error!\n");
   }

@@ -212,6 +212,15 @@ void init_siginfo(siginfo_t *, int signo);
 int sigaction_is_ignore(struct sigaction *sigact, int signo);
 int sigaction_is_handled_by_user(struct sigaction *sigact);
 
+static inline int signumset(sigset_t *__set) {
+  int _count = 0;
+	sigset_t _set = *__set;
+  while (_set) {
+    _count += _set & 1;
+    _set >>= 1;
+  }
+  return _count;
+}
 
 static inline int sigaddset(sigset_t *__set, int __signo) {
 	if (__signo <= 0 || __signo > NSIG) {
