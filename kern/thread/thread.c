@@ -1686,6 +1686,9 @@ void thread_stop(void) {
 int thread_handle_signal(struct siginfo siginf) {
 	__sigfunc handler;
 	__sigfunc_siginfo si_handler;
+	if (sigismember(&curthread->t_sigmask, siginf.sig)) {
+		return SIG_ISBLOCKED;
+	}
 	struct sigaction *sigact_p;
 	if (siginf.sig <= _NSIG) {
 		sigact_p = curthread->t_proc->p_sigacts[siginf.sig];
@@ -1693,10 +1696,17 @@ int thread_handle_signal(struct siginfo siginf) {
 		handler = sigact_p->sa_handler;
 		if (!si_handler && handler == SIG_DFL) {
 			__sigfunc os_handler = default_sighandlers[siginf.sig];
-			os_handler(siginf.sig);
 			if (os_handler == _sigfn_ign) {
 				return 2;
 			} else {
+				sigset_t oldmask = curthread->t_sigmask;
+				sigset_t newmask = oldmask;
+				sigaddset(&newmask, siginf.sig);
+				newmask |= sigact_p->sa_mask;
+				newmask &= (~sigcantmask);
+				curthread->t_sigmask = newmask;
+				os_handler(siginf.sig);
+				curthread->t_sigmask = oldmask;
 				return 0;
 			}
 		} else if (!si_handler && handler == SIG_IGN) {

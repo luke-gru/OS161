@@ -95,9 +95,6 @@
 
 const char *sys_signame[_NSIG+2]; // begins and ends with NULL
 
-/* Type for a set of signals; used by e.g. sigprocmask(). */
-typedef __u32 sigset_t;
-
 /* flags for sigaction.sa_flags */
 #define SA_ONSTACK	1	/* Use sigaltstack() stack. */
 #define SA_RESTART	2	/* Restart syscall instead of interrupting. */
@@ -177,6 +174,8 @@ struct sigaction {
 	__sigfunc sa_handler;
 	// pointer to user handler if sa_flags is given SA_SIGINFO flag
 	void (*sa_sigaction)(int signo, siginfo_t *siginfo, void *restorer);
+	// Set of signals that should be blocked DURING the execution of the signal handler.
+	// By default, the signal that caused the handler to run is blocked as well.
 	sigset_t sa_mask;
 	unsigned sa_flags;
 	void (*sa_restorer)(void); // address of signal trampoline code

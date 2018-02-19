@@ -385,7 +385,8 @@ mips_trap(struct trapframe *tf)
 static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapframe *tf) {
 	struct sigcontext sctx;
 	bzero(&sctx, sizeof(sctx));
-	sctx.signo = signo;
+	sctx.sc_signo = signo;
+	sctx.sc_oldmask = curthread->t_sigmask;
 	sctx.sc_tf = *tf; // copy trapframe
 	size_t framesize = sizeof(struct sigframe);
 	struct sigframe *fp;
@@ -425,6 +426,11 @@ static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapfr
 	tf->tf_ra = curproc->p_addrspace->sigretcode;
 	tf->tf_epc = sighandler;
 	tf->tf_a0 = (uint32_t)signo;
+	sigset_t newmask = curthread->t_sigmask;
+	sigaddset(&newmask, signo);
+	newmask |= sigact->sa_mask;
+	newmask &= (~sigcantmask);
+	curthread->t_sigmask = newmask;
 	curproc->current_sigact = NULL;
 	curproc->current_signo = signo;
 }

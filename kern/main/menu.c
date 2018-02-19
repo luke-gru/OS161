@@ -233,8 +233,13 @@ static int cmd_sig(int nargs, char **args) {
 	if (res == -1) {
 		kprintf("Error sending signal\n");
 		return errcode;
+	} else if (res == SIG_ISBLOCKED) {
+		kprintf("Signal blocked\n");
+	} else if (res == 0) {
+		kprintf("Successfully sent signal\n");
+	} else {
+		KASSERT(0); // unknown return value
 	}
-	kprintf("Successfully sent signal\n");
 	return 0;
 }
 

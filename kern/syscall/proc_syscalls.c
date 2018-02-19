@@ -58,7 +58,7 @@ int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext) {
   int copy_res = copyin(sigcontext, &sctx, sizeof(sctx));
   DEBUGASSERT(copy_res == 0);
   *tf = sctx.sc_tf;
-  struct sigaction *sigact_p = curproc->p_sigacts[sctx.signo];
+  struct sigaction *sigact_p = curproc->p_sigacts[sctx.sc_signo];
   KASSERT(sigact_p);
   // reset handler to default if necessary
   if (sigact_p->sa_flags & SA_RESETHAND) {
@@ -70,6 +70,9 @@ int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext) {
   if (sigstack_p && (sigstack_p->ss_flags & SS_DISABLE) == 0) {
     sigstack_p->ss_flags &= (~SS_ONSTACK);
   }
+  // mask out sigcantmask just to be safe, if stack was messed with
+  // TODO: add cookie to sigcontext and assert it wasn't messed with!
+  curthread->t_sigmask = (sctx.sc_oldmask & (~sigcantmask));
   return 0;
 }
 

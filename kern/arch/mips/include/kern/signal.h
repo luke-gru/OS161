@@ -32,6 +32,7 @@
 #define _KERN_MIPS_SIGNAL_H_
 
 #include <mips/trapframe.h>
+#include <types.h>
 
 /*
  * Structure used to hold the register values for returning from a
@@ -39,7 +40,8 @@
  * whatever userlevel execution context the signal interrupted.
  */
 struct sigcontext {
-	int signo;
+	int sc_signo;
+	sigset_t sc_oldmask;
 	struct trapframe sc_tf;
 };
 

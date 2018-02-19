@@ -34,12 +34,72 @@ static void my_sigusr1_handler_altstack(int signo) {
   handled_sigusr1 = 1;
 }
 
+static void my_sigusr1_handler_sigprocmask2(int signo) {
+  printf(in_sig_msg, signo);
+  sigset_t curmask;
+  sigemptyset(&curmask);
+  int sigmask_res = sigprocmask(0, NULL, &curmask);
+  if (sigmask_res != 0) {
+    errx(1, "sigmask result non-0 retrieving current mask: %d", sigmask_res);
+  }
+  if (!sigismember(&curmask, signo)) {
+    errx(1, "Currently running signal should be masked out during execution of handler");
+  }
+  if (!sigismember(&curmask, SIGUSR2)) {
+    errx(1, "SIGUSR2 should be masked out during execution of handler");
+  }
+  handled_sigusr1 = 1;
+}
+// Test proper signals are blocked during execution of user-defined handler
 // run this in the background from the shell:
-// $ b testbin/luketest sigprocmask
+// $ b testbin/luketest sigprocmask2
 // pid: 3
 // $ sig SIGUSR1 3
-// Successfully sent signal
-static int sigprocmask_test(int argc, char **argv) {
+// Signal sent successfully
+static int sigprocmask_test2(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_handler = my_sigusr1_handler_sigprocmask2;
+  sigset_t sigmask;
+  sigemptyset(&sigmask);
+  sigaddset(&sigmask, SIGUSR2); // block out SIGUSR2 during execution of SIGUSR1 handler
+  sigact.sa_mask = sigmask;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      sigset_t curmask;
+      sigemptyset(&curmask);
+      int sigmask_res = sigprocmask(0, NULL, &curmask);
+      if (sigmask_res != 0) {
+        errx(1, "sigprocmask returned non-0 when retrieving current mask: %d, errno=%d (%s)\n", sigmask_res, errno, strerror(errno));
+      }
+      if (sigismember(&curmask, SIGUSR1)) {
+        errx(1, "SIGUSR1 shouldn't be in current mask after execution of handler");
+      }
+      if (sigismember(&curmask, SIGUSR2)) {
+        errx(1, "SIGUSR2 shouldn't be in current mask after execution of handler");
+      }
+      exit(0);
+    }
+  }
+}
+
+// Test we can block signals
+// run this in the background from the shell:
+// $ b testbin/luketest sigprocmask1
+// pid: 3
+// $ sig SIGUSR1 3
+// Signal blocked
+// $ sig SIGTERM 3
+// Signal sent successfully
+static int sigprocmask_test1(int argc, char **argv) {
   (void)argc;
   (void)argv;
   struct sigaction sigact;
@@ -604,9 +664,11 @@ int main(int argc, char *argv[]) {
     sigaction_test(argc, argv);
   } else if (strcmp(argv[1], "sigaltstack") == 0) {
     sigaltstack_test(argc, argv);
-  } else if (strcmp(argv[1], "sigprocmask") == 0) {
-    sigprocmask_test(argc, argv);
+  } else if (strcmp(argv[1], "sigprocmask1") == 0) {
+    sigprocmask_test1(argc, argv);
+  } else if (strcmp(argv[1], "sigprocmask2") == 0) {
+    sigprocmask_test2(argc, argv);
   } else {
-    errx(1, "Usage error! luketest fcntl|pipe|files|atexit|sleep|mmap[1-5]|signal OPTIONS\n");
+    errx(1, "Usage error!\n");
   }
 }

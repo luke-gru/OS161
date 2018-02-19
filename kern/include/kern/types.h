@@ -83,6 +83,9 @@ typedef __i32 __uid_t;     /* User ID */
 typedef int __nfds_t;    /* Number of file handles */
 typedef int __socklen_t;   /* Socket-related length */
 
+/* Type for a set of signals; used by e.g. sigprocmask(). */
+typedef __u32 __sigset_t;
+
 /* See note in <stdarg.h> */
 #ifdef __GNUC__
 typedef __builtin_va_list __va_list;
