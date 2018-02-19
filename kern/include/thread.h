@@ -126,7 +126,7 @@ struct thread {
 	 * Public fields
 	 */
 
-	struct siginfo *t_pending_signals[PENDING_SIGNALS_MAX];
+	struct siginfo *t_pending_signals[NSIG+1]; // first entry always NULL
 	bool t_is_stopped; /* has been stopped by SIGSTOP */
 	bool t_is_paused; /* has been paused by pause() syscall (unpauses after receiving a signal)*/
 	sigset_t t_sigmask;
@@ -181,8 +181,8 @@ int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *
 
 struct thread *thread_find_by_id(pid_t id);
 int thread_send_signal(struct thread *t, int sig);
-int thread_has_pending_signal(void);
-int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out);
+int thread_has_pending_unblocked_signal(void);
+int thread_remove_pending_unblocked_signal(unsigned sigidx, struct siginfo **siginfo_out);
 int thread_handle_signal(struct siginfo siginf);
 /*
  * Cause the current thread to exit.

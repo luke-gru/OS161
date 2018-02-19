@@ -358,13 +358,11 @@ thread_destroy(struct thread *thread)
 	threadarray_remove(&allthreads, (unsigned)allthreads_index);
 	spinlock_release(&allthreads_lock);
 
-	// free pending unhandled signals
-	int sig_idx;
-	while ((sig_idx = thread_has_pending_signal()) != -1) {
-		struct siginfo *siginf;
-		int res = thread_remove_pending_signal(sig_idx, &siginf);
-		if (res == 0) {
-			kfree(siginf);
+	// free pending unhandled signal structures
+	for (int signo = 0; signo <= NSIG; signo++) {
+		if (thread->t_pending_signals[signo]) {
+			kfree(thread->t_pending_signals[signo]);
+			thread->t_pending_signals[signo] = NULL;
 		}
 	}
 
@@ -1032,11 +1030,12 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 	as_activate();
 	exorcise();
 	struct siginfo *siginf;
-	int sig_idx;
-	while ((sig_idx = thread_has_pending_signal()) != -1) {
-		KASSERT(thread_remove_pending_signal(sig_idx, &siginf) == 0);
+	int signo;
+	while ((signo = thread_has_pending_unblocked_signal()) != -1) {
+		KASSERT(thread_remove_pending_unblocked_signal(signo, &siginf) == 0);
 		DEBUG(DB_SIG, "handling pending signal %s\n", sys_signame[siginf->sig]);
 		KASSERT(siginf->pid == curproc->pid);
+		KASSERT(siginf->sig == signo);
 		int handle_res = thread_handle_signal(*siginf);
 		kfree(siginf);
 		if (handle_res == 1) { // userlevel signal queued, let it run before we handle other signals
@@ -1586,15 +1585,12 @@ const char *threadstate_name(threadstate_t state) {
 	}
 }
 
-// FIXME: newly added signals should always be added to the end
 static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
-	for (int i = 0; i < PENDING_SIGNALS_MAX; i++) {
-		if (!t->t_pending_signals[i]) {
-			t->t_pending_signals[i] = si;
-			return 0;
-		}
+	if (t->t_pending_signals[si->sig]) {
+		return -1; // signal already pending
 	}
-	return -1;
+	t->t_pending_signals[si->sig] = si;
+	return 0;
 }
 
 static void thread_wakeup(struct thread *t) {
@@ -1613,24 +1609,29 @@ static void thread_wakeup(struct thread *t) {
 // If `t` is the current thread, it's handled directly instead of added to the queue.
 int thread_send_signal(struct thread *t, int sig) {
 	DEBUGASSERT(sig > 0 && sig <= NSIG);
-	if (sigismember(&t->t_sigmask, sig)) {
-		return SIG_ISBLOCKED;
-	}
 	struct siginfo *si = kmalloc(sizeof(struct siginfo));
 	KASSERT(si);
 	si->sig = sig;
 	si->pid = t->t_pid;
-	if (curthread == t) {
+	bool sig_is_blocked = sigismember(&t->t_sigmask, sig);
+	if (curthread == t && !sig_is_blocked) {
 		thread_handle_signal(*si);
 		kfree(si);
 		return 0;
 	} else {
-		DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
-		int add_res = thread_add_pending_signal(t, si);
-		if (add_res == -1) {
-			DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d failed (queue full)\n", sys_signame[sig], (int)t->t_pid);
-			kfree(si);
-			return -1;
+		if (t->t_pending_signals[sig]) {
+			DEBUG(DB_SIG, "Signal [%s] is already pending for thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
+		} else {
+			DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
+			int add_res = thread_add_pending_signal(t, si);
+			if (add_res == -1) {
+				DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d failed (queue full)\n", sys_signame[sig], (int)t->t_pid);
+				kfree(si);
+				return -1;
+			}
+		}
+		if (sig_is_blocked) {
+			return 0;
 		}
 		// make the thread runnable so it can handle its signal
 		if (t->t_state == S_SLEEP) {
@@ -1652,25 +1653,27 @@ int thread_send_signal(struct thread *t, int sig) {
 	}
 }
 
-// does the current thread have a pending signal? If so, returns its index
-// in the pending signals array
-int thread_has_pending_signal(void) {
+// does the current thread have a pending signal? If so, returns its signo
+// (index into the pending signals array)
+int thread_has_pending_unblocked_signal(void) {
 	struct thread *t = curthread;
-	for (int i = 0; i < PENDING_SIGNALS_MAX; i++) {
-		if (t->t_pending_signals[i]) {
+	for (int i = 1; i <= PENDING_SIGNALS_MAX; i++) {
+		if (t->t_pending_signals[i] && !sigismember(&t->t_sigmask, i)) {
 			return i;
 		}
 	}
 	return -1;
 }
 
-int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out) {
-	KASSERT(sigidx < PENDING_SIGNALS_MAX);
-	struct siginfo *inf = curthread->t_pending_signals[sigidx];
+// NOTE: Pending signals are removed when they're runnable (unblocked), so we assert that it
+// must be unblocked before removing it.
+int thread_remove_pending_unblocked_signal(unsigned signo, struct siginfo **siginfo_out) {
+	KASSERT(signo < PENDING_SIGNALS_MAX);
+	struct siginfo *inf = curthread->t_pending_signals[signo];
 	if (!inf) return -1;
+	KASSERT(!sigismember(&curthread->t_sigmask, signo));
 	*siginfo_out = inf;
-	curthread->t_pending_signals[sigidx] = NULL;
-	// FIXME: memmove the signals after it to take its space so the array acts as a LIFO queue
+	curthread->t_pending_signals[signo] = NULL;
 	return 0;
 }
 
@@ -1684,11 +1687,12 @@ void thread_stop(void) {
 // has been set to run on next entry to userland. Returns 2, signal has been ignored.
 // Returns < 0 on error.
 int thread_handle_signal(struct siginfo siginf) {
-	__sigfunc handler;
-	__sigfunc_siginfo si_handler;
 	if (sigismember(&curthread->t_sigmask, siginf.sig)) {
+		KASSERT(0); // shouldn't get here!
 		return SIG_ISBLOCKED;
 	}
+	__sigfunc handler;
+	__sigfunc_siginfo si_handler;
 	struct sigaction *sigact_p;
 	if (siginf.sig <= _NSIG) {
 		sigact_p = curthread->t_proc->p_sigacts[siginf.sig];

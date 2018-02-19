@@ -88,7 +88,7 @@
 #define _NSIG			32
 #define NSIG _NSIG
 
-#define PENDING_SIGNALS_MAX 10
+#define PENDING_SIGNALS_MAX NSIG
 
 #define	MINSIGSTKSZ	8192			/* minimum allowable stack */
 #define	SIGSTKSZ	(MINSIGSTKSZ + 32768)	/* recommended stack size */

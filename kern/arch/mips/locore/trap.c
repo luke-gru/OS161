@@ -367,8 +367,8 @@ mips_trap(struct trapframe *tf)
 		struct siginfo *siginf;
 		int sig_idx;
 		if (curproc && !curproc->current_sigact) {
-			while ((sig_idx = thread_has_pending_signal()) != -1) {
-				KASSERT(thread_remove_pending_signal(sig_idx, &siginf) == 0);
+			while ((sig_idx = thread_has_pending_unblocked_signal()) != -1) {
+				KASSERT(thread_remove_pending_unblocked_signal(sig_idx, &siginf) == 0);
 				DEBUG(DB_SIG, "handling pending signal %s\n", sys_signame[siginf->sig]);
 				KASSERT(siginf->pid == curproc->pid);
 				int handle_res = thread_handle_signal(*siginf);

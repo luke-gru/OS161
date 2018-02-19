@@ -19,3 +19,8 @@ own function that I put into the user's address space at a specific address that
 to the OS right before returning from the function (signal_ret syscall or something).
 
 1) Inject assembly instructions at specific address, make it readable and executable, NOT writable [DONE]
+2) Get signal handling to run and return using sigreturn syscall [DONE]
+3) Get signal handling masking (blocking) to work [DONE]
+4) Implement child to parent signals when child dies, etc (SIGCHLD)
+5) Fix pending signals array to make it larger and work for multiple pending signals, see what openBSD does [DONE]
+6) Test multiple pending signals in an easy way from the menu (queuesig and runsigs commands)
