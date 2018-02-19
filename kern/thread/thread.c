@@ -211,7 +211,9 @@ static struct thread * thread_create(const char *name) {
 	bzero(thread->t_pending_signals, sizeof(thread->t_pending_signals));
 	thread->t_is_stopped = false;
 	thread->t_is_paused = false;
+	thread->t_is_suspended = false;
 	thread->t_sigmask = (sigset_t)0;
+	thread->t_sigoldmask = (sigset_t)0;
 
 	spinlock_acquire(&allthreads_lock);
 	threadarray_add(&allthreads, thread, NULL);
@@ -1637,24 +1639,34 @@ int thread_send_signal(struct thread *t, int sig, siginfo_t *info) {
 				return -1;
 			}
 		}
-		if (sig_is_blocked) {
+		if (sig_is_blocked) { // no use waking the thread if the signal is blocked, just add it to the pending list
 			return 0;
 		}
-		// make the thread runnable so it can handle its signal
-		if (t->t_state == S_SLEEP) {
-			DEBUG(DB_SIG, "Waking thread %d from sleep (wchan %s) due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
+		// make the thread runnable so it can handle its signal (if the signal isn't ignored)
+		struct proc *p = proc_lookup(t->t_pid);
+		DEBUGASSERT(p);
+		struct sigaction *sigact = p->p_sigacts[sig];
+		int sig_is_ignored = sigaction_is_ignore(sigact, sig);
+		if (sig_is_ignored) {
+			return 0;
+		}
+		threadstate_t tstate = t->t_state;
+		if (tstate) {
 			if (t->t_is_paused) {
-				// TODO: only unpause if the given sigaction for the signal isn't ignored
 				t->t_is_paused = false;
+			} else if (t->t_is_suspended) {
+				if (!sigaction_is_handled_by_user(sigact)) {
+					return 0; // don't wake up thread until we run a user-supplied signal handler
+				}
+				// NOTE: thread marked as unsuspended only after the handler runs
 			}
+			DEBUG(DB_SIG, "Waking thread %d from sleep (wchan %s) due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
 			thread_wakeup(t);
 		} else {
-			if (t->t_state == S_ZOMBIE) {
+			if (tstate == S_ZOMBIE) {
 				return -1;
 			}
-			if (t->t_state != S_RUN && t->t_state != S_READY) {
-				thread_make_runnable(t, false);
-			}
+			KASSERT(tstate == S_RUN || tstate == S_READY);
 		}
 		return 0;
 	}

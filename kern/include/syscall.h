@@ -100,6 +100,8 @@ int sys_sigaction(int signo, const_userptr_t action, userptr_t old_action, int *
 int sys_sigaltstack(const_userptr_t newstack, userptr_t oldstack, int *retval);
 int sys_sigprocmask(int how, const_userptr_t u_set, userptr_t u_oldset, int *retval);
 int sys_pause(int *retval);
+int sys_sigpending(userptr_t u_sigset, int *retval);
+int sys_sigsuspend(const_userptr_t u_newsigmask, int *retval);
 int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext);
 
 // NOTE: this is used to test paging memory in/out and memory region locking

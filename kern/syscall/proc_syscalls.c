@@ -73,6 +73,9 @@ int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext) {
   // mask out sigcantmask just to be safe, if stack was messed with
   // TODO: add cookie to sigcontext and assert it wasn't messed with!
   curthread->t_sigmask = (sctx.sc_oldmask & (~sigcantmask));
+  if (curthread->t_is_suspended) {
+    curthread->t_is_suspended = false;
+  }
   return 0;
 }
 
@@ -403,7 +406,55 @@ int sys_pause(int *retval) {
   return EINTR;
 }
 
-// TODO: sys_kill, sys_sigpending, sys_sigsuspend
+int sys_sigsuspend(const_userptr_t u_newsigmask, int *retval) {
+  if (u_newsigmask == (const_userptr_t)0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  sigset_t newsigmask;
+  int copy_res;
+  sigemptyset(&newsigmask);
+  copy_res = copyin(u_newsigmask, &newsigmask, sizeof(sigset_t));
+  if (copy_res != 0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  newsigmask &= (~sigcantmask);
+  curthread->t_is_suspended = true;
+  curthread->t_sigoldmask = curthread->t_sigmask;
+  curthread->t_sigmask = newsigmask;
+  thread_stop();
+  // NOTE: the thread is marked as unsuspended only after the handler runs (in sys_sigreturn)
+  DEBUGASSERT(curthread->t_is_suspended);
+  *retval = -1;
+  return EINTR;
+}
+
+// TODO: sys_kill
+
+int sys_sigpending(userptr_t u_sigset, int *retval) {
+  if (u_sigset == (userptr_t)0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  sigset_t sigspending;
+  sigemptyset(&sigspending);
+  struct thread *t = curthread;
+  int copy_res;
+  for (int signo = 1; signo <= NSIG; signo++) {
+    if (t->t_pending_signals[signo]) {
+      sigaddset(&sigspending, signo);
+    }
+  }
+
+  copy_res = copyout(&sigspending, u_sigset, sizeof(sigset_t));
+  if (copy_res != 0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  *retval = 0;
+  return 0;
+}
 
 int sys_sigprocmask(int how, const_userptr_t u_set, userptr_t u_oldset, int *retval) {
   int copy_res;

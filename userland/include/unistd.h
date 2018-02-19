@@ -165,6 +165,8 @@ int sigaction(int signo, const struct sigaction *act, struct sigaction *oldact);
 int sigaltstack(const stack_t *ss, stack_t *oss);
 int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 int pause(void);
+int sigpending(sigset_t *set);
+int sigsuspend(const sigset_t *mask);
 
 int pageout_region(__u32 startaddr, size_t nbytes);
 int lock_region(__u32 startaddr, size_t nbytes);

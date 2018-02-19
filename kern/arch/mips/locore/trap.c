@@ -48,7 +48,9 @@ extern __DEAD void asm_usermode(struct trapframe *tf);
 
 /* called only from assembler, so not declared in a header */
 void mips_trap(struct trapframe *tf);
+// forward decls
 void user_return_from_trap(struct trapframe *tf, uint32_t trap_code);
+void setup_sig_handler(struct sigaction *sigact, int signo, struct trapframe *tf);
 
 
 /* Names for trap codes */
@@ -386,11 +388,25 @@ mips_trap(struct trapframe *tf)
 	}
 }
 
-static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapframe *tf) {
+void user_return_from_trap(struct trapframe *tf, uint32_t code) {
+	if (curproc && curproc->current_sigact) {
+		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
+		setup_sig_handler(curproc->current_sigact, curproc->current_siginf->si_signo, tf);
+	}
+	(void)code;
+	spl0();
+}
+
+void setup_sig_handler(struct sigaction *sigact, int signo, struct trapframe *tf) {
 	struct sigcontext sctx;
 	bzero(&sctx, sizeof(sctx));
 	sctx.sc_signo = signo;
-	sctx.sc_oldmask = curthread->t_sigmask;
+	if (curthread->t_is_suspended) {
+		sctx.sc_oldmask = curthread->t_sigoldmask;
+	} else {
+		sctx.sc_oldmask = curthread->t_sigmask;
+	}
+
 	sctx.sc_tf = *tf; // copy trapframe
 	size_t framesize = sizeof(struct sigframe);
 	struct sigframe *fp;
@@ -441,15 +457,6 @@ static void setup_sig_handler(struct sigaction *sigact, int signo, struct trapfr
 	curproc->current_sigact = NULL;
 	kfree(curproc->current_siginf);
 	curproc->current_siginf = NULL;
-}
-
-void user_return_from_trap(struct trapframe *tf, uint32_t code) {
-	if (curproc && curproc->current_sigact) {
-		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
-		setup_sig_handler(curproc->current_sigact, curproc->current_siginf->si_signo, tf);
-	}
-	(void)code;
-	spl0();
 }
 
 /*

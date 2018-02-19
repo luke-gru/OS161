@@ -112,7 +112,7 @@ const char *sys_signame[_NSIG+2]; // begins and ends with NULL
 /* Type for a signal handler function. */
 typedef void (*__sigfunc)(int);
 
-/* Magic values for signal handlers. */
+/* Magic values for signal handlers (sa_handler). */
 #define SIG_DFL		((__sigfunc) 0)		/* Default behavior. */
 #define SIG_IGN		((__sigfunc) 1)		/* Ignore the signal. */
 #define SIG_ERR   ((__sigfunc)-1)
@@ -209,6 +209,9 @@ struct siginfo {
 #define	sigcantmask	(_sigmask(SIGKILL) | _sigmask(SIGSTOP))
 
 void init_siginfo(siginfo_t *, int signo);
+int sigaction_is_ignore(struct sigaction *sigact, int signo);
+int sigaction_is_handled_by_user(struct sigaction *sigact);
+
 
 static inline int sigaddset(sigset_t *__set, int __signo) {
 	if (__signo <= 0 || __signo > NSIG) {

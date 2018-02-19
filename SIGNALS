@@ -27,3 +27,6 @@ to the OS right before returning from the function (signal_ret syscall or someth
 5) Fix pending signals array to make it larger and work for multiple pending signals, see what openBSD does [DONE]
 6) Test multiple pending signals in an easy way from the menu (queuesig and runsigs commands)
 7) Get interrupted signal handlers working (signals handled in the middle of handling other signals)
+  * Find a way to test them (sleep in signal handler)
+8) Send signal using interrupts if possible, instead of adding signal to pending signals list. Otherwise we won't be able to truly
+interrupt a signal handler unless it blocks (returns control to OS).

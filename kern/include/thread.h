@@ -128,8 +128,10 @@ struct thread {
 
 	struct siginfo *t_pending_signals[NSIG+1]; // first entry always NULL
 	bool t_is_stopped; /* has been stopped by SIGSTOP */
-	bool t_is_paused; /* has been paused by pause() syscall (unpauses after receiving a signal)*/
+	bool t_is_paused; /* has been paused by pause() syscall (unpauses after receiving a non-blocked, non-ignored signal)*/
+	bool t_is_suspended; /* has been suspended by sigsuspend() syscall (unsuspended after receiving a user-handled signal) */
 	sigset_t t_sigmask; // bitmask for set of blocked signals.
+	sigset_t t_sigoldmask; // for use with sigsuspend() syscall, because it sets a new mask until a handler runs then resets it
 };
 
 /*

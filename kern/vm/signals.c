@@ -43,6 +43,32 @@ int sigfn_stop_or_term(__sigfunc handler) {
 	return (handler != _sigfn_ign && handler != _sigfn_cont) ? 1: 0;
 }
 
+int sigaction_is_ignore(struct sigaction *sigact, int signo) {
+	KASSERT(sigact);
+	if (sigact->sa_handler == SIG_IGN) {
+		return 1;
+	}
+	if (sigact->sa_sigaction && (sigact->sa_flags & SA_SIGINFO)) {
+		return 0;
+	}
+	if (sigact->sa_handler == SIG_DFL) {
+		return default_sighandlers[signo] == _sigfn_ign;
+	}
+	return 0;
+}
+
+int sigaction_is_handled_by_user(struct sigaction *sigact) {
+	KASSERT(sigact);
+	if (sigact->sa_sigaction && (sigact->sa_flags & SA_SIGINFO)) {
+		return 1;
+	}
+	if (sigact->sa_handler && sigact->sa_handler != SIG_DFL && sigact->sa_handler != SIG_IGN) {
+		return 1;
+	}
+	return 0;
+}
+
+
 void _sigfn_term(int signo) {
   (void)signo;
   DEBUG(DB_SIG, "Exiting curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[signo]);
