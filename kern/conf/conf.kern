@@ -354,6 +354,7 @@ file      vm/kmalloc.c
 optofffile dumbvm   vm/addrspace.c
 defoption myvm
 optfile myvm        vm/vm.c
+optfile myvm        vm/signals.c
 
 
 #

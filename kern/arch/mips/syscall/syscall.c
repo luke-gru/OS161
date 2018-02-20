@@ -107,7 +107,6 @@ syscall(struct trapframe *tf)
 		case SYS_reboot:
 			err = sys_reboot(tf->tf_a0);
 			break;
-
 	  case SYS___time:
 			err = sys___time((userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1);
 			break;
@@ -195,6 +194,36 @@ syscall(struct trapframe *tf)
 		case SYS_munmap:
 			err = sys_munmap((uint32_t)tf->tf_a0, &retval);
 			break;
+		case SYS_signal:
+			err = sys_signal((int)tf->tf_a0, (vaddr_t)tf->tf_a1, &retval);
+			break;
+		case SYS_sigaction:
+			err = sys_sigaction((int)tf->tf_a0, (const_userptr_t)tf->tf_a1, (userptr_t)tf->tf_a2, &retval);
+			break;
+		case SYS_sigaltstack:
+			err = sys_sigaltstack((const_userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1, &retval);
+			break;
+		case SYS_sigprocmask:
+			err = sys_sigprocmask((int)tf->tf_a0, (const_userptr_t)tf->tf_a1, (userptr_t)tf->tf_a2, &retval);
+			break;
+		case SYS_pause:
+			err = sys_pause(&retval);
+			break;
+		case SYS_sigpending:
+			err = sys_sigpending((userptr_t)tf->tf_a0, &retval);
+			break;
+		case SYS_sigsuspend:
+			err = sys_sigsuspend((const_userptr_t)tf->tf_a0, &retval);
+			break;
+		case SYS_sigret:
+			err = sys_sigreturn(tf, (userptr_t)tf->tf_a0);
+			if (!err) {
+				KASSERT(curthread->t_curspl == 0);
+				KASSERT(curthread->t_iplhigh_count == 0);
+				return;
+			} else {
+				KASSERT(0);
+			}
 		case SYS__exit:
 			sys_exit((int)tf->tf_a0); // exits current user process, switches to new thread
 			panic("shouldn't return from exit");

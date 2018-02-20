@@ -47,7 +47,7 @@
 #include <kern/wait.h>
 #include <kern/select.h>
 #include <kern/socket.h>
-
+#include <kern/signal.h>
 
 /*
  * Prototypes for OS/161 system calls.
@@ -173,6 +173,14 @@ int bind(int sockfd, const struct sockaddr *sockaddr, socklen_t sockaddr_len);
 int listen(int sockfd, int backlog);
 int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 
+
+void *signal(int signo, void (*sighandler)(int));
+int sigaction(int signo, const struct sigaction *act, struct sigaction *oldact);
+int sigaltstack(const stack_t *ss, stack_t *oss);
+int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+int pause(void);
+int sigpending(sigset_t *set);
+int sigsuspend(const sigset_t *mask);
 
 int pageout_region(__u32 startaddr, size_t nbytes);
 int lock_region(__u32 startaddr, size_t nbytes);

@@ -101,6 +101,7 @@ void kswapd_bootstrap() {
 	return; // NOTE: not running right now
   struct addrspace *as = as_create(kswapd_proc->p_name);
   KASSERT(as);
+	return;
 	as->no_heap_alloc = true;
   kswapd_proc->p_addrspace = as;
   KASSERT(as_prepare_load(as) == 0); // allocate userspace stack pages so we can jump to entrypoint func

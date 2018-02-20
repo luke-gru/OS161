@@ -194,7 +194,7 @@ cmd_prog_background(int nargs, char **args)
 }
 
 static int cmd_sig(int nargs, char **args) {
-	if (nargs < 3) {
+	if (nargs != 3) {
 		kprintf("Usage: sig SIGNAME PID\n");
 		return EINVAL;
 	}
@@ -206,8 +206,12 @@ static int cmd_sig(int nargs, char **args) {
 		sig = SIGCONT;
 	} else if (strcmp(args[1], "SIGKILL") == 0) {
 		sig = SIGKILL;
+	} else if (strcmp(args[1], "SIGUSR1") == 0) {
+		sig = SIGUSR1;
+	} else if (strcmp(args[1], "SIGTERM") == 0) {
+		sig = SIGTERM;
 	} else {
-		kprintf("Only SIGSTOP and SIGCONT are supported\n");
+		kprintf("Only SIGSTOP, SIGCONT, SIGKILL, SIGTERM, SIGUSR1 are supported\n");
 		return EINVAL;
 	}
 	pid = atoi(args[2]);
@@ -225,12 +229,17 @@ static int cmd_sig(int nargs, char **args) {
 		kprintf("Process %d not found\n", pid);
 		return ESRCH;
 	}
-	int res = proc_send_signal(p, sig, &errcode);
+	int res = proc_send_signal(p, sig, NULL, &errcode);
 	if (res == -1) {
 		kprintf("Error sending signal\n");
 		return errcode;
+	} else if (res == SIG_ISBLOCKED) {
+		kprintf("Signal blocked\n");
+	} else if (res == 0) {
+		kprintf("Successfully sent signal\n");
+	} else {
+		KASSERT(0); // unknown return value
 	}
-	kprintf("Successfully sent signal\n");
 	return 0;
 }
 
@@ -1044,7 +1053,7 @@ menu_execute(char *line, int isargs)
 void
 menu(char *args)
 {
-	dbflags = DB_SYSCALL|DB_SIG;
+	dbflags = DB_SYSCALL|DB_SIG|DB_UIO;
 	kswapproc->p_cwd = kproc->p_cwd; // necessary for opening swap file
 	char buf[64];
 	menu_execute(args, 1);

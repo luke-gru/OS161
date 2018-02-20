@@ -96,7 +96,7 @@ struct trapframe {
  * Function to enter user mode. Does not return. The trapframe must
  * be on the thread's kernel stack or bad things will happen.
  */
-__DEAD void mips_usermode(struct trapframe *tf);
+void mips_usermode(struct trapframe *tf);
 
 /*
  * Arrays used to load the kernel stack and curthread on trap entry.

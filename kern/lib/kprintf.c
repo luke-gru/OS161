@@ -106,11 +106,11 @@ __kprintf(const char *fmt, va_list ap)
 	dolock = kprintf_lock != NULL
 		&& curthread->t_in_interrupt == false
 		&& curthread->t_curspl == 0
-		&& curcpu->c_spinlocks == 0;
+		&& curcpu->c_spinlocks == 0 && !lock_do_i_hold(kprintf_lock);
 
 	if (dolock) {
 		lock_acquire(kprintf_lock);
-		DEBUG_CONSOLE_LOCK(1);
+		//DEBUG_CONSOLE_LOCK(1);
 	}
 	else {
 		spinlock_acquire(&kprintf_spinlock);
@@ -120,7 +120,7 @@ __kprintf(const char *fmt, va_list ap)
 
 	if (dolock) {
 		lock_release(kprintf_lock);
-		DEBUG_CONSOLE_UNLOCK();
+		//DEBUG_CONSOLE_UNLOCK();
 	}
 	else {
 		spinlock_release(&kprintf_spinlock);

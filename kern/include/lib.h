@@ -73,6 +73,8 @@
 	((expr) ? (void)0 : badassert(#expr, __FILE__, __LINE__, __func__))
 #endif
 
+#define NULL_OR_FREED(ptr) (ptr == NULL || ptr == (void*)0xdeadbeef)
+
 /*
  * Bit flags for DEBUG()
  */
@@ -92,6 +94,7 @@
 #define DB_ALL DB_LOCORE|DB_SYSCALL|DB_INTERRUPT|DB_DEVICE|DB_THREADS|DB_VM|DB_EXEC|DB_VFS|DB_SEMFS|DB_SFS|DB_NET|DB_NETFS|DB_KMALLOC
 #define DB_LUKE DB_THREADS|DB_SYSCALL
 #define DB_SIG				 0x2000
+#define DB_UIO 				 0x4000
 #define DB_NONE 			 0x0000
 
 extern uint32_t dbflags; // to be set by debugger, normally

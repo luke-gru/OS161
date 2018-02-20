@@ -1099,6 +1099,7 @@ struct proc *proc_create(const char *name, int flags) {
 	proc->pid = INVALID_PID;
 
 	proc->p_numthreads = 0;
+	proc->p_mainthread = NULL;
 
 	/* VM fields */
 	proc->p_addrspace = NULL;
@@ -1131,6 +1132,24 @@ struct proc *proc_create(const char *name, int flags) {
 		bzero((void *)proc->file_table, FILE_TABLE_LIMIT * sizeof(struct filedes*));
 		proc->file_table_refcount = 1;
 	}
+
+
+	// initialize signal action table
+	bzero(proc->p_sigacts, sizeof(proc->p_sigacts));
+	struct sigaction *sigact;
+	for (int i = 1; i <= NSIG; i++) {
+		sigact = kmalloc(sizeof(struct sigaction));
+		KASSERT(sigact);
+		sigact->sa_mask = (sigset_t)0;
+		sigact->sa_flags = 0;
+		sigact->sa_handler = SIG_DFL;
+		sigact->sa_sigaction = NULL;
+		sigact->sa_restorer = NULL;
+		proc->p_sigacts[i] = sigact;
+	}
+	proc->current_sigact = NULL; // current user signal handler action
+	proc->current_siginf = NULL;
+	proc->p_sigaltstack = NULL;
 
 	spinlock_init(&proc->p_lock);
 	proc->p_mutex = lock_create("proc mutex");
@@ -1230,6 +1249,7 @@ void proc_destroy(struct proc *proc) {
 	}
 
 	KASSERT(proc->p_numthreads == 0);
+	proc->p_mainthread = NULL;
 	spinlock_cleanup(&proc->p_lock);
 
 	struct proc *p;
@@ -1240,10 +1260,22 @@ void proc_destroy(struct proc *proc) {
 			userprocs[i] = NULL;
 		}
 	}
-	// if (proc->p_environ) {
-	// 	proc_free_environ(proc->p_environ, proc->p_environ_ary_len);
-	// }
-	// proc->p_environ = NULL;
+  if (proc->p_environ) {
+  	proc_free_environ(proc->p_environ, proc->p_environ_ary_len);
+  }
+  proc->p_environ = NULL;
+
+	struct sigaction *sigact;
+	for (int i = 1; i <= NSIG; i++) {
+		sigact = proc->p_sigacts[i];
+		KASSERT(sigact);
+		kfree(sigact);
+		proc->p_sigacts[i] = NULL;
+	}
+	if (proc->p_sigaltstack) {
+		kfree(proc->p_sigaltstack);
+	}
+
 	kfree(proc->p_name);
 	lock_destroy(proc->p_mutex);
 	kfree(proc);
@@ -1294,6 +1326,8 @@ int proc_fork(struct proc *parent_pr, struct thread *parent_th, struct trapframe
 		*err = res;
 		return -1;
 	}
+	res = proc_inherit_sigacts(parent_pr, child_pr);
+	DEBUGASSERT(res == 0);
 	if (parent_pr->p_cwd != NULL) {
 		VOP_INCREF(parent_pr->p_cwd);
 		child_pr->p_cwd = parent_pr->p_cwd;
@@ -1507,6 +1541,16 @@ int proc_inherit_filetable(struct proc *parent, struct proc *child) {
 	return 0;
 }
 
+// inherit signal disposition table from parent after fork
+int proc_inherit_sigacts(struct proc *parent, struct proc *child) {
+	for (int signo = 1; signo <= NSIG; signo++) {
+		struct sigaction *sigact_parent = parent->p_sigacts[signo];
+		KASSERT(sigact_parent);
+		memcpy(child->p_sigacts[signo], sigact_parent, sizeof(struct sigaction));
+	}
+	return 0;
+}
+
 void proc_close_filetable(struct proc *p, bool include_std_streams) {
 	struct filedes *fd = NULL;
 	for (int i = 0; i < FILE_TABLE_LIMIT; i++) {
@@ -1657,25 +1701,20 @@ bool proc_is_clone(struct proc *p) {
 	return as_heap_region_exists(p->p_addrspace, stackbtm, stacktop);
 }
 
-int proc_send_signal(struct proc *p, int sig, int *errcode) {
+int proc_send_signal(struct proc *p, int sig, siginfo_t *siginfo, int *errcode) {
 	struct thread *t = thread_find_by_id(p->pid);
 	if (!t) {
-		*errcode = ESRCH;
+		if (errcode) *errcode = ESRCH;
 		return -1;
 	}
 	if (t->t_state == S_ZOMBIE) {
-		*errcode = ESRCH;
+		if (errcode) *errcode = ESRCH;
 		return -1;
 	}
-	switch (sig) {
-	case SIGSTOP:
-	case SIGCONT:
-	case SIGKILL:
-		return thread_send_signal(t, sig);
-	// not yet implemented
-	default:
-		*errcode = EINVAL;
+	if (sig < 1 || sig > NSIG) {
 		return -1;
+	} else {
+		return thread_send_signal(t, sig, siginfo);
 	}
 }
 
@@ -1717,6 +1756,9 @@ proc_addthread(struct proc *proc, struct thread *t)
 
 	spinlock_acquire(&proc->p_lock);
 	proc->p_numthreads++;
+	if (proc->p_numthreads == 1) {
+		proc->p_mainthread = t;
+	}
 	spinlock_release(&proc->p_lock);
 
 	spl = splhigh();
@@ -1748,6 +1790,9 @@ proc_remthread(struct thread *t)
 	spinlock_acquire(&proc->p_lock);
 	KASSERT(proc->p_numthreads > 0);
 	proc->p_numthreads--;
+	if (proc->p_numthreads == 0) {
+		proc->p_mainthread = NULL;
+	}
 	spinlock_release(&proc->p_lock);
 
 	spl = splhigh();

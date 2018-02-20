@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 
 static int getenv_test(int argc, char **argv) {
   (void)argc;
@@ -506,6 +507,346 @@ static int mmap_test6(int argc, char **argv) {
     errx(1, "strcmp failed");
   }
   return 0;
+}
+
+const char *in_sig_msg = "Got into my handler for sig %d!\n";
+int handled_sigusr1 = 0;
+
+static void my_sigusr1_handler_siginfo(int signo, siginfo_t *siginfo, void *restorer) {
+  (void)restorer;
+  int signo_from_siginfo = siginfo->si_signo;
+  printf(in_sig_msg, signo_from_siginfo);
+  if (signo != signo_from_siginfo) {
+    errx(1, "siginfo didn't get set properly");
+  }
+  handled_sigusr1 = 1;
+}
+
+static void my_sigusr1_handler(int signo) {
+  printf(in_sig_msg, signo);
+  handled_sigusr1 = 1;
+}
+
+size_t altstack_btm;
+size_t altstack_top;
+static void my_sigusr1_handler_altstack(int signo) {
+  printf(in_sig_msg, signo);
+  struct sigaction sigact;
+  struct sigaction *sigact_p = &sigact;
+  if ((size_t)sigact_p < altstack_btm || (size_t)sigact_p > altstack_top) {
+    errx(1, "not running on alternate stack!");
+  }
+  handled_sigusr1 = 1;
+}
+
+static void my_sigusr1_handler_sigprocmask2(int signo) {
+  printf(in_sig_msg, signo);
+  sigset_t curmask;
+  sigemptyset(&curmask);
+  int sigmask_res = sigprocmask(0, NULL, &curmask);
+  if (sigmask_res != 0) {
+    errx(1, "sigmask result non-0 retrieving current mask: %d", sigmask_res);
+  }
+  if (!sigismember(&curmask, signo)) {
+    errx(1, "Currently running signal should be masked out during execution of handler");
+  }
+  if (!sigismember(&curmask, SIGUSR2)) {
+    errx(1, "SIGUSR2 should be masked out during execution of handler");
+  }
+  handled_sigusr1 = 1;
+}
+
+static void my_sigchld_handler(int signo, siginfo_t *info, void *_restorer) {
+  (void)_restorer;
+  (void)signo;
+  printf("Parent received SIGCHLD from pid %d\n", (int)info->si_pid);
+}
+
+int can_exit_crit_section = 0;
+static void my_sigsusp_sigusr1_handler(int signo) {
+  (void)signo;
+  can_exit_crit_section = 1;
+}
+// Test that sigsuspend replaces signal mask with given mask (for critical sections)
+// run this in the background from the shell:
+// $ b testbin/luketest sigsuspend
+// pid: 3
+// => Entering critical section, masking out signals. Try sending me some!
+// => Send me SIGUSR1 so I can exit the crit. section and receive the other signals again.
+// $ sig SIGTERM 3
+// => Signal blocked (added to pending list)
+// $ sig SIGUSR1 3
+// => Exiting critical section (should run pending signal handlers).
+// => [DEBUG] handling pending signal SIGTERM
+// => [DEBUG] Exiting curthread (3) due to signal [SIGTERM]
+static int sigsuspend_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_handler = my_sigsusp_sigusr1_handler;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  sigset_t newmask;
+  sigfillset(&newmask);
+  sigdelset(&newmask, SIGUSR1); // block all signals except SIGUSR1
+  sigset_t oldmask;
+  int sigmask_res = sigprocmask(SIG_SETMASK, &newmask, &oldmask);
+  if (sigmask_res != 0) {
+    errx(1, "sigprocmask failed with non-0 return: %d", sigmask_res);
+  }
+  printf("Entering critical section, masking out signals. Try sending me some!\n");
+  printf("Send me SIGUSR1 so I can exit the crit. section and receive the other signals again.\n");
+  while (1) {
+    if (can_exit_crit_section) {
+      break;
+    }
+    sleep(10);
+  }
+  printf("Exiting critical section (should run pending signal handlers now)\n");
+  sigset_t sigspending;
+  sigemptyset(&sigspending);
+  int sigpend_res = sigpending(&sigspending);
+  if (sigpend_res != 0) {
+    errx(1, "sigpending returned non-0: %d", sigpend_res);
+  }
+  int num_sigs_pending = signumset(&sigspending);
+  printf("Signals pending: %d\n", num_sigs_pending);
+  sigsuspend(&oldmask);
+  exit(0);
+}
+
+// Test that parent receives SIGCHLD signal when child is stopped or terminated
+// run this in the background from the shell:
+// $ b testbin/luketest sigchld
+// pid: 3
+// => child pid: 4
+// $ sig SIGSTOP 4
+// => Parent received SIGCHLD from pid 4
+// Signal sent successfully
+static int sigchld_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_sigaction = my_sigchld_handler;
+  sigact.sa_flags = SA_SIGINFO;
+  int sigact_res = sigaction(SIGCHLD, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  pid_t cpid = fork();
+  if (cpid == -1) {
+    errx(1, "fork failed");
+  }
+  if (cpid == 0) /* child */ {
+    while (1) { sleep(10); }
+  } else /* parent */ {
+    printf("child pid: %d\n", cpid);
+    pause(); // wait for a signal (SIGCHLD)
+    exit(0);
+  }
+
+}
+
+// Test proper signals are blocked during execution of user-defined handler
+// run this in the background from the shell:
+// $ b testbin/luketest sigprocmask2
+// pid: 3
+// $ sig SIGUSR1 3
+// Signal sent successfully
+static int sigprocmask_test2(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_handler = my_sigusr1_handler_sigprocmask2;
+  sigset_t sigmask;
+  sigemptyset(&sigmask);
+  sigaddset(&sigmask, SIGUSR2); // block out SIGUSR2 during execution of SIGUSR1 handler
+  sigact.sa_mask = sigmask;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      sigset_t curmask;
+      sigemptyset(&curmask);
+      int sigmask_res = sigprocmask(0, NULL, &curmask);
+      if (sigmask_res != 0) {
+        errx(1, "sigprocmask returned non-0 when retrieving current mask: %d, errno=%d (%s)\n", sigmask_res, errno, strerror(errno));
+      }
+      if (sigismember(&curmask, SIGUSR1)) {
+        errx(1, "SIGUSR1 shouldn't be in current mask after execution of handler");
+      }
+      if (sigismember(&curmask, SIGUSR2)) {
+        errx(1, "SIGUSR2 shouldn't be in current mask after execution of handler");
+      }
+      exit(0);
+    }
+  }
+}
+
+// Test we can block signals
+// run this in the background from the shell:
+// $ b testbin/luketest sigprocmask1
+// pid: 3
+// $ sig SIGUSR1 3
+// Signal blocked
+// $ sig SIGTERM 3
+// Signal sent successfully
+static int sigprocmask_test1(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_handler = my_sigusr1_handler;
+  sigset_t sigmask;
+  sigemptyset(&sigmask);
+  sigaddset(&sigmask, SIGUSR1);
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  int sigmask_res = sigprocmask(SIG_SETMASK, (const sigset_t*)&sigmask, NULL);
+  if (sigmask_res != 0) {
+    errx(1, "sigprocmask returned non-0 when setting new mask: %d, errno=%d (%s)\n", sigmask_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      exit(0);
+    }
+  }
+}
+
+// run this in the background from the shell:
+// $ b testbin/luketest sigaltstack
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
+static int sigaltstack_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_flags = SA_ONSTACK;
+  sigact.sa_handler = my_sigusr1_handler_altstack;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  stack_t altstack;
+  memset(&altstack, 0, sizeof(altstack));
+  void *stackptr = malloc(MINSIGSTKSZ);
+  if (!stackptr) {
+    errx(1, "malloc error");
+  }
+  altstack_btm = (size_t)stackptr;
+  altstack_top = altstack_btm + MINSIGSTKSZ;
+  altstack.ss_sp = stackptr;
+  altstack.ss_size = MINSIGSTKSZ;
+  altstack.ss_flags = 0;
+  int setup_stack_res = sigaltstack((const stack_t*)&altstack, NULL);
+  if (setup_stack_res != 0) {
+    errx(1, "sigaltstack returned non-0: %d: errno=%d (%s)", setup_stack_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      exit(0);
+    }
+  }
+}
+
+// run this in the background from the shell:
+// $ b testbin/luketest sigaction
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
+static int sigaction_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  struct sigaction sigact;
+  memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_flags = SA_SIGINFO|SA_RESETHAND;
+  sigact.sa_sigaction = my_sigusr1_handler_siginfo;
+  int sigact_res = sigaction(SIGUSR1, &sigact, NULL);
+  if (sigact_res != 0) {
+    errx(1, "sigaction returned non-0 when setting new sigaction: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1\n");
+      bzero(&sigact, sizeof(sigact));
+      sigact_res = sigaction(SIGUSR1, NULL, &sigact);
+      if (sigact_res != 0) {
+        errx(1, "sigaction returned non-0 when getting current sigaction value: %d, errno=%d (%s)\n", sigact_res, errno, strerror(errno));
+      }
+      if (sigact.sa_handler != SIG_DFL || sigact.sa_sigaction != 0) {
+        errx(1, "SA_RESETHAND didn't reset the handler to the default after calling the signal handler");
+      }
+      exit(0);
+    }
+  }
+}
+
+// run this in the background from the shell:
+// $ b testbin/luketest pause
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
+static int pause_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *res = signal(SIGUSR1, my_sigusr1_handler);
+  if (res == SIG_ERR) {
+    errx(1, "Error setting signal handler for SIGUSR1");
+  }
+  if (res != SIG_DFL) {
+    errx(1, "previous handler should have been SIG_DFL");
+  }
+  printf("Pausing...\n");
+  int pause_res = pause();
+  printf("Woke up from pause\n");
+  if (pause_res != -1 || errno != EINTR) {
+    errx(1, "bad return value or errno not properly set: ret=%d, errno=%d (%s)\n", pause_res, errno, strerror(errno));
+  }
+  if (handled_sigusr1) {
+    printf("handled sigusr1, exiting\n");
+    exit(0);
+  } else {
+    errx(1, "handled_sigusr1 var should be set");
+  }
+}
+
+// run this in the background from the shell:
+// $ b testbin/luketest signal
+// pid: 3
+// $ sig SIGUSR1 3
+// Successfully sent signal
+static int signal_test(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  void *res = signal(SIGUSR1, my_sigusr1_handler);
+  if (res == SIG_ERR) {
+    errx(1, "Error setting signal handler for SIGUSR1");
+  }
+  while (1) {
+    sleep(5);
+    if (handled_sigusr1) {
+      printf("handled sigusr1, exiting\n");
+      exit(0);
+    }
+  }
 }
 
 // mmap shareable with child with MAP_SHARED
@@ -1059,8 +1400,24 @@ int main(int argc, char *argv[]) {
     vfork_test_exit(argc, argv);
   } else if (strcmp(argv[1], "vfork2") == 0) {
     vfork_test_exec(argc, argv);
+  } else if (strcmp(argv[1], "signal") == 0) {
+    signal_test(argc, argv);
+  } else if (strcmp(argv[1], "pause") == 0) {
+    pause_test(argc, argv);
+  } else if (strcmp(argv[1], "sigaction") == 0) {
+    sigaction_test(argc, argv);
+  } else if (strcmp(argv[1], "sigaltstack") == 0) {
+    sigaltstack_test(argc, argv);
+  } else if (strcmp(argv[1], "sigprocmask1") == 0) {
+    sigprocmask_test1(argc, argv);
+  } else if (strcmp(argv[1], "sigprocmask2") == 0) {
+    sigprocmask_test2(argc, argv);
+  } else if (strcmp(argv[1], "sigchld") == 0) {
+    sigchld_test(argc, argv);
+  } else if (strcmp(argv[1], "sigsuspend") == 0) {
+    sigsuspend_test(argc, argv);
   } else {
-    errx(1, "Usage error!");
+    errx(1, "Usage error!\n");
   }
   exit(0);
 }

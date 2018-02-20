@@ -60,8 +60,9 @@
 #define SYS_munmap       9
 #define SYS_mprotect     10
 
+#define SYS_sigret       11 // return from user-defined signal handler
 //#define SYS_madvise    11
-#define SYS_msync        11
+#define SYS_msync        15
 //#define SYS_mincore    12
 //#define SYS_mlock      13
 #define SYS_pageout_region 12
@@ -88,7 +89,9 @@
 #define SYS_sigprocmask  30
 #define SYS_sigsuspend   31
 #define SYS_sigreturn    32
-//#define SYS_sigaltstack 33
+#define SYS_sigaltstack 35
+#define SYS_signal 33
+#define SYS_pause 34
 //                              (resource tracking and usage)
 //#define SYS_wait4      34
 //#define SYS_getrusage  35

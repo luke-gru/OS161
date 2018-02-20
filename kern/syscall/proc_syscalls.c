@@ -45,6 +45,7 @@
 #include <kern/unistd.h>
 #include <wchan.h>
 #include <mips/trapframe.h>
+#include <signal.h>
 
 // NOTE: _exit(2) syscall, NOT userland exit(3)
 void sys_exit(int status) {
@@ -53,6 +54,33 @@ void sys_exit(int status) {
   // and switching threads), which destroys the parts of the thread that can't be destroyed
   // while it's running.
   thread_exit(status);
+}
+
+int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext) {
+  struct sigcontext sctx;
+  bzero(&sctx, sizeof(sctx));
+  int copy_res = copyin(sigcontext, &sctx, sizeof(sctx));
+  DEBUGASSERT(copy_res == 0);
+  *tf = sctx.sc_tf;
+  struct sigaction *sigact_p = curproc->p_sigacts[sctx.sc_signo];
+  KASSERT(sigact_p);
+  // reset handler to default if necessary
+  if (sigact_p->sa_flags & SA_RESETHAND) {
+    sigact_p->sa_handler = SIG_DFL;
+    sigact_p->sa_sigaction = NULL;
+    sigact_p->sa_flags &= (~SA_RESETHAND);
+  }
+  struct sigaltstack *sigstack_p = curproc->p_sigaltstack;
+  if (sigstack_p && (sigstack_p->ss_flags & SS_DISABLE) == 0) {
+    sigstack_p->ss_flags &= (~SS_ONSTACK);
+  }
+  // mask out sigcantmask just to be safe, if stack was messed with
+  // TODO: add cookie to sigcontext and assert it wasn't messed with!
+  curthread->t_sigmask = (sctx.sc_oldmask & (~sigcantmask));
+  if (curthread->t_is_suspended) {
+    curthread->t_is_suspended = false;
+  }
+  return 0;
 }
 
 int sys_fork(struct trapframe *tf, int *retval) {
@@ -414,6 +442,242 @@ int sys_munmap(uint32_t startaddr, int *retval) {
   }
 }
 
+// set user-supplied signal handler for given signal
+// NOTE: user_handler can be a ptr to a function or the special values
+// SIG_DFL or SIG_IGN
+int sys_signal(int signo, vaddr_t user_handler, int *retval) {
+  if (signo < 1 || signo > NSIG || signo == SIGKILL || signo == SIGSTOP) {
+    *retval = (int)SIG_ERR;
+    return EINVAL;
+  }
+  __sigfunc prev_handler = curproc->p_sigacts[signo]->sa_handler;
+  if (!prev_handler) {
+    prev_handler = SIG_DFL;
+  }
+  curproc->p_sigacts[signo]->sa_handler = (__sigfunc)user_handler;
+  *retval = (int)prev_handler;
+  return 0;
+}
+
+// Set and/or get user-supplied signal handler.
+int sys_sigaction(int signo, const_userptr_t action, userptr_t old_action, int *retval) {
+  if (signo < 1 || signo > NSIG || signo == SIGKILL || signo == SIGSTOP) {
+    *retval = -1;
+    return EINVAL;
+  }
+  struct sigaction *cursigact_p = curproc->p_sigacts[signo];
+  struct sigaction cursigact;
+  if (action == 0 && old_action == 0) {
+    *retval = -1;
+    return EINVAL;
+  }
+  if (!cursigact_p) {
+    bzero(&cursigact, sizeof(cursigact));
+  } else {
+    cursigact = *cursigact_p; // copy fields
+  }
+  int copy_res;
+  if (old_action) {
+    copy_res = copyout(&cursigact, old_action, sizeof(cursigact));
+    if (copy_res != 0) {
+      *retval = -1;
+      return EFAULT;
+    }
+    if (!action) {
+      *retval = 0;
+      return 0;
+    }
+  }
+  struct sigaction *newsigact_p = kmalloc(sizeof(*newsigact_p));
+  KASSERT(newsigact_p);
+  copy_res = copyin(action, newsigact_p, sizeof(*newsigact_p));
+  if (copy_res != 0) {
+    kfree(newsigact_p);
+    *retval = -1;
+    return EFAULT;
+  }
+  if ((newsigact_p->sa_flags & SA_SIGINFO) && !newsigact_p->sa_sigaction) {
+    kfree(newsigact_p);
+    *retval = -1;
+    return EINVAL;
+  }
+
+  curproc->p_sigacts[signo] = newsigact_p;
+
+  return 0;
+}
+
+int sys_sigaltstack(const_userptr_t u_newstack, userptr_t u_oldstack, int *retval) {
+  struct sigaltstack *curstack_p = curproc->p_sigaltstack;
+  struct sigaltstack newaltstack;
+  bzero(&newaltstack, sizeof(newaltstack));
+  int copy_res;
+  if (u_oldstack != (userptr_t)0) {
+    if (!curstack_p) {
+      copy_res = copyout(&newaltstack, u_oldstack, sizeof(newaltstack)); // copy out a zeroed out struct
+    } else {
+      copy_res = copyout(curstack_p, u_oldstack, sizeof(*curstack_p));
+    }
+    if (copy_res != 0) {
+      DEBUG(DB_SYSCALL, "sigaltstack: copyout failed\n");
+      *retval = -1;
+      return EFAULT;
+    }
+    if (u_newstack == (const_userptr_t)0) {
+      *retval = 0;
+      return 0;
+    }
+  }
+
+  if (u_newstack == (const_userptr_t)0) {
+    *retval = -1;
+    return EINVAL;
+  }
+
+  // Can't update the alternate stack if we're executing on it...
+  if (curstack_p && (curstack_p->ss_flags & SS_ONSTACK)) {
+    *retval = -1;
+    return EPERM;
+  }
+
+  copy_res = copyin(u_newstack, &newaltstack, sizeof(newaltstack));
+  if (copy_res != 0) {
+    DEBUG(DB_SYSCALL, "sigaltstack: copyin failed\n");
+    *retval = -1;
+    return EFAULT;
+  }
+
+  if (newaltstack.ss_sp == NULL) {
+    DEBUG(DB_SYSCALL, "sigaltstack: ss_sp = NULL ptr\n");
+    *retval = -1;
+    return EINVAL;
+  }
+  vaddr_t stackbtm = (vaddr_t)newaltstack.ss_sp;
+  vaddr_t stacktop = stackbtm + newaltstack.ss_size;
+  struct addrspace *as = proc_getas();
+  if (stackbtm < as->heap_start || stacktop > as->heap_top) {
+    DEBUG(DB_SYSCALL, "sigaltstack: stack out of bounds\n");
+    *retval = -1;
+    return EFAULT;
+  }
+  if (newaltstack.ss_size < MINSIGSTKSZ) {
+    DEBUG(DB_SYSCALL, "sigaltstack: stack size too low\n");
+    *retval = -1;
+    return ENOMEM;
+  }
+  struct sigaltstack *newaltstack_p = kmalloc(sizeof(newaltstack));
+  KASSERT(newaltstack_p);
+  memcpy(newaltstack_p, &newaltstack, sizeof(newaltstack));
+  curproc->p_sigaltstack = newaltstack_p;
+  *retval = 0;
+  return 0;
+}
+
+// Causes current thread to sleep until it catches a signal and runs its handler
+int sys_pause(int *retval) {
+  curthread->t_is_paused = true;
+  thread_stop();
+  *retval = -1;
+  return EINTR;
+}
+
+int sys_sigsuspend(const_userptr_t u_newsigmask, int *retval) {
+  if (u_newsigmask == (const_userptr_t)0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  sigset_t newsigmask;
+  int copy_res;
+  sigemptyset(&newsigmask);
+  copy_res = copyin(u_newsigmask, &newsigmask, sizeof(sigset_t));
+  if (copy_res != 0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  newsigmask &= (~sigcantmask);
+  curthread->t_is_suspended = true;
+  curthread->t_sigoldmask = curthread->t_sigmask;
+  curthread->t_sigmask = newsigmask;
+  if (thread_has_pending_unblocked_signal()) {
+    // don't stop the thread, run the signal handlers instead
+    // FIXME: only do this if the pending signals aren't set to ignore
+  } else {
+    thread_stop();
+  }
+  // NOTE: the thread is marked as unsuspended only after the handler runs (in sys_sigreturn)
+  DEBUGASSERT(curthread->t_is_suspended);
+  *retval = -1;
+  return EINTR;
+}
+
+// TODO: sys_kill
+
+int sys_sigpending(userptr_t u_sigset, int *retval) {
+  if (u_sigset == (userptr_t)0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  sigset_t sigspending;
+  sigemptyset(&sigspending);
+  struct thread *t = curthread;
+  int copy_res;
+  for (int signo = 1; signo <= NSIG; signo++) {
+    if (t->t_pending_signals[signo]) {
+      sigaddset(&sigspending, signo);
+    }
+  }
+
+  copy_res = copyout(&sigspending, u_sigset, sizeof(sigset_t));
+  if (copy_res != 0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  *retval = 0;
+  return 0;
+}
+
+int sys_sigprocmask(int how, const_userptr_t u_set, userptr_t u_oldset, int *retval) {
+  int copy_res;
+  if (u_oldset != (userptr_t)0) {
+    copy_res = copyout(&curthread->t_sigmask, u_oldset, sizeof(sigset_t));
+    if (copy_res != 0) {
+      *retval = -1;
+      return EFAULT;
+    }
+    if (u_set == (const_userptr_t)0) {
+      *retval = 0;
+      return 0;
+    }
+  }
+  if (!u_set) { // do nothing
+    *retval = 0;
+    return 0;
+  }
+  sigset_t set;
+  copy_res = copyin(u_set, &set, sizeof(sigset_t));
+  if (copy_res != 0) {
+    *retval = -1;
+    return EFAULT;
+  }
+  set &= (~sigcantmask);
+  switch(how) {
+    case SIG_BLOCK:
+      curthread->t_sigmask |= set;
+      break;
+    case SIG_UNBLOCK:
+      curthread->t_sigmask &= (~set);
+      break;
+    case SIG_SETMASK:
+      curthread->t_sigmask = set;
+      break;
+    default:
+    *retval = -1;
+    return EINVAL;
+  }
+  *retval = 0;
+  return 0;
+}
+
 int sys_getpid(int *retval) {
   *retval = (int)curproc->pid;
   return 0;
@@ -442,6 +706,7 @@ int sys_sleep(int seconds, int *retval) {
     return 0;
   }
   thread_sleep_n_seconds(seconds);
+  KASSERT(curthread->t_iplhigh_count == 0);
   *retval = 0;
   return 0;
 }

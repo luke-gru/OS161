@@ -76,6 +76,7 @@ typedef __uid_t uid_t;
 
 typedef __nfds_t nfds_t;
 typedef __socklen_t socklen_t;
+typedef __sigset_t sigset_t;
 
 /*
  * Number of bits per byte.

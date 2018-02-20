@@ -50,9 +50,9 @@ void syscall(struct trapframe *tf);
 void enter_forked_process(void *data1, unsigned long data2);
 
 /* Enter user mode. Does not return. */
-__DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
+void enter_new_process(int argc, userptr_t argv, userptr_t env,
 		       vaddr_t stackptr, vaddr_t entrypoint);
-__DEAD void enter_cloned_process(void *data1, unsigned long data2);
+void enter_cloned_process(void *data1, unsigned long data2);
 
 int runprogram_uspace(char *progname, struct argvdata *argdata, char **environ, int num_env_vars);
 
@@ -106,6 +106,15 @@ int sys_socket(int af, int type, int proto, int *retval);
 int sys_bind(int sockfd, userptr_t sockaddr_user, socklen_t sockaddr_len, int *retval);
 int sys_listen(int sockfd, int backlog, int *retval);
 int sys_accept(int sockfd, userptr_t sockaddr_peer, userptr_t sockaddr_peer_len, int *retval);
+
+int sys_signal(int signo, vaddr_t user_handler, int *retval);
+int sys_sigaction(int signo, const_userptr_t action, userptr_t old_action, int *retval);
+int sys_sigaltstack(const_userptr_t newstack, userptr_t oldstack, int *retval);
+int sys_sigprocmask(int how, const_userptr_t u_set, userptr_t u_oldset, int *retval);
+int sys_pause(int *retval);
+int sys_sigpending(userptr_t u_sigset, int *retval);
+int sys_sigsuspend(const_userptr_t u_newsigmask, int *retval);
+int sys_sigreturn(struct trapframe *tf, userptr_t sigcontext);
 
 // NOTE: this is used to test paging memory in/out and memory region locking
 // in the kernel!

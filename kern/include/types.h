@@ -132,6 +132,8 @@ typedef __uid_t uid_t;
 
 typedef __nfds_t nfds_t;
 typedef __socklen_t socklen_t;
+/* Type for a set of signals; used by e.g. sigprocmask(). */
+typedef __sigset_t sigset_t;
 
 /*
  * Number of bits per byte.

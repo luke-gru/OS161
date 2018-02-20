@@ -40,6 +40,7 @@
 #include <mainbus.h>
 #include <syscall.h>
 #include <addrspace.h>
+#include <copyinout.h>
 
 
 /* in exception-*.S */
@@ -47,6 +48,9 @@ extern __DEAD void asm_usermode(struct trapframe *tf);
 
 /* called only from assembler, so not declared in a header */
 void mips_trap(struct trapframe *tf);
+// forward decls
+void user_return_from_trap(struct trapframe *tf, uint32_t trap_code);
+void setup_sig_handler(struct sigaction *sigact, int signo, struct trapframe *tf);
 
 
 /* Names for trap codes */
@@ -78,45 +82,47 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 
 	KASSERT(code < NTRAPCODES);
 	switch (code) {
-	    case EX_IRQ:
-	    case EX_IBE:
-	    case EX_DBE:
-	    case EX_SYS:
+	  case EX_IRQ:
+	  case EX_IBE:
+	  case EX_DBE:
+	  case EX_SYS:
 		/* should not be seen */
-		KASSERT(0);
-		sig = SIGABRT;
-		break;
-	    case EX_MOD:
-	    case EX_TLBL:
-	    case EX_TLBS:
-		sig = SIGSEGV;
-		break;
-	    case EX_ADEL:
-	    case EX_ADES:
-		sig = SIGBUS;
-		break;
-	    case EX_BP:
-		sig = SIGTRAP;
-		break;
-	    case EX_RI:
-		sig = SIGILL;
-		break;
-	    case EX_CPU:
-		sig = SIGSEGV;
-		break;
-	    case EX_OVF:
-		sig = SIGFPE;
-		break;
+			KASSERT(0);
+			sig = SIGABRT;
+			break;
+	  case EX_MOD:
+	  case EX_TLBL:
+	  case EX_TLBS:
+			sig = SIGSEGV;
+			break;
+    case EX_ADEL:
+    case EX_ADES:
+			sig = SIGBUS;
+			break;
+	  case EX_BP:
+			sig = SIGTRAP;
+			break;
+	  case EX_RI:
+			sig = SIGILL;
+			break;
+	  case EX_CPU:
+			sig = SIGSEGV;
+			break;
+	  case EX_OVF:
+			sig = SIGFPE;
+			break;
+		default:
+			sig = SIGTERM;
+			break;
 	}
 
-	/*
-	 * You will probably want to change this.
-	 */
-
-	kprintf("Fatal user mode trap code=%u sig=%d (%s, epc 0x%x, vaddr 0x%x)\n",
+	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
-	//panic("I don't know how to handle this\n");
-	thread_exit(1);
+	siginfo_t siginfo;
+	init_siginfo(&siginfo, sig);
+	siginfo.si_trapno = code;
+	siginfo.si_addr = (void*)vaddr;
+	thread_send_signal(curthread, sig, &siginfo);
 }
 
 /*
@@ -157,7 +163,7 @@ mips_trap(struct trapframe *tf)
 	}
 
 	/* Interrupt? Call the interrupt handler and return. */
-	if (code == EX_IRQ) {
+	if (code == EX_IRQ) { // 0
 		int old_in;
 		bool doadjust;
 
@@ -220,7 +226,7 @@ mips_trap(struct trapframe *tf)
 	splx(spl);
 
 	/* Syscall? Call the syscall handler and return. */
-	if (code == EX_SYS) {
+	if (code == EX_SYS) { // 8
 		/* Interrupts should have been on while in user mode. */
 		KASSERT(curthread->t_curspl == 0);
 		KASSERT(curthread->t_iplhigh_count == 0);
@@ -361,9 +367,96 @@ mips_trap(struct trapframe *tf)
 	 * to find out now.
 	 */
 	KASSERT(SAME_STACK(cpustacks[curcpu->c_number]-1, (vaddr_t)tf));
-	if (curthread->t_pid == 4 && curthread->t_proc == NULL) {
-		DEBUG(DB_SYSCALL, "Returning from child exception\n");
+
+	if (tf->tf_sp > USERSPACETOP) { // probably an interrupt while in kernel mode, we're not returning to usermode
+	} else {
+		struct siginfo *siginf;
+		int sig_idx;
+		if (curproc && !curproc->current_sigact) {
+			while ((sig_idx = thread_has_pending_unblocked_signal()) != -1) {
+				KASSERT(thread_remove_pending_unblocked_signal(sig_idx, &siginf) == 0);
+				DEBUG(DB_SIG, "handling pending signal %s\n", sys_signame[siginf->sig]);
+				KASSERT(siginf->pid == curproc->pid);
+				int handle_res = thread_handle_signal(*siginf);
+				kfree(siginf);
+				if (handle_res == 1) { // userlevel signal queued, let it run before we handle other signals
+					break;
+				}
+			}
+		}
+		user_return_from_trap(tf, code);
 	}
+}
+
+void user_return_from_trap(struct trapframe *tf, uint32_t code) {
+	if (curproc && curproc->current_sigact) {
+		DEBUG(DB_SIG, "Setting trapframe values for sig handler in user_return_from_trap\n");
+		setup_sig_handler(curproc->current_sigact, curproc->current_siginf->si_signo, tf);
+	}
+	(void)code;
+	spl0();
+}
+
+void setup_sig_handler(struct sigaction *sigact, int signo, struct trapframe *tf) {
+	struct sigcontext sctx;
+	bzero(&sctx, sizeof(sctx));
+	sctx.sc_signo = signo;
+	if (curthread->t_is_suspended) {
+		sctx.sc_oldmask = curthread->t_sigoldmask;
+	} else {
+		sctx.sc_oldmask = curthread->t_sigmask;
+	}
+
+	sctx.sc_tf = *tf; // copy trapframe
+	size_t framesize = sizeof(struct sigframe);
+	struct sigframe *fp;
+	struct sigaltstack *sigstack_p = curproc->p_sigaltstack;
+	if ((sigact->sa_flags & SA_ONSTACK) && sigstack_p) {
+		if ((sigstack_p->ss_flags & SS_DISABLE) == 0 && !sigonstack(tf->tf_sp)) {
+			fp = (struct sigframe *)(sigstack_p->ss_sp + sigstack_p->ss_size - framesize);
+		} else {
+			fp = (struct sigframe *)(tf->tf_sp - framesize);
+		}
+		if ((sigstack_p->ss_flags & SS_DISABLE) == 0) {
+			sigstack_p->ss_flags |= SS_ONSTACK;
+		}
+	} else {
+		fp = (struct sigframe *)(tf->tf_sp - framesize);
+	}
+
+	int copy_res;
+	uint32_t sighandler;
+	if (sigact->sa_flags & SA_SIGINFO) {
+		sighandler = (uint32_t)sigact->sa_sigaction;
+		DEBUGASSERT(sighandler);
+		copy_res = copyout(curproc->current_siginf, (userptr_t)&fp->sf_si, sizeof(siginfo_t)); // copy siginfo into sigframe on user's stack
+		DEBUGASSERT(copy_res == 0);
+		void *sf_sip = (void*)fp + sizeof(int) + sizeof(struct sigcontext) + sizeof(siginfo_t*);
+		copy_res = copyout(sf_sip, (userptr_t)&fp->sf_sip, sizeof(void*));
+		DEBUGASSERT(copy_res == 0);
+		tf->tf_a1 = (uint32_t)sf_sip;
+		tf->tf_a2 = (uint32_t)curproc->p_addrspace->sigretcode;
+	} else {
+		sighandler = (uint32_t)sigact->sa_handler;
+		DEBUGASSERT(sighandler != (uint32_t)SIG_DFL && sighandler != (uint32_t)SIG_IGN);
+	}
+	copy_res = copyout(&sctx, (userptr_t)&fp->sf_sc, sizeof(struct sigcontext)); // copy sigcontext into sigframe on user's stack
+	DEBUGASSERT(copy_res == 0);
+	copy_res = copyout(&signo, (userptr_t)&fp->sf_signo, sizeof(int)); // copy signo into sigframe on user's stack
+	DEBUGASSERT(copy_res == 0);
+
+	tf->tf_sp = (uint32_t)fp; // change user's stack pointer
+	tf->tf_ra = curproc->p_addrspace->sigretcode;
+	tf->tf_epc = sighandler;
+	tf->tf_a0 = (uint32_t)signo;
+	sigset_t newmask = curthread->t_sigmask;
+	sigaddset(&newmask, signo);
+	newmask |= sigact->sa_mask;
+	newmask &= (~sigcantmask);
+	curthread->t_sigmask = newmask;
+	curproc->current_sigact = NULL;
+	kfree(curproc->current_siginf);
+	curproc->current_siginf = NULL;
 }
 
 /*

@@ -1,0 +1,33 @@
+Signals:
+
+1) Thread gets signal from other process (such as kill), add it to pending signals list
+2) When starting a thread from sleep or returning from kernel mode, go thru pending signals and handle them 1 by 1
+3) If signal is a user handler signal, call it then return control to operating system.
+
+Asynchronous Signals (such as from kill)
+1) Wake up process if it's sleeping, and add pending signals to its buffer
+2) Process wakes up, and before entering back into user mode checks its pending signals
+3) It has one, and it's a user signal, so it sets up its current trapframe to point into
+the new handler, and sets the return address of the trapframe to point back to the original
+trapframe stack pointer.
+
+TODO: figure out how this MIPS32 deals with stackframes and calling conventions by looking at disassembly of simple programs
+1) prologue moves sp down 16 bytes + (num S registers saving + saving RA)*4
+
+Need a way to return control back to the OS after executing a signal handler, so instead of executing a signal handler directly, I'll execute my
+own function that I put into the user's address space at a specific address that takes a pointer to the handler function, calls it, then calls a syscall to return control
+to the OS right before returning from the function (signal_ret syscall or something).
+
+1) Inject assembly instructions at specific address, make it readable and executable, NOT writable [DONE]
+2) Get signal handling to run and return using sigreturn syscall [DONE]
+3) Get signal handling masking (blocking) to work [DONE]
+4) Implement child to parent signals when child dies, etc (SIGCHLD)
+  * Get fork working for inheriting various signal fields (mask, pending signals, signal actions, etc.) [DONE]
+  * Test fork and signal handling [DONE]
+  * implement reaping child processes in terms of SIGCHLD signal (instead of way it's done now)
+5) Fix pending signals array to make it larger and work for multiple pending signals, see what openBSD does [DONE]
+6) Test multiple pending signals in an easy way from the menu (queuesig and runsigs commands)
+7) Get interrupted signal handlers working (signals handled in the middle of handling other signals)
+  * Find a way to test them (sleep in signal handler)
+8) Send signal using interrupts if possible, instead of adding signal to pending signals list. Otherwise we won't be able to truly
+interrupt a signal handler unless it blocks (returns control to OS) or gets pre-empted.

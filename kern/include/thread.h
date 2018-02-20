@@ -78,8 +78,8 @@ struct thread {
 
 	char t_name[MAX_NAME_LENGTH];
 	const char *t_wchan_name;	/* Name of wait channel, if sleeping. Useful when debugging */
-	// struct wchan *t_wchan;
-	// struct spinlock *t_wchan_lk;
+	struct wchan *t_wchan;
+	struct spinlock *t_wchan_lk;
 	threadstate_t t_state;		/* State this thread is in */
 	/* when running a signal handler, we sometimes need to save the previous threadstate
 	 * For instance, when we send a SIGSTOP to a process that's currently sleeping,
@@ -126,10 +126,12 @@ struct thread {
 	 * Public fields
 	 */
 
-	struct siginfo *t_pending_signals[PENDING_SIGNALS_MAX];
+	struct siginfo *t_pending_signals[NSIG+1]; // first entry always NULL
 	bool t_is_stopped; /* has been stopped by SIGSTOP */
-	struct wchan *t_wchan; // current channel we're waiting on, if any
-	struct spinlock *t_wchan_lk; // lock for channel we're waiting on
+	bool t_is_paused; /* has been paused by pause() syscall (unpauses after receiving a non-blocked, non-ignored signal)*/
+	bool t_is_suspended; /* has been suspended by sigsuspend() syscall (unsuspended after receiving a user-handled signal) */
+	sigset_t t_sigmask; // bitmask for set of blocked signals.
+	sigset_t t_sigoldmask; // for use with sigsuspend() syscall, because it sets a new mask until a handler runs then resets it
 };
 
 /*
@@ -155,6 +157,8 @@ void thread_panic(void);
 /* Call during system shutdown to offline other CPUs. */
 void thread_shutdown(void);
 
+void thread_stop(void);
+
 /*
  * Make a new thread, which will start executing at "func". The thread
  * will belong to the process "proc", or to the current thread's
@@ -178,9 +182,9 @@ struct cpu *thread_get_cpu(unsigned index);
 int thread_fork_from_proc(struct thread *th, struct proc *pr, struct trapframe *tf, int flags, int *errcode);
 
 struct thread *thread_find_by_id(pid_t id);
-int thread_send_signal(struct thread *t, int sig);
-int thread_has_pending_signal(void);
-int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out);
+int thread_send_signal(struct thread *t, int sig, siginfo_t *info);
+int thread_has_pending_unblocked_signal(void);
+int thread_remove_pending_unblocked_signal(unsigned sigidx, struct siginfo **siginfo_out);
 int thread_handle_signal(struct siginfo siginf);
 /*
  * Cause the current thread to exit.
@@ -215,5 +219,7 @@ void thread_wait_for_count(unsigned);
 void thread_sleep_n_seconds(int seconds);
 void thread_add_ready_sleepers_to_runqueue(void);
 void thread_wakeup_ready_timeouts(void);
+
+int wchan_wake_thread(struct wchan *wc, struct spinlock *lk, struct thread *t);
 
 #endif /* _THREAD_H_ */

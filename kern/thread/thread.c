@@ -217,6 +217,10 @@ static struct thread * thread_create(const char *name) {
 	thread->t_pid = INVALID_PID;
 	bzero(thread->t_pending_signals, sizeof(thread->t_pending_signals));
 	thread->t_is_stopped = false;
+	thread->t_is_paused = false;
+	thread->t_is_suspended = false;
+	thread->t_sigmask = (sigset_t)0;
+	thread->t_sigoldmask = (sigset_t)0;
 
 	spinlock_acquire(&allthreads_lock);
 	threadarray_add(&allthreads, thread, NULL);
@@ -363,13 +367,11 @@ thread_destroy(struct thread *thread)
 	threadarray_remove(&allthreads, (unsigned)allthreads_index);
 	spinlock_release(&allthreads_lock);
 
-	// free pending unhandled signals
-	int sig_idx;
-	while ((sig_idx = thread_has_pending_signal()) != -1) {
-		struct siginfo *siginf;
-		int res = thread_remove_pending_signal(sig_idx, &siginf);
-		if (res == 0) {
-			kfree(siginf);
+	// free pending unhandled signal structures
+	for (int signo = 0; signo <= NSIG; signo++) {
+		if (thread->t_pending_signals[signo]) {
+			kfree(thread->t_pending_signals[signo]);
+			thread->t_pending_signals[signo] = NULL;
 		}
 	}
 
@@ -573,6 +575,8 @@ void thread_make_runnable(struct thread *target, bool already_have_lock) {
 		spinlock_acquire(&targetcpu->c_runqueue_lock);
 	}
 
+	target->t_wchan = NULL;
+	target->t_wchan_lk = NULL;
 	/* Target thread is now ready to run; put it on the run queue. */
 	target->t_state = S_READY;
 	threadlist_addtail(&targetcpu->c_runqueue, target);
@@ -750,6 +754,7 @@ int thread_fork_from_proc(struct thread *parent_th, struct proc *p, struct trapf
 		}
 	}
 
+	newthread->t_sigmask = parent_th->t_sigmask;
 	switchframe_init(newthread, enter_forked_process, tf, 0);
 	thread_make_runnable(newthread, false);
 	splx(spl);
@@ -824,6 +829,11 @@ int thread_fork_for_clone(struct thread *parent_th, struct proc *clone,
 static bool thread_find_ready_sleeper_cb(struct thread *t, void *data) {
 	(void)data;
 	return t->wakeup_at == 0 || (t->wakeup_at <= timestamp() && t->wakeup_at != -1);
+}
+
+static bool thread_find_by_pid_cb(struct thread *t, void *pid) {
+	KASSERT((pid_t)pid > 0);
+	return t->t_pid == (pid_t)pid;
 }
 
 // NOTE: runs once a second
@@ -943,7 +953,7 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 		 * caller of wchan_sleep locked it until the thread is
 		 * on the list.
 		 */
-		 	//DEBUGASSERT(cur->t_wchan == NULL);
+		 	DEBUGASSERT(cur->t_wchan == NULL);
 			threadlist_addtail(&wc->wc_threads, cur);
 			cur->t_wchan = wc;
 			cur->t_wchan_lk = lk;
@@ -1050,7 +1060,8 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 	 * thread_startup.
 	 */
 
-
+	cur->t_wchan = NULL;
+	cur->t_wchan_lk = NULL;
 	cur->t_wchan_name = NULL;
 	cur->t_wchan = NULL;
 	cur->t_wchan_lk = NULL;
@@ -1058,16 +1069,20 @@ static void thread_switch(threadstate_t newstate, struct wchan *wc, struct spinl
 	spinlock_release(&curcpu->c_runqueue_lock);
 	as_activate();
 	exorcise();
-	splx(spl);
-	int sig_idx = thread_has_pending_signal();
-	if (sig_idx != -1) {
-		struct siginfo *siginf;
-		KASSERT(thread_remove_pending_signal(sig_idx, &siginf) == 0);
+	struct siginfo *siginf;
+	int signo;
+	while ((signo = thread_has_pending_unblocked_signal()) != -1) {
+		KASSERT(thread_remove_pending_unblocked_signal(signo, &siginf) == 0);
 		DEBUG(DB_SIG, "handling pending signal %s\n", sys_signame[siginf->sig]);
 		KASSERT(siginf->pid == curproc->pid);
-		thread_handle_signal(*siginf);
+		KASSERT(siginf->sig == signo);
+		int handle_res = thread_handle_signal(*siginf);
 		kfree(siginf);
+		if (handle_res == 1) { // userlevel signal queued, let it run before we handle other signals
+			break;
+		}
 	}
+	splx(spl);
 }
 
 /*
@@ -1344,6 +1359,7 @@ void thread_sleep_n_seconds(int seconds) {
 	t->wakeup_at = timestamp() + seconds;
 	// puts curthread on the wait channel threadslist
 	wchan_sleep(threads_sleeping_wchan, &threads_sleeping_lock); // unlocks and then locks spinlock
+	t->wakeup_at = 0;
 	spinlock_release(&threads_sleeping_lock);
 }
 
@@ -1513,9 +1529,7 @@ int wchan_sleep_timeout(struct wchan *wc, struct spinlock *lk, struct timeval *t
 /*
  * Wake up one thread sleeping on a wait channel.
  */
-void
-wchan_wakeone(struct wchan *wc, struct spinlock *lk)
-{
+void wchan_wakeone(struct wchan *wc, struct spinlock *lk) {
 	struct thread *target;
 
 	KASSERT(spinlock_do_i_hold(lk));
@@ -1537,6 +1551,23 @@ wchan_wakeone(struct wchan *wc, struct spinlock *lk)
 	 */
 
 	thread_make_runnable(target, false);
+}
+
+/* Wake up specific thread sleeping on a wait channel */
+int wchan_wake_thread(struct wchan *wc, struct spinlock *lk, struct thread *t) {
+	KASSERT(spinlock_do_i_hold(lk));
+	struct thread *target;
+	target = threadlist_remove_if(&wc->wc_threads, thread_find_by_pid_cb, (void*)t->t_pid);
+	if (target) {
+		KASSERT(target == t);
+		t->t_wchan = NULL;
+		t->wakeup_at = 0;
+		t->t_wchan_lk = NULL;
+		t->t_wchan_name = "";
+		thread_make_runnable(t, false);
+		return 0;
+	}
+	return -1;
 }
 
 /*
@@ -1726,101 +1757,181 @@ const char *threadstate_name(threadstate_t state) {
 }
 
 static int thread_add_pending_signal(struct thread *t, struct siginfo *si) {
-	for (int i = 0; i < PENDING_SIGNALS_MAX; i++) {
-		if (!t->t_pending_signals[i]) {
-			t->t_pending_signals[i] = si;
-			return 0;
-		}
+	if (t->t_pending_signals[si->sig]) {
+		return -1; // signal already pending
 	}
-	return -1;
+	t->t_pending_signals[si->sig] = si;
+	return 0;
 }
 
-// NOTE: thread must belong to a threadlist
-static void thread_remove_from_threadlist(struct thread *t) {
-	struct threadlistnode *node = &t->t_listnode;
-	DEBUGASSERT(node->tln_prev != NULL);
-	DEBUGASSERT(node->tln_next != NULL);
-	node->tln_prev->tln_next = node->tln_next;
-	node->tln_next->tln_prev = node->tln_prev;
-	node->tln_next = NULL;
-	node->tln_prev = NULL;
+static void thread_wakeup(struct thread *t) {
+	struct spinlock *lk = t->t_wchan_lk;
+	if (lk == NULL) {
+		return; // thread probably just woke up...
+	}
+	spinlock_acquire(lk);
+	KASSERT(t->t_state == S_SLEEP);
+	KASSERT(t->t_wchan != NULL);
+	KASSERT(wchan_wake_thread(t->t_wchan, lk, t) == 0);
+	spinlock_release(lk);
 }
 
-int thread_send_signal(struct thread *t, int sig) {
+// Adds a pending signal to thread so it can handle it upon wakeup or re-entry to user level.
+// If `t` is the current thread, it's handled directly instead of added to the queue.
+int thread_send_signal(struct thread *t, int sig, siginfo_t *info) {
 	DEBUGASSERT(sig > 0 && sig <= NSIG);
 	struct siginfo *si = kmalloc(sizeof(struct siginfo));
 	KASSERT(si);
+	bzero(si, sizeof(struct siginfo));
 	si->sig = sig;
 	si->pid = t->t_pid;
-	if (curthread == t) {
+	if (info) {
+		si->info = *info;
+	}
+
+	bool sig_is_blocked = sigismember(&t->t_sigmask, sig);
+	if (curthread == t && !sig_is_blocked) {
 		thread_handle_signal(*si);
 		kfree(si);
 		return 0;
 	} else {
-		DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
-		int add_res = thread_add_pending_signal(t, si);
-		if (add_res == -1) {
-			kfree(si);
-			return -1;
+		if (t->t_pending_signals[sig]) {
+			DEBUG(DB_SIG, "Signal [%s] is already pending for thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
+		} else {
+			DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d (%s)\n", sys_signame[sig], (int)t->t_pid, t->t_name);
+			int add_res = thread_add_pending_signal(t, si);
+			if (add_res == -1) {
+				DEBUG(DB_SIG, "Adding pending signal [%s] to thread %d failed (queue full)\n", sys_signame[sig], (int)t->t_pid);
+				kfree(si);
+				return -1;
+			}
 		}
-		// make the thread runnable so it can handle its signal
-		if (t->t_state == S_SLEEP) {
-			DEBUG(DB_SIG, "Removing thread %d from sleep wchan %s threadlist due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
-			thread_remove_from_threadlist(t);
-			t->t_wchan_name = NULL;
+		if (sig_is_blocked) { // no use waking the thread if the signal is blocked, just add it to the pending list
+			return 0;
 		}
-		if (t->t_state != S_RUN && t->t_state != S_READY) {
-			thread_make_runnable(t, false);
+		// make the thread runnable so it can handle its signal (if the signal isn't ignored)
+		struct proc *p = proc_lookup(t->t_pid);
+		DEBUGASSERT(p);
+		struct sigaction *sigact = p->p_sigacts[sig];
+		int sig_is_ignored = sigaction_is_ignore(sigact, sig);
+		if (sig_is_ignored) {
+			return 0;
+		}
+		threadstate_t tstate = t->t_state;
+		if (tstate) {
+			if (t->t_is_paused) {
+				t->t_is_paused = false;
+			} else if (t->t_is_suspended) {
+				if (!sigaction_is_handled_by_user(sigact)) {
+					return 0; // don't wake up thread until we run a user-supplied signal handler
+				}
+				// NOTE: thread marked as unsuspended only after the handler runs
+			}
+			DEBUG(DB_SIG, "Waking thread %d from sleep (wchan %s) due to pending signal\n", (int)t->t_pid, t->t_wchan_name);
+			thread_wakeup(t);
+		} else {
+			if (tstate == S_ZOMBIE) {
+				return -1;
+			}
+			KASSERT(tstate == S_RUN || tstate == S_READY);
 		}
 		return 0;
 	}
 }
 
-// does the current thread have a pending signal? If so, returns its index
-// in the pending signals array
-int thread_has_pending_signal(void) {
+// does the current thread have a pending signal? If so, returns its signo
+// (index into the pending signals array)
+int thread_has_pending_unblocked_signal(void) {
 	struct thread *t = curthread;
-	for (int i = 0; i < PENDING_SIGNALS_MAX; i++) {
-		if (t->t_pending_signals[i]) {
+	for (int i = 1; i <= PENDING_SIGNALS_MAX; i++) {
+		if (t->t_pending_signals[i] && !sigismember(&t->t_sigmask, i)) {
 			return i;
 		}
 	}
 	return -1;
 }
 
-int thread_remove_pending_signal(unsigned sigidx, struct siginfo **siginfo_out) {
-	KASSERT(sigidx < PENDING_SIGNALS_MAX);
-	struct siginfo *inf = curthread->t_pending_signals[sigidx];
+// NOTE: Pending signals are removed when they're runnable (unblocked), so we assert that it
+// must be unblocked before removing it.
+int thread_remove_pending_unblocked_signal(unsigned signo, struct siginfo **siginfo_out) {
+	KASSERT(signo < PENDING_SIGNALS_MAX);
+	struct siginfo *inf = curthread->t_pending_signals[signo];
 	if (!inf) return -1;
+	KASSERT(!sigismember(&curthread->t_sigmask, signo));
 	*siginfo_out = inf;
-	curthread->t_pending_signals[sigidx] = NULL;
+	curthread->t_pending_signals[signo] = NULL;
 	return 0;
 }
 
-static void thread_stop() {
-	DEBUG(DB_SIG, "Stopping curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGSTOP]);
+void thread_stop(void) {
 	curthread->t_is_stopped = true;
 	spinlock_acquire(&threads_stopped_lock);
 	thread_switch(S_SLEEP, threads_stopped_wchan, &threads_stopped_lock);
 }
 
+// Returns 0, signal has been handled by OS. Returns 1, sigaction is a userlevel signal handler and
+// has been set to run on next entry to userland. Returns 2, signal has been ignored.
+// Returns < 0 on error.
 int thread_handle_signal(struct siginfo siginf) {
-	switch (siginf.sig) {
-		case SIGSTOP:
-			thread_stop();
-			break;
-		case SIGCONT:
-			DEBUG(DB_SIG, "Continuing curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGCONT]);
-			curthread->t_is_stopped = false;
-			/* continue as normal, curthread is awake now */
-			break;
-		case SIGKILL:
-			DEBUG(DB_SIG, "Exiting curthread (%d) due to signal [%s]\n", (int)curthread->t_pid, sys_signame[SIGKILL]);
-			thread_exit(1);
-			panic("unreachable");
-		default:
-			panic("not implemented");
-			return -1;
+	KASSERT(curthread->t_proc->current_sigact == NULL);
+	if (sigismember(&curthread->t_sigmask, siginf.sig)) {
+		 // shouldn't get here! Caller shouldn't call this function if signal is currently blocked
+		KASSERT(0);
+	}
+	__sigfunc handler;
+	__sigfunc_siginfo si_handler;
+	struct sigaction *sigact_p;
+	if (siginf.sig <= NSIG) {
+		sigact_p = curthread->t_proc->p_sigacts[siginf.sig];
+		si_handler = sigact_p->sa_sigaction;
+		handler = sigact_p->sa_handler;
+		if (!si_handler && handler == SIG_DFL) {
+			__sigfunc os_handler = default_sighandlers[siginf.sig];
+			if (os_handler == _sigfn_ign) {
+				return 2;
+			} else {
+				sigset_t oldmask = curthread->t_sigmask;
+				sigset_t newmask = oldmask;
+				sigaddset(&newmask, siginf.sig);
+				newmask |= sigact_p->sa_mask;
+				newmask &= (~sigcantmask);
+				curthread->t_sigmask = newmask;
+				// if stopping or terminating the process, send SIGCHLD to parent process
+				if (sigfn_stop_or_term(os_handler)) {
+					struct proc *parent = curproc->p_parent;
+					if (parent && (!NULL_OR_FREED(parent->p_mainthread)) && parent->p_mainthread->t_state != S_ZOMBIE) {
+						siginfo_t siginfo;
+						init_siginfo(&siginfo, SIGCHLD);
+						proc_send_signal(parent, SIGCHLD, &siginfo, NULL);
+					}
+				}
+				os_handler(siginf.sig);
+				curthread->t_sigmask = oldmask;
+				return 0;
+			}
+		} else if (!si_handler && handler == SIG_IGN) {
+			// do nothing
+			return 2;
+		} else { // user handler
+			curthread->t_proc->current_sigact = sigact_p;
+			if (!siginf.info.si_pid || !siginf.info.si_signo) {
+				siginfo_t siginfo;
+				init_siginfo(&siginfo, siginf.sig);
+				siginf.info = siginfo;
+			}
+			siginfo_t *siginfo_p = curthread->t_proc->current_siginf;
+			KASSERT(siginfo_p == NULL);
+			siginfo_p = kmalloc(sizeof(siginfo_t));
+			KASSERT(siginfo_p);
+			memcpy(siginfo_p, &siginf.info, sizeof(siginfo_t));
+			curthread->t_proc->current_siginf = siginfo_p;
+			// TODO: set current_siginf to be a pointer to allocated siginfo memory, then
+			// set it in the sigcontext if it's non-zero so that sigreturn can use it if it wants, and send
+			// it to the sigaction, if necessary.
+			return 1;
+		}
+	} else {
+		return -1;
 	}
 	return 0;
 }
