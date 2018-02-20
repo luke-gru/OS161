@@ -27,36 +27,52 @@
  * SUCH DAMAGE.
  */
 
-#include <types.h>
-#include <lib.h>
-#include <lamebus/lamebus.h>
-#include "autoconf.h"
-#include <lamebus/lnet.h>
+#ifndef _LAMEBUS_LNET_H_
+#define _LAMEBUS_LNET_H_
 
-/* Lowest revision we support */
-#define LOW_VERSION   1
-/* Highest revision we support */
-#define HIGH_VERSION  1
+#include <spinlock.h>
 
-struct lnet_softc *attach_lnet_to_lamebus(int lnetno, struct lamebus_softc *sc) {
-	int slot = lamebus_probe(sc, LB_VENDOR_CS161, LBCS161_NET, LOW_VERSION, NULL);
-	if (slot < 0) {
-		return NULL;
-	}
+#define LNET_READBUFSZ (4096)
+#define LNET_WRITEBUFSZ (4096)
+#define LNET_READBUF_OFFSET (32768)
+#define LNET_WRITEBUF_OFFSET (32768+LNET_READBUFSZ)
 
-	struct lnet_softc *lnet = kmalloc(sizeof(*lnet));
-	if (lnet==NULL) {
-		return NULL;
-	}
-	memset(lnet, 0, sizeof(*lnet));
+#define LNET_RECV_REG_OFFSET 0
+#define LNET_WRIT_REG_OFFSET 4
+#define LNET_CTRL_REG_OFFSET 8
+#define LNET_STAT_REG_OFFSET 12
 
-	(void)lnetno;  // unused
+#define LNET_CTRL_TRANS_IN_PROGRESS 2
+#define LNET_READ_READY 1
+#define LNET_WRIT_COMPLETE 1
 
-	lnet->ln_bus = sc;
-	lnet->ln_buspos = slot;
 
-	lamebus_mark(sc, slot);
-	lamebus_attach_interrupt(sc, slot, lnet, lnet_irq);
+struct lnet_softc {
+	/* Initialized by config function */
+	struct spinlock ln_lock;    /* protects device regs */
+  bool ln_transmit_in_progress;
 
-	return lnet;
-}
+	/* Initialized by lower-level attachment function */
+	void *ln_bus;
+	uint32_t ln_buspos;
+
+	/* Initialized by higher-level attachment function */
+	void *ln_readbuf_p;
+  void *ln_writebuf_p;
+  uint16_t ln_hwaddr; // 16 bit hwaddr
+	// void (*ls_start)(void *devdata);
+	// void (*ls_input)(void *devdata, int ch);
+};
+
+/* Functions called by lower-level drivers */
+void lnet_irq(/*struct lnet_softc*/ void *sc);
+
+/* Functions called by higher-level drivers */
+// start transmitting packets. An interrupt will occur upon completion of transmission.
+int lnet_start_transmit(/* struct lnet_softc* */ void *lnet);
+bool lnet_is_transmit_complete(void *lnet);
+bool lnet_is_read_ready(void *lnet);
+void lnet_clear_read_status(void *lnet);
+void lnet_clear_write_status(void *lnet);
+
+#endif /* _LAMEBUS_LSER_H_ */

@@ -30,17 +30,74 @@
 #include <types.h>
 #include <kern/errno.h>
 #include <lib.h>
-/*#include <lamebus/lnet.h>*/ /* not yet */
+#include <lamebus/lnet.h>
+#include <platform/bus.h>
 #include "autoconf.h"
 
-int
-config_lnet(struct lnet_softc *sc, int lnetno)
-{
-	(void)sc;
-
-	kprintf("lnet%d: No network support in system\n", lnetno);
-
-	return ENODEV;
+int config_lnet(struct lnet_softc *lnet, int lnetno) {
+	(void)lnetno;
+	lnet->ln_readbuf_p = bus_map_area(lnet->ln_bus, lnet->ln_buspos, LNET_READBUF_OFFSET);
+	lnet->ln_writebuf_p = bus_map_area(lnet->ln_bus, lnet->ln_buspos, LNET_WRITEBUF_OFFSET);
+	uint32_t status = lamebus_read_register(lnet->ln_bus, lnet->ln_buspos, LNET_STAT_REG_OFFSET);
+	uint16_t hwaddr = status &~ 0xffff0000; // lower 16 bits = hwaddr
+	KASSERT(hwaddr > 0);
+	lnet->ln_hwaddr = hwaddr;
+	spinlock_init(&lnet->ln_lock);
+	return 0;
 }
 
+void lnet_irq(/*struct lnet_softc*/ void *sc) {
+	(void)sc;
+	panic("lnet interrupt");
+}
 
+// start transmitting packets. An interrupt will occur upon completion of transmission.
+int lnet_start_transmit(void *sc) {
+	struct lnet_softc *lnet = sc;
+	spinlock_acquire(&lnet->ln_lock);
+	if (lnet->ln_transmit_in_progress) { return -1; }
+
+	uint32_t ctrl = lamebus_read_register(lnet->ln_bus, lnet->ln_buspos, LNET_CTRL_REG_OFFSET);
+	KASSERT((ctrl & LNET_CTRL_TRANS_IN_PROGRESS) == 0);
+	ctrl |= (LNET_CTRL_TRANS_IN_PROGRESS);
+	lamebus_write_register(lnet->ln_bus, lnet->ln_buspos, LNET_CTRL_REG_OFFSET, ctrl);
+	lnet->ln_transmit_in_progress = true;
+
+	spinlock_release(&lnet->ln_lock);
+	return 0;
+}
+
+bool lnet_is_transmit_complete(void *sc) {
+	struct lnet_softc *lnet = sc;
+	KASSERT(lnet->ln_transmit_in_progress);
+	spinlock_acquire(&lnet->ln_lock);
+
+	uint32_t write = lamebus_read_register(lnet->ln_bus, lnet->ln_buspos, LNET_WRIT_REG_OFFSET);
+	bool is_complete = (write & LNET_WRIT_COMPLETE);
+	if (is_complete) {
+		lnet->ln_transmit_in_progress = false;
+	}
+
+	spinlock_release(&lnet->ln_lock);
+	return is_complete;
+}
+
+bool lnet_is_read_ready(void *sc) {
+	struct lnet_softc *lnet = sc;
+	uint32_t read = lamebus_read_register(lnet->ln_bus, lnet->ln_buspos, LNET_RECV_REG_OFFSET);
+	return read & LNET_READ_READY;
+}
+
+void lnet_clear_read_status(void *sc) {
+	struct lnet_softc *lnet = sc;
+	uint32_t read = lamebus_read_register(lnet->ln_bus, lnet->ln_buspos, LNET_RECV_REG_OFFSET);
+	read &= ~(LNET_READ_READY);
+	lamebus_write_register(lnet->ln_bus, lnet->ln_buspos, LNET_RECV_REG_OFFSET, read);
+}
+
+void lnet_clear_write_status(void *sc) {
+	struct lnet_softc *lnet = sc;
+	uint32_t write = lamebus_read_register(lnet->ln_bus, lnet->ln_buspos, LNET_WRIT_REG_OFFSET);
+	write &= ~(LNET_WRIT_COMPLETE);
+	lamebus_write_register(lnet->ln_bus, lnet->ln_buspos, LNET_WRIT_REG_OFFSET, write);
+}

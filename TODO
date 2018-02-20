@@ -1,19 +1,12 @@
 * get kswapd to run on the non-boot CPU [DONE]
 * Do TLB shootdowns after swapping out pages [DONE]
-* Try to come up with errors in userland code having to with memory region locking.
-  For instance, malloc some memory, sleep so it's paged out, then try reading a file into
-  it and see what happens. [DONE]
-  Answer: copyinstr, uio, copyin/copyout behaves correctly after testing. tm_badfaultfunc
-  causes a fault, which causes PTEs to be checked, and the memory to be swapped back in. I think
-  that covers the cases, since we don't move pages around right now. If we do start doing that, then
-  I'll add the memory pinning and unpinning calls.
 * Idea: add a new syscall that pages out a region, to facilitate testing so we don't have to rely
   solely on sleep() and page aging. [DONE]
 * Get pipes working (pipe(2)), with blocking and non-blocking reads and buffering [DONE. Needs more testing]
 * Get shared memory regions working [DONE]
-* Get mmap working (MAP_PRIVATE and MAP_ANONYMOUS for shared memory regions)
+* Get mmap working (MAP_PRIVATE and MAP_ANONYMOUS for shared memory regions) [DONE]
 * Implement O_CLOEXEC on file descriptors [DONE]
-* Implement vfork (no copying of pages for new process, and wait for child to execv or exit before continuing) [IN PROGRESS]
+* Implement vfork (no copying of pages for new process, and wait for child to execv or exit before continuing) [DONE]
 * Implement copy on write for forked processes (medium hard)
 * Implement clone() for user-level threads [DONE, except for exitstatus of new threads]
 * Implement signals [DONE] (mostly)
@@ -27,3 +20,4 @@
 * Add process accounting info, like CPU time, wall time, sleep time, etc. (easy)
 * Implement O_NONBLOCK for pipe reads [DONE]
 * Pass testbin/stacktest (allocate stack pages on demand, and allow stacksize to be dynamic)
+* Start work on network stack in earnest
