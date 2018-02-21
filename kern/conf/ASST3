@@ -17,12 +17,13 @@ device lrandom* at lamebus*	# Random device
 device lhd* at lamebus*		# Disk device
 device lser* at lamebus*	# Serial port
 #device lscreen* at lamebus*	# Text screen (not supported yet)
-device lnet* at lamebus*	# Network interface (not supported yet)
+device lnet* at lamebus*	# Network device
 device beep0 at ltimer*		# Abstract beep handler device
 device con0 at lser*		# Abstract console on serial port
 #device con0 at lscreen*	# Abstract console on screen (not supported)
 device rtclock0 at ltimer*	# Abstract realtime clock
 device random0 at lrandom*	# Abstract randomness device
+device net0 at lnet*	# Network interface
 
 options net			# Network stack (not supported)
 options semfs			# Semaphores for userland

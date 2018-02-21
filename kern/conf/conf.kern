@@ -245,6 +245,7 @@ defdevice       beep			dev/generic/beep.c
 defdevice	con			dev/generic/console.c
 defdevice       rtclock                 dev/generic/rtclock.c
 defdevice       random                  dev/generic/random.c
+defdevice       net dev/generic/net.c
 
 ########################################
 #                                      #
@@ -358,12 +359,15 @@ optfile myvm        vm/signals.c
 
 
 #
-# Network
-# (nothing here yet)
+# Network layer
 #
 
-defoption  net
+defoption net
 optfile   net    net/socket.c
+optfile   net    net/ethernet.c
+optfile   net    net/arp.c
+optfile   net    net/net_main.c
+optfile   net    net/udp.c
 optfile   net    syscall/net_syscalls.c
 
 #

@@ -53,6 +53,7 @@
 #include "opt-synchprobs.h"
 #include "opt-automationtest.h"
 #include <lib.h>
+#include <net/net_main.h>
 
 /*
  * In-kernel menu and command dispatcher.
@@ -365,6 +366,22 @@ static int cmd_append_line_to_file(int nargs, char **args) {
 		kprintf("file_write failed (%s)\n", strerror(errcode));
 		return errcode;
 	}
+	return 0;
+}
+
+static int cmd_net(int nargs, char **args) {
+	unsigned old_tc = thread_count;
+	int fork_res = thread_fork("net" /* thread name */,
+			NULL /* kernel thread */,
+			net_main /* thread function */,
+			args /* thread arg */, nargs /* thread arg */);
+	if (fork_res != 0) {
+		kprintf("fork failed with code: %d\n", fork_res);
+		return -1;
+	}
+
+	thread_wait_for_count(old_tc);
+
 	return 0;
 }
 
@@ -848,6 +865,7 @@ static struct {
 	{ "pf",		printfile },
 	{ "touch", cmd_touch },
 	{ "af", cmd_append_line_to_file },
+	{ "net", cmd_net },
 	{ "cd",		cmd_chdir },
 	{ "pwd",	cmd_pwd },
 	{ "sync",	cmd_sync },

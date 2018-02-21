@@ -55,3 +55,6 @@ defattach       rtclock* ltimer*        dev/lamebus/rtclock_ltimer.c
 
 # Random.
 defattach	random0 lrandom*	dev/lamebus/random_lrandom.c
+
+# Network
+defattach net0 lnet* dev/lamebus/net_lnet.c
