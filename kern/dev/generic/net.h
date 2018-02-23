@@ -4,8 +4,19 @@
 #include <net/ethernet.h>
 
 extern struct net_softc *netdev;
+// For now, just one packet loss simulator can be on at once (easy to change)
+extern struct net_driver_packetloss_sim *packetloss_sim;
+
 // IP addr of 10.0.0.2 (0x10_00_00_02) = 268435458
 #define NETDEV_IP (0x10000002)
+
+typedef bool (*net_packetloss_sim_fn)(char *packet);
+struct net_driver_packetloss_sim {
+	net_packetloss_sim_fn fn_should_drop_packet;
+	uint16_t ethertype;
+	uint8_t proto; // 0 = all protocols
+	bool is_on;
+};
 
 struct net_softc {
 	/* Lower-level network device used. Initialized by lower-level attach routine. */
@@ -23,6 +34,7 @@ struct net_softc {
 
 int net_transmit(struct eth_hdr *hdr, int eth_type, size_t len);
 int net_read(char *buf, size_t len);
-
+void net_simulate_packet_loss_on(uint16_t ethertype, uint8_t proto, net_packetloss_sim_fn fn);
+void net_simulate_packet_loss_off(void);
 
 #endif

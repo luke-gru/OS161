@@ -83,7 +83,7 @@ void arp_init(void) {
     memset(arp_cache, 0, ARP_CACHE_LEN * sizeof(struct arp_cache_entry));
 }
 
-void arp_incoming(struct eth_hdr *hdr) {
+int arp_incoming(struct eth_hdr *hdr) {
     struct arp_hdr *arphdr;
     struct arp_ipv4 *arpdata;
     int merge = 0;
@@ -96,24 +96,30 @@ void arp_incoming(struct eth_hdr *hdr) {
 
     if (arphdr->hwtype != ARP_ETHERNET) {
       kprintf("Unsupported HW type: %x\n", arphdr->hwtype);
-      return;
+      return -1;
     }
 
     if (arphdr->protype != ARP_IPV4) {
       kprintf("Unsupported protocol: %x\n", arphdr->protype);
-      return;
+      return -1;
     }
 
     arpdata = (struct arp_ipv4 *)arphdr->data;
 
     merge = update_arp_translation_table(arphdr, arpdata);
 
-    if (netdev->gn_ipaddr != arpdata->dip) {
-      kprintf("ARP was not for us\n");
-    }
-
     if (!merge && insert_arp_translation_table(arphdr, arpdata) != 0) {
        panic("ERR: No free space in ARP translation table\n");
+    }
+
+    if (arpdata->sip == netdev->gn_ipaddr) {
+      // we sent this packet...
+      return -2;
+    }
+
+    // 0xffff_ffff is the broadcast address (for the whole network)
+    if (netdev->gn_ipaddr != arpdata->dip && arpdata->dip != 0xffffffff) {
+      kprintf("ARP was not for us\n");
     }
 
     char source_mac[6];
@@ -128,14 +134,15 @@ void arp_incoming(struct eth_hdr *hdr) {
     case ARP_REQUEST:
       kprintf("got an arp request from mac=%s, ip=%d\n", mac_fmt, arpdata->sip);
       arp_reply(hdr, arphdr);
-      break;
+      return 0;
     case ARP_REPLY:
       kprintf("got an arp reply from mac=%s, ip=%d\n", mac_fmt, arpdata->sip);
-      break;
+      return 0;
     default:
       kprintf("arphdr opcode not supported: %x\n", arphdr->opcode);
-      break;
+      return -1;
     }
+    return -1; // unreachable
 }
 
 void arp_reply(struct eth_hdr *hdr, struct arp_hdr *arphdr) {

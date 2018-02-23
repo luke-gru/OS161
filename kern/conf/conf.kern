@@ -368,6 +368,7 @@ optfile   net    net/ethernet.c
 optfile   net    net/arp.c
 optfile   net    net/net_main.c
 optfile   net    net/udp.c
+optfile   net    net/tcp.c
 optfile   net    syscall/net_syscalls.c
 
 #

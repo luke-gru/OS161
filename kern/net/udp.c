@@ -1,7 +1,10 @@
-#include <net/udp.h>
-#include <net/arp.h>
-#include <net/inet.h>
+#include <generic/net.h>
 #include <net/if_ether.h>
+#include <net/inet.h>
+#include <net/ethernet.h>
+#include <net/arp.h>
+#include <net/ip.h>
+#include <net/udp.h>
 #include <lib.h>
 
 uint16_t udp_find_unused_port(void) {
@@ -58,8 +61,8 @@ struct eth_hdr *make_udp_ipv4_packet(
   if (!dest_mac) {
     panic("destination macaddr unknown for IP: %u", dest_ip);
   }
-  if (!dest_mac) {
-    panic("source macaddr unknown for IP: %u", source_ip);
+  if (!source_mac) {
+    source_mac = (char*)netdev->gn_macaddr;
   }
   memcpy(eth_hdr->dmac, dest_mac, 6);
   memcpy(eth_hdr->smac, source_mac, 6);

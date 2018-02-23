@@ -2,7 +2,6 @@
 #define _NET_ARP_H_
 
 #include <types.h>
-#include "net/ethernet.h"
 
 #define ARP_ETHERNET    0x0001
 #define ARP_IPV4        0x0800
@@ -13,6 +12,8 @@
 #define ARP_FREE        0
 #define ARP_WAITING     1
 #define ARP_RESOLVED    2
+
+struct eth_hdr;
 
 struct arp_hdr {
     uint16_t hwtype;
@@ -39,7 +40,7 @@ struct arp_cache_entry {
 };
 
 void arp_init(void);
-void arp_incoming(struct eth_hdr *hdr);
+int arp_incoming(struct eth_hdr *hdr);
 void arp_reply(struct eth_hdr *hdr, struct arp_hdr *arphdr);
 void arp_bcast(void);
 char *arp_lookup_mac(uint32_t ip);

@@ -1,5 +1,5 @@
-#ifndef _IF_ETHER_H_
-#define _IF_ETHER_H_
+#ifndef _NET_IF_ETHER_H_
+#define _NET_IF_ETHER_H_
 
 /*
  *	IEEE 802.3 Ethernet magic constants.  The frame sizes omit the preamble

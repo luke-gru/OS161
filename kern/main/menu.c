@@ -369,19 +369,37 @@ static int cmd_append_line_to_file(int nargs, char **args) {
 	return 0;
 }
 
-static int cmd_net(int nargs, char **args) {
+// ex: $ net_udp 255 256
+// sets source IP to 255, dest IP to 255
+static int cmd_net_udp(int nargs, char **args) {
 	unsigned old_tc = thread_count;
-	int fork_res = thread_fork("net" /* thread name */,
+	int fork_res = thread_fork("net_udp" /* thread name */,
 			NULL /* kernel thread */,
-			net_main /* thread function */,
+			udp_net_main /* thread function */,
 			args /* thread arg */, nargs /* thread arg */);
 	if (fork_res != 0) {
 		kprintf("fork failed with code: %d\n", fork_res);
 		return -1;
 	}
-
 	thread_wait_for_count(old_tc);
+	return 0;
+}
 
+// ex1: $ net_tcp server 255:9000
+// starts TCP server connection bound to IP 255 and port 9000
+// ex2: net_tcp client 256 255:9000
+// sets the client's local IP to 256, and tries to establish connection to IP 255 on port 9000
+static int cmd_net_tcp(int nargs, char **args) {
+	unsigned old_tc = thread_count;
+	int fork_res = thread_fork("net_tcp" /* thread name */,
+			NULL /* kernel thread */,
+			tcp_net_main /* thread function */,
+			args /* thread arg */, nargs /* thread arg */);
+	if (fork_res != 0) {
+		kprintf("fork failed with code: %d\n", fork_res);
+		return -1;
+	}
+	thread_wait_for_count(old_tc);
 	return 0;
 }
 
@@ -865,7 +883,8 @@ static struct {
 	{ "pf",		printfile },
 	{ "touch", cmd_touch },
 	{ "af", cmd_append_line_to_file },
-	{ "net", cmd_net },
+	{ "net_udp", cmd_net_udp },
+	{ "net_tcp", cmd_net_tcp },
 	{ "cd",		cmd_chdir },
 	{ "pwd",	cmd_pwd },
 	{ "sync",	cmd_sync },

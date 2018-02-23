@@ -2,7 +2,6 @@
 #define _NET_INET_H_
 
 #include <types.h>
-#include <endian.h> /* defines _BYTE_ORDER */
 
 // NOTE: functions provided by bswap.c object file
 uint32_t htonl(uint32_t x); // host to network long
