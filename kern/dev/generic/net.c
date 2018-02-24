@@ -88,7 +88,7 @@ static bool net_should_drop_packet(struct eth_hdr *hdr, uint16_t ethertype) {
 
 int net_transmit(struct eth_hdr *hdr, int eth_type, size_t len) {
 	if (net_should_drop_packet(hdr, (uint16_t)eth_type)) {
-		kprintf("net: PACKET DROPPED\n");
+		DEBUG(DB_NETDEV, "net: PACKET DROPPED\n");
 		return 0;
 	}
   int res = netdev->gn_net_write(netdev->gn_ldev, (char*)hdr, len);
@@ -101,7 +101,7 @@ int net_transmit(struct eth_hdr *hdr, int eth_type, size_t len) {
 		P(netdev->gn_wsem); // wait until transmission complete if we can sleep
 		netdev->gn_waiting_for_write_complete = false;
 	}
-	kprintf("net: transmit complete!\n");
+	DEBUG(DB_NETDEV, "net: transmit complete!\n");
 	return 0;
 }
 

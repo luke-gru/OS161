@@ -45,7 +45,7 @@ static struct tcp_unacked_packet *tcp_conn_find_unacked_packet(struct tcp_conn *
 
 
 static void tcp_conn_retransmit_packet(struct tcp_conn *conn, struct tcp_unacked_packet *packet) {
-  kprintf("TCP conn retransmitting packet %d\n", packet->seqno);
+  DEBUG(DB_TCP_RETRANS, "TCP conn retransmitting packet %d\n", packet->seqno);
   tcp_conn_transmit(conn, (struct eth_hdr*)packet->packet, packet->seqno, packet->datalen, packet->packlen);
 }
 
@@ -143,15 +143,34 @@ static void tcp_conn_reset_ack_timer(struct tcp_conn *conn, uint32_t seqno, int 
 //   }
 // }
 
+static uint32_t tcp_conn_lowest_una_seqno(struct tcp_conn *conn) {
+  KASSERT(conn);
+  struct tcp_unacked_packet *una = conn->unacked_packets;
+  if (!una) {
+    return 0;
+  }
+  uint32_t lowest = 0;
+  while (una) {
+    if (lowest == 0 || una->seqno < lowest) {
+      lowest = una->seqno;
+    }
+    una = una->next;
+  }
+  return lowest;
+}
+
 // we free the packet and cached structure when we receive an ACK for the packet, otherwise
 // we may have to re-transmit it after a timeout period
 static int tcp_conn_received_ack_for_seqno(struct tcp_conn *conn, uint32_t seqno) {
   KASSERT(seqno > 0);
-  kprintf("TCP conn received ACK: %d\n", (int)seqno+1);
+  DEBUG(DB_TCP_SEQ, "TCP conn received ACK: %d\n", (int)seqno+1);
   struct tcp_unacked_packet *un = conn->unacked_packets;
   struct tcp_unacked_packet *un_prev = NULL;
   conn->last_acktime_from_peer = timestamp_now();
   conn->ack_recv_latest = seqno+1;
+  if (conn->seq_send_una == seqno) {
+    conn->seq_send_una = tcp_conn_lowest_una_seqno(conn);
+  }
   if (conn->ack_recv_max < conn->ack_recv_latest) {
     conn->ack_recv_max = conn->ack_recv_latest;
   }
@@ -162,7 +181,7 @@ static int tcp_conn_received_ack_for_seqno(struct tcp_conn *conn, uint32_t seqno
       } else {
         conn->unacked_packets = un->next;
       }
-      kprintf("TCP conn removing kept packet (SEQB=%d,SEQE=%d) due to ACK\n", (int)un->seqno, (int)un->seqno+(int)un->datalen);
+      DEBUG(DB_TCP_SEQ, "TCP conn removing kept packet (SEQB=%d,SEQE=%d) due to ACK-%u\n", (int)un->seqno, (int)un->seqno+(int)un->datalen, seqno+1);
       kfree(un->packet);
       kfree(un);
       conn->num_unacked_packets--;
@@ -289,7 +308,7 @@ int start_tcp_handshake(struct tcp_conn *conn) {
   KASSERT(packlen > 0);
   conn->state = TCP_CONN_STATE_SYN_SENT;
   conn->seq_send_next++;
-  kprintf("TCP client sending SYN to server (handshake step 1)\n");
+  DEBUG(DB_TCP_CONN, "TCP client sending SYN to server (handshake step 1)\n");
   tcp_conn_transmit(conn, eth_hdr, seqno, 0, packlen);
   return 0;
 }
@@ -338,20 +357,20 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
       if (tcp_is_ack_set(tcp_hdr_in->control_bits)) {
         uint32_t seqno_ack = ntohl(tcp_hdr_in->ack_no);
         if (seqno_ack != (conn->seq_send_una+1)) {
-          kprintf("TCP ERROR: bad peer ack no: %u, expecting %u\n", seqno_ack, conn->seq_send_una+1);
+          DEBUG(DB_TCP_CONN, "TCP ERROR: bad peer ack no: %u, expecting %u\n", seqno_ack, conn->seq_send_una+1);
           return -1;
         }
         tcp_conn_received_ack_for_seqno(conn, seqno_ack-1);
       } else {
-        kprintf("TCP ERROR: TCP client expected SYN-ACK (handshake step 2) [no ACK] from client\n");
+        DEBUG(DB_TCP_CONN, "TCP ERROR: TCP client expected SYN-ACK (handshake step 2) [no ACK] from client\n");
         return -1;
       }
       if (tcp_is_syn_set(tcp_hdr_in->control_bits)) {
         uint32_t seqno_recv = ntohl(tcp_hdr_in->seq_no);
-        tcp_conn_set_received_seq(conn, seqno_recv, datalen_in);
+        KASSERT(tcp_conn_set_received_seq(conn, seqno_recv, datalen_in));
         KASSERT(datalen_in == 0);
       } else {
-        kprintf("TCP ERROR: TCP client expected SYN-ACK (handshake step 2) [no SYN] from client\n");
+        DEBUG(DB_TCP_CONN, "TCP ERROR: TCP client expected SYN-ACK (handshake step 2) [no SYN] from client\n");
         return -1;
       }
       size_t packlen_out = 0;
@@ -365,13 +384,14 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
       uint32_t seqno_out = conn->seq_send_next;
       conn->seq_send_una = seqno_out;
       conn->seq_send_next++;
-      kprintf("TCP client established connection with server!\n");
-      kprintf("TCP client sending ACK back to server (handshake step 3)\n");
+      DEBUG(DB_TCP_CONN, "TCP client established connection with server!\n");
+      DEBUG(DB_TCP_CONN, "TCP client sending ACK back to server (handshake step 3)\n");
       tcp_conn_transmit(conn, eth_hdr_out, seqno_out, 0, packlen_out);
+      return 0;
     } else if (conn->state == TCP_CONN_STATE_LISTEN) { // server handle SYN from client
       if (tcp_is_syn_set(tcp_hdr_in->control_bits)) {
         uint32_t seqno_recv = ntohl(tcp_hdr_in->seq_no);
-        tcp_conn_set_received_seq(conn, seqno_recv, datalen_in);
+        KASSERT(tcp_conn_set_received_seq(conn, seqno_recv, datalen_in));
         KASSERT(datalen_in == 0);
         uint32_t my_seqno_out = tcp_gen_ISN();
         conn->seq_send_next = my_seqno_out;
@@ -385,62 +405,64 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
         KASSERT(eth_hdr_out && packlen_out > 0);
         conn->seq_send_next++;
         conn->state = TCP_CONN_STATE_SYN_RECV;
-        kprintf("TCP server sending SYN-ACK (handshake step 2) to client \n");
+        DEBUG(DB_TCP_CONN, "TCP server sending SYN-ACK (handshake step 2) to client \n");
         tcp_conn_transmit(conn, eth_hdr_out, my_seqno_out, 0, packlen_out);
         return 0;
       } else {
-        kprintf("TCP server expected SYN, but it's not set!\n");
+        DEBUG(DB_TCP_CONN, "TCP server expected SYN, but it's not set!\n");
         return -1;
       }
     } else if (conn->state == TCP_CONN_STATE_SYN_RECV) { // server handle ACK from client
       if (tcp_is_ack_set(tcp_hdr_in->control_bits)) {
         uint32_t seqno_ack = ntohl(tcp_hdr_in->ack_no);
         if (seqno_ack != (conn->seq_send_una+1)) {  // FIXME: until we support receiving OoO packets
-          kprintf("TCP ERROR: %s bad peer ack no: %u, expecting %u\n", conn_type_str, seqno_ack, conn->seq_send_una+1);
+          DEBUG(DB_TCP_CONN, "TCP ERROR: %s bad peer ack no: %u, expecting %u\n", conn_type_str, seqno_ack, conn->seq_send_una+1);
           return -1;
         }
-        conn->seq_send_una = conn->seq_send_next;
+        conn->seq_send_una = 0;
         if (ntohl(tcp_hdr_in->seq_no) > 0) {
-          tcp_conn_set_received_seq(conn, ntohl(tcp_hdr_in->seq_no), datalen_in);
+          KASSERT(tcp_conn_set_received_seq(conn, ntohl(tcp_hdr_in->seq_no), datalen_in));
         }
         conn->state = TCP_CONN_STATE_EST;
         KASSERT(datalen_in == 0);
-        kprintf("TCP server established connection with client!\n");
+        DEBUG(DB_TCP_CONN, "TCP server established connection with client!\n");
         tcp_conn_received_ack_for_seqno(conn, seqno_ack-1);
         return 0;
       } else {
-        kprintf("TCP ERROR: TCP server expected ACK (handshake step 3) from client\n");
+        DEBUG(DB_TCP_CONN, "TCP ERROR: TCP server expected ACK (handshake step 3) from client\n");
         return -1;
       }
     } else if (conn->state == TCP_CONN_STATE_EST) { // server and client
       if (!tcp_is_ack_set(tcp_hdr_in->control_bits)) {
-        kprintf("TCP ERROR: %s expected ACK in established connection msg\n", conn_type_str);
+        DEBUG(DB_TCP_CONN, "TCP ERROR: %s expected ACK in established connection msg\n", conn_type_str);
         return -1;
       }
       uint32_t seqno_ack = ntohl(tcp_hdr_in->ack_no);
       // peer acked a previous packet we sent, maybe it was dropped in the network. If we receive 2 of these we
       // re-transmit that packet immediately. Otherwise we wait for the unacked packet timer to fire.
-      if (seqno_ack != (conn->seq_send_una+1)) {
-        kprintf("TCP WARNING: %s received out of order peer ackno, ACK=%u, expecting ACK=%u\n", conn_type_str, seqno_ack, conn->seq_send_una+1);
+      if (conn->seq_send_una > 0 && seqno_ack != (conn->seq_send_una+1)) {
+        DEBUG(DB_TCP_SEQ, "TCP WARNING: %s received out of order peer ackno, ACK=%u, expecting ACK=%u\n", conn_type_str, seqno_ack, conn->seq_send_una+1);
         uint32_t ack_recv_latest = conn->ack_recv_latest;
         tcp_conn_received_ack_for_seqno(conn, seqno_ack-1);
         if (ack_recv_latest == seqno_ack) {
           struct tcp_unacked_packet *un_pack = tcp_conn_find_first_unacked_packet_after(conn, seqno_ack-1);
           if (un_pack) {
-            kprintf("TCP conn retransmitting packet due to 2 ACKs of old seqno (SEQE=%d) in a row\n", seqno_ack-1);
+            DEBUG(DB_TCP_RETRANS, "TCP conn retransmitting packet due to 2 ACKs of old seqno (SEQE=%u) in a row\n", seqno_ack-1);
             tcp_conn_retransmit_packet(conn, un_pack);
             return 0;
           } else {
-            kprintf("TCP ERROR: received weird ACK value from peer. Ignoring...\n");
+            DEBUG(DB_TCP_SEQ, "TCP ERROR: received weird ACK (ACK-%u) from peer. Ignoring...\n", seqno_ack);
             return -1;
           }
         } else {
-          kprintf("TCP conn waiting for UNACK timer to fire before retransmission\n");
+          DEBUG(DB_TCP_RETRANS, "TCP conn waiting for UNACK timer to fire before retransmission\n");
           return 0;
         }
         return -1;
       }
-      tcp_conn_received_ack_for_seqno(conn, seqno_ack-1);
+      if (conn->seq_send_una > 0) {
+        tcp_conn_received_ack_for_seqno(conn, seqno_ack-1);
+      }
       conn->seq_send_una = conn->seq_send_next; // TODO: set to lowest UNAcked seqno we sent
       uint32_t seqno_recv = ntohl(tcp_hdr_in->seq_no);
       if (seqno_recv > 0) {
@@ -452,15 +474,15 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
         }
       }
       if (datalen_in > 0) {
-        kprintf("TCP %s received the following message:\n", conn_type_str);
-        kprintf("  => %s\n", tcp_hdr_in->data); // NOTE: data expected to end in NULL byte
+        DEBUG(DB_TCP_DAT, "TCP %s received the following message:\n", conn_type_str);
+        DEBUG(DB_TCP_DAT, "  => %s\n", tcp_hdr_in->data); // NOTE: data expected to end in NULL byte
         tcp_send_data(conn, NULL, 0); // send an ACK in response
       } else {
-        kprintf("TCP %s received an ACK:\n", conn_type_str);
+        DEBUG(DB_TCP_SEQ, "TCP %s received ACK-%u:\n", conn_type_str, seqno_ack);
       }
       return 0;
     } else {
-      kprintf("Unknown connection state, cannot handle yet: %s\n", tcp_conn_state_name(conn->state));
+      DEBUG(DB_TCP_ERR, "Unknown connection state, cannot handle yet: %s\n", tcp_conn_state_name(conn->state));
       return -1;
     }
   }
@@ -479,7 +501,7 @@ int tcp_send_data(struct tcp_conn *conn, char *data, size_t datalen) {
     conn, opt_flags, data, datalen, &packlen
   );
   conn->seq_send_next += (datalen+1);
-  conn->seq_send_una = conn->seq_send_next; // FIXME: should be lowest una seqno
+  conn->seq_send_una = conn->seq_send_next-1; // FIXME: should be lowest una seqno
   return tcp_conn_transmit(conn, eth_hdr, seqno, datalen, packlen);
 }
 
@@ -546,12 +568,12 @@ struct tcp_hdr *init_tcp_hdr(struct tcp_conn *conn, uint8_t tcp_opt_flags, char 
   tcp_hdr->seq_no = conn->seq_send_next;
   KASSERT(tcp_hdr->seq_no > 0);
   if (tcp_opt_flags & TCP_CTRL_ACK) {
-    uint32_t ackno = conn->seq_recv_next-1;
+    uint32_t ackno = conn->seq_recv_next;
     tcp_hdr->ack_no = (uint32_t)htonl(ackno);
   } else {
     tcp_hdr->ack_no = 0;
   }
-  kprintf("TCP packet: (SEQB=%d, ACK=%d, datalen=%d)\n", tcp_hdr->seq_no, tcp_hdr->ack_no, datalen);
+  DEBUG(DB_TCP_SEQ, "TCP packet: (SEQB=%d, ACK=%d, datalen=%d)\n", tcp_hdr->seq_no, tcp_hdr->ack_no, datalen);
   tcp_hdr->data_offset = 5; // 20-byte header (5 4-byte words)
   tcp_hdr->reserved = 0;
   tcp_hdr->control_bits = tcp_opt_flags;

@@ -42,7 +42,7 @@ static bool is_lnet_readbuf_nonempty() {
 void lnet_irq(/*struct lnet_softc*/ void *sc) {
 	struct lnet_softc *lnet = sc;
 	struct net_softc *gdev = (struct net_softc*)lnet->ln_gdev;
-	kprintf("== LNET IRQ BEG\n");
+	DEBUG(DB_NETDEV|DB_INTERRUPT, "== LNET IRQ BEG\n");
 	spinlock_acquire(&lnet->ln_lock);
 	if (lnet->ln_read_in_progress || !is_lnet_readbuf_full()) {
 		if (lnet_is_read_ready(lnet)) {
@@ -61,13 +61,13 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 				linkframe.mac_to = ntohs(linkframe.mac_to);
 
 				if (linkframe.frame_word != LINK_FRAME_WORD || linkframe.packlen == 0) {
-					kprintf("  lnet (irq): read finished after %d packets\n", num_packets);
+					DEBUG(DB_NETDEV, "  lnet (irq): read finished after %d packets\n", num_packets);
 					lnet_clear_read_status(sc);
 					break;
 				}
 				num_packets++;
 
-				kprintf("  lnet (irq) read: frame word: %d, mac_from: %d, packlen: %d, mac_to: %d\n",
+				DEBUG(DB_NETDEV, "  lnet (irq) read: frame word: %d, mac_from: %d, packlen: %d, mac_to: %d\n",
 					linkframe.frame_word,
 					linkframe.mac_from,
 					linkframe.packlen,
@@ -83,7 +83,7 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 					readmaxlen = LNET_READBUFSZ - (uint16_t)lnet_readbufp;
 					readlen = MINVAL(linkframe.packlen-8, readmaxlen);
 					lnet_readbuf_segs[lnet_readbuf_curseg++] = readlen;
-					kprintf("  lnet (irq) read: copying %d bytes to readbuf at buffer offset %d\n",
+					DEBUG(DB_NETDEV, "  lnet (irq) read: copying %d bytes to readbuf at buffer offset %d\n",
 						(int)readlen, (int)lnet_readbufp
 					);
 				} else {
@@ -110,7 +110,7 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 					lnet->ln_read_in_progress = false;
 					gdev->gn_bytes_read = bytes_copied_to_buf;
 					V(gdev->gn_rsem);
-					kprintf("  lnet (irq): read finished after %d packets\n", num_packets);
+					DEBUG(DB_NETDEV, "  lnet (irq): read finished after %d packets\n", num_packets);
 					lnet_clear_read_status(sc);
 					break;
 				}
@@ -119,7 +119,7 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 	}
 	if (lnet->ln_transmit_in_progress) {
 			if (lnet_is_transmit_complete(sc)) {
-				kprintf("lnet: transmit complete\n");
+				DEBUG(DB_NETDEV, "  lnet: transmit complete\n");
 				lnet_clear_write_status(sc);
 				if (gdev->gn_waiting_for_write_complete) {
 					V(gdev->gn_wsem);
@@ -127,7 +127,7 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 			}
 	}
 	spinlock_release(&lnet->ln_lock);
-	kprintf("== LNET IRQ END\n");
+	DEBUG(DB_NETDEV|DB_INTERRUPT, "== LNET IRQ END\n");
 }
 
 int lnet_write(void *sc, char *buf, size_t len) {
@@ -138,7 +138,7 @@ int lnet_write(void *sc, char *buf, size_t len) {
 	linkframe.frame_word = htons(LINK_FRAME_WORD);
 	linkframe.mac_from = htons(lnet->ln_hwaddr);
 	size_t packlen = len + sizeof(linkframe);
-	kprintf("lnet: writing packet, length: %d\n", (int)packlen);
+	DEBUG(DB_NETDEV, "lnet: writing packet, length: %d\n", (int)packlen);
 	linkframe.packlen = htons(packlen);
 	linkframe.mac_to = htons(0xffff);
 	memcpy(lnet->ln_writebuf, &linkframe, sizeof(linkframe));
@@ -156,7 +156,7 @@ int lnet_read(void *sc, char *buf, size_t len) {
 		KASSERT(lnet_readbuf_curseg > 0);
 		KASSERT(lnet_readbuf_segs[0] > 0);
 		size_t newlen = MINVAL(len, lnet_readbuf_segs[0]);
-		kprintf("lnet: copying %d bytes from readbuf into client buf\n", (int)newlen);
+		DEBUG(DB_NETDEV, "lnet: copying %d bytes from readbuf into client buf\n", (int)newlen);
 		memcpy(buf, lnet_readbuf, newlen);
 		memmove(lnet_readbuf, lnet_readbuf + newlen, LNET_READBUFSZ - newlen);
 		lnet_readbufp -= newlen;
@@ -167,7 +167,7 @@ int lnet_read(void *sc, char *buf, size_t len) {
 		spinlock_release(&lnet->ln_lock);
 		return newlen;
 	} else {
-		kprintf("lnet: read waiting for packets (%d bytes)\n", (int)len);
+		DEBUG(DB_NETDEV, "lnet: read waiting for packets (%d bytes)\n", (int)len);
 		lnet->ln_read_in_progress = true;
 		spinlock_release(&lnet->ln_lock);
 		return 0;

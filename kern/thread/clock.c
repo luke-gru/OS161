@@ -86,6 +86,7 @@ static bool is_timer_ready(struct timer_once *timer) {
 }
 
 static void clock_fire_ready_timers(void) {
+	return;
 	spinlock_acquire(&timer_lock);
 	if (!timer_list) {
 		spinlock_release(&timer_lock);

@@ -37,7 +37,7 @@
  */
 
 #define SFS_MAGIC         0xabadf001    /* magic number identifying us */
-#define SFS_BLOCKSIZE     512           /* size of our blocks */
+#define SFS_BLOCKSIZE     512           /* size of our blocks, in bytes */
 #define SFS_VOLNAME_SIZE  32            /* max length of volume name */
 #define SFS_NDIRECT       15            /* # of direct blocks in inode */
 #define SFS_NINDIRECT     1             /* # of indirect blocks in inode */

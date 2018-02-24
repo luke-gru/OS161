@@ -91,11 +91,18 @@
 #define DB_NET         0x0400
 #define DB_NETFS       0x0800
 #define DB_KMALLOC     0x1000
-#define DB_ALL DB_LOCORE|DB_SYSCALL|DB_INTERRUPT|DB_DEVICE|DB_THREADS|DB_VM|DB_EXEC|DB_VFS|DB_SEMFS|DB_SFS|DB_NET|DB_NETFS|DB_KMALLOC
-#define DB_LUKE DB_THREADS|DB_SYSCALL
 #define DB_SIG				 0x2000
 #define DB_UIO 				 0x4000
-#define DB_NONE 			 0x0000
+#define DB_TCP_CONN		 0x8000
+#define DB_TCP_SEQ	   0x10000
+#define DB_TCP_RETRANS 0x20000
+#define DB_TCP_DAT		 0x40000
+#define DB_TCP_ERR		 0x80000
+#define DB_TCP_ALL		 (DB_TCP_SEQ|DB_TCP_RETRANS|DB_TCP_DAT|DB_TCP_CONN|DB_TCP_ERR)
+#define DB_NETDEV			 0x100000
+#define DB_NONE 			 0x00000000
+#define DB_ALL 0xffffffff
+#define DB_LUKE DB_THREADS|DB_SYSCALL
 
 extern uint32_t dbflags; // to be set by debugger, normally
 

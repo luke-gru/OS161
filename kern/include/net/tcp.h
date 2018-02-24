@@ -121,7 +121,7 @@ struct tcp_conn {
   uint32_t dest_ip;
   uint16_t source_port;
   uint16_t dest_port;
-  uint32_t seq_send_una; // oldest unacknowledged sequence #. If this equals seq_send_next, then there are no current unACKED sent packets
+  uint32_t seq_send_una; // oldest unacknowledged sequence #. If this equals 0, then there are no current unACKED sent packets
   uint32_t seq_send_next; // next sequence # to send
   uint32_t seq_recv_latest; // latest sequence # received from peer (we ACK this number+1 on next transmission)
   uint32_t seq_recv_next; // the next expected sequence # from peer, if they send an in-order packet

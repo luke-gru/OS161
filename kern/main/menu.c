@@ -1090,7 +1090,7 @@ menu_execute(char *line, int isargs)
 void
 menu(char *args)
 {
-	dbflags = DB_SYSCALL|DB_SIG|DB_UIO;
+	dbflags = DB_TCP_ALL;
 	kswapproc->p_cwd = kproc->p_cwd; // necessary for opening swap file
 	char buf[64];
 	menu_execute(args, 1);
