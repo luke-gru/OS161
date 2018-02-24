@@ -28,6 +28,7 @@ struct net_softc {
   size_t gn_bytes_read;
   struct semaphore *gn_rsem; // read sem
   struct semaphore *gn_wsem; // write sem
+	bool gn_waiting_for_write_complete; // we don't wait for write completion when transmitting packets in interrupt handlers (like timer threads)
   int (*gn_net_read)(void *ldev, char *buf, size_t len);
   int (*gn_net_write)(void *ldev, char *buf, size_t len);
 };

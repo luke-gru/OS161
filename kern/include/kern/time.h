@@ -76,4 +76,6 @@ struct itimerval {
   (tv)->tv_usec = (ts)->tv_nsec / 1000;                           \
 }
 
+time_t timestamp_now(void); // seconds since epoch
+
 #endif /* _KERN_TIME_H_ */

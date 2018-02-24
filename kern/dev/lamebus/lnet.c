@@ -121,7 +121,9 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 			if (lnet_is_transmit_complete(sc)) {
 				kprintf("lnet: transmit complete\n");
 				lnet_clear_write_status(sc);
-				V(gdev->gn_wsem);
+				if (gdev->gn_waiting_for_write_complete) {
+					V(gdev->gn_wsem);
+				}
 			}
 	}
 	spinlock_release(&lnet->ln_lock);

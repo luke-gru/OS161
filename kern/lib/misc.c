@@ -29,6 +29,8 @@
 
 #include <types.h>
 #include <kern/errmsg.h>
+#include <kern/time.h>
+#include <clock.h>
 #include <lib.h>
 #include <signal.h>
 
@@ -97,4 +99,11 @@ strerror(int errcode)
 	}
 	panic("Invalid error code %d\n", errcode);
 	return NULL;
+}
+
+// returns seconds since epoch
+time_t timestamp_now(void) {
+	struct timespec tv;
+	gettime(&tv);
+	return tv.tv_sec;
 }

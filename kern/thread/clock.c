@@ -58,7 +58,9 @@
  */
 static struct wchan *lbolt;
 static struct spinlock lbolt_lock;
+static struct spinlock timer_lock;
 struct timeout_node *timeout_list;
+static struct timer_node *timer_list;
 
 /*
  * Setup.
@@ -67,11 +69,43 @@ void
 hardclock_bootstrap(void)
 {
 	spinlock_init(&lbolt_lock);
+	spinlock_init(&timer_lock);
 	lbolt = wchan_create("lbolt");
 	if (lbolt == NULL) {
 		panic("Couldn't create lbolt\n");
 	}
 	timeout_list = NULL;
+	timer_list = NULL;
+}
+
+static bool is_timer_ready(struct timer_once *timer) {
+	KASSERT(timer);
+	struct timeval now;
+	timeval_now(&now);
+	return timeval_cmp(&timer->fire_at, &now) <= 0;
+}
+
+static void clock_fire_ready_timers(void) {
+	spinlock_acquire(&timer_lock);
+	if (!timer_list) {
+		spinlock_release(&timer_lock);
+		return;
+	}
+	struct timer_node *node = timer_list;
+	struct timer_node *next = NULL;
+	while (node && node != (void*)0xdeadbeef) {
+		next = node->next;
+		if (!node->timer->cleared && is_timer_ready(node->timer)) {
+			node->timer->cleared = true;
+			spinlock_release(&timer_lock);
+			kprintf("Firing timer callback\n");
+			node->timer->callback_fn(node->timer->callback_arg, node->timer);
+			clock_clear_single_timer(node->timer);
+			spinlock_acquire(&timer_lock);
+		}
+		node = next;
+	}
+	spinlock_release(&timer_lock);
 }
 
 /*
@@ -87,6 +121,7 @@ timerclock(void)
 	spinlock_release(&lbolt_lock);
 	thread_add_ready_sleepers_to_runqueue();
 	thread_wakeup_ready_timeouts();
+	clock_fire_ready_timers();
 }
 
 /*
@@ -123,4 +158,55 @@ clocksleep(int num_secs)
 		num_secs--;
 	}
 	spinlock_release(&lbolt_lock);
+}
+
+struct timer_once *clock_set_single_timer(int nseconds, timer_cb cb, void *cb_arg) {
+	KASSERT(cb);
+	struct timer_once *timer = kmalloc(sizeof(*timer));
+	KASSERT(timer);
+	timer->callback_fn = cb;
+	timer->callback_arg = cb_arg;
+	timer->cleared = false;
+	struct timer_node *node = kmalloc(sizeof(*node));
+	KASSERT(node);
+	node->timer = timer;
+	node->next = NULL;
+	spinlock_acquire(&timer_lock);
+	if (timer_list == NULL) {
+		timer_list = node;
+	} else {
+		struct timer_node *cur = timer_list;
+		while (cur->next) { cur = cur->next; }
+		cur->next = node;
+	}
+	struct timeval fire_at;
+	timeval_now(&fire_at);
+	fire_at.tv_sec += nseconds;
+	timer->fire_at = fire_at;
+	spinlock_release(&timer_lock);
+	return timer;
+}
+
+// unlinks and frees timer_node associated with timer, and sets timer->cleared to true
+void clock_clear_single_timer(struct timer_once *timer) {
+	KASSERT(timer);
+	spinlock_acquire(&timer_lock);
+	timer->cleared = true;
+	struct timer_node *cur = timer_list;
+	struct timer_node *prev = NULL;
+	while (cur) {
+		if (cur->timer == timer) {
+			if (prev) {
+				prev->next = cur->next;
+			} else {
+				timer_list = cur->next;
+			}
+			//kfree(cur->timer); NOTE: caller is responsibly for storing and clearing the timer_once structure
+			kfree(cur);
+			break;
+		}
+		prev = cur;
+		cur = cur->next;
+	}
+	spinlock_release(&timer_lock);
 }

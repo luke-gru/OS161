@@ -63,13 +63,14 @@ from: http://www.freesoft.org/CIE/Course/Section4/8.htm
 
 struct eth_hdr;
 struct generic_ipv4_hdr;
+struct timer_once;
 
 // NOTE: variable width header (min 20 bytes), must be multiple of 4 bytes
 struct tcp_hdr {
   uint16_t source_port;
   uint16_t dest_port; // off 2
   uint32_t seq_no; // seq # of first data octet in segment
-  uint32_t ack_no; // next ack number we expect (if ack set)
+  uint32_t ack_no; // next seqno of peer we expect (if ack control bit is set)
   uint8_t data_offset: 4; // number of 32-bit words in TCP header
   uint8_t reserved: 6; // zeroed out
   uint8_t control_bits: 6; // URG/ACK/PSH/RST/SYN/FIN
@@ -84,17 +85,56 @@ enum tcp_conn_type {
   TCP_CONN_TYPE_CLIENT,
   TCP_CONN_TYPE_SERVER,
 };
+#define TCP_MAX_UNACKED_PACKETS 5
+struct tcp_unacked_packet {
+  char *packet;
+  size_t packlen;
+  uint32_t seqno; // if we receive an ACK of this seqno+datalen+1, we can free this packet
+  size_t datalen;
+  time_t first_sent_at;
+  time_t last_sent_at;
+  uint8_t times_sent;
+  struct tcp_unacked_packet *next;
+};
+// timer node for unACKed packets, with seqno as the key
+#define TCP_ACK_TIMER_NSECS 5
+struct tcp_conn_timer {
+  struct timer_once *timer;
+  uint32_t seqno;
+  struct tcp_conn_timer *next;
+};
+#define TCP_MAX_RECV_OOO_KEPT_PACKETS 20
+struct tcp_recv_ooo_packet {
+  char *packet;
+  size_t packlen;
+  uint32_t seqno;
+  size_t datalen;
+  time_t first_recv_at;
+  time_t last_recv_at;
+  bool acked; // did we ACK this packet?
+  uint8_t times_recv;
+  struct tcp_recv_ooo_packet *next;
+};
 struct tcp_conn {
   enum tcp_conn_type type;
   uint32_t source_ip;
   uint32_t dest_ip;
   uint16_t source_port;
   uint16_t dest_port;
-  uint32_t seq_send_una; // oldest unacknowledged sequence #
+  uint32_t seq_send_una; // oldest unacknowledged sequence #. If this equals seq_send_next, then there are no current unACKED sent packets
   uint32_t seq_send_next; // next sequence # to send
-  uint32_t seq_recv_last; // last sequence # received from peer
+  uint32_t seq_recv_latest; // latest sequence # received from peer (we ACK this number+1 on next transmission)
+  uint32_t seq_recv_next; // the next expected sequence # from peer, if they send an in-order packet
+  uint32_t ack_recv_latest; // the latest ACKno we received from peer. If less than ack_recv_max, we might need to re-send packets
+  uint32_t ack_recv_max; // largest ACKno we've received
   uint8_t state;
-  time_t last_ack_from_peer;
+  time_t last_acktime_from_peer; // TODO: use
+  time_t rtt_est; // round-trip time estimate, estimated during handshake. TODO: use
+  struct tcp_unacked_packet *unacked_packets; // linked list of unACKEed packets we might have to re-transmit
+  uint8_t num_unacked_packets; // so we don't have to iterate over the list each time
+  struct tcp_recv_ooo_packet *recv_ooo_packets; // received out of order packets we can't handle yet go in this list
+  uint8_t num_recv_ooo_packets;
+  struct tcp_conn_timer *timers; // timers to fire for packet re-transmission of unACKed packets
 };
 
 uint32_t tcp_gen_ISN(void);
@@ -113,11 +153,12 @@ void init_tcp_conn_client(struct tcp_conn *conn, uint32_t dest_ip, uint16_t dest
 void init_tcp_conn_server(struct tcp_conn *conn);
 int  tcp_conn_server_bind(struct tcp_conn *conn, uint16_t port);
 int  start_tcp_handshake(struct tcp_conn *conn);
-int  tcp_handle_incoming(struct tcp_conn *conn, struct tcp_hdr *tcp_hdr, size_t datalen);
+int  tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr, struct tcp_hdr *tcp_hdr, size_t packlen, size_t datalen);
 int  tcp_send_data(struct tcp_conn *conn, char *data, size_t datalen);
 
 /* lower level TCP conn functions */
 void init_tcp_conn(struct tcp_conn *conn, enum tcp_conn_type type, uint32_t dest_ip, uint16_t dest_port);
+int tcp_conn_transmit(struct tcp_conn *conn, struct eth_hdr *eth_hdr, uint32_t seqno, size_t datalen, size_t packlen);
 const char *tcp_conn_state_name(uint8_t conn_state);
 
 struct tcp_hdr *strip_tcp_ipv4_packet(struct eth_hdr*);

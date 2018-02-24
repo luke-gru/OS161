@@ -47,7 +47,8 @@ static int ipv4_incoming(struct eth_hdr *hdr) {
     }
     KASSERT(tcp_conn->dest_ip == (uint32_t)ntohl(ipv4_hdr->source_ip));
     KASSERT(tcp_conn->source_ip == (uint32_t)ntohl(ipv4_hdr->dest_ip));
-    int tcp_handle_res = tcp_handle_incoming(tcp_conn, tcp_hdr, tcp_datalen);
+    size_t packlen = ipv4_hdr->total_len + sizeof(*hdr);
+    int tcp_handle_res = tcp_handle_incoming(tcp_conn, hdr, tcp_hdr, packlen, tcp_datalen);
     if (tcp_handle_res != 0) {
       kprintf("Error handling incoming TCP connection\n");
       return -1;
@@ -87,6 +88,7 @@ static void usage(const char *msg) {
 
 // drop every other packet
 static bool packetloss_simulator(char *packet) {
+  return false;
   (void)packet;
   static unsigned int i = 0;
   i++;
@@ -181,7 +183,7 @@ void tcp_net_main(void *argv, unsigned long argc) {
     handle_res = handle_frame(hdr);
     if (handle_res == -2) { // do nothing
     } else {
-      print_hexdump(buf, bytes_read);
+      //print_hexdump(buf, bytes_read);
     }
   }
 }

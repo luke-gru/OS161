@@ -39,6 +39,7 @@ struct thread;
 struct spinlock;
 struct wchan;
 
+// Timeouts put the calling thread to sleep for a specific amount of time
 struct timeout {
 	bool notified;
 	struct thread *t_wakeup;
@@ -52,6 +53,23 @@ struct timeout_node {
 	struct timeout timeout;
 	struct timeout_node *prev;
 	struct timeout_node *next;
+};
+extern struct timeout_node *timeout_list;
+
+struct timer_once; // forward decl
+// NOTE: timers are called by the clock thread, not the thread that set up the timer
+typedef void (*timer_cb)(void *data, struct timer_once *timer);
+struct timer_once {
+	struct timeval fire_at;
+	timer_cb callback_fn;
+	void *callback_arg;
+	bool cleared;
+};
+
+// linked list of timer nodes
+struct timer_node {
+	struct timer_once *timer;
+	struct timer_node *next;
 };
 
 
@@ -99,6 +117,9 @@ int timeval_cmp(struct timeval *a, struct timeval *b);
  * like userlevel sleep(3). (Don't confuse it with wchan_sleep.)
  */
 void clocksleep(int seconds);
+
+struct timer_once *clock_set_single_timer(int nseconds, timer_cb cb, void *cb_arg);
+void clock_clear_single_timer(struct timer_once *timer);
 
 
 #endif /* _CLOCK_H_ */

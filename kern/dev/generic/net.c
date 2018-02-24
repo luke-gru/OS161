@@ -6,6 +6,7 @@
 #include <synch.h>
 #include <net/ip.h>
 #include <net/if_ether.h>
+#include <current.h>
 #include "autoconf.h"
 
 struct net_softc *netdev;
@@ -42,6 +43,7 @@ int config_net(struct net_softc *gnet, int unit) {
 	KASSERT(netdev->gn_net_read != NULL);
 	netdev->gn_readbuf = NULL;
 	netdev->gn_readbuf_sz = 0;
+	netdev->gn_waiting_for_write_complete = false;
 	packetloss_sim = NULL;
 	return 0;
 }
@@ -94,7 +96,11 @@ int net_transmit(struct eth_hdr *hdr, int eth_type, size_t len) {
 		panic("invalid result");
 		return res;
 	}
-	P(netdev->gn_wsem); // wait until transmission complete
+	if (!curthread->t_in_interrupt) {
+		netdev->gn_waiting_for_write_complete = true;
+		P(netdev->gn_wsem); // wait until transmission complete if we can sleep
+		netdev->gn_waiting_for_write_complete = false;
+	}
 	kprintf("net: transmit complete!\n");
 	return 0;
 }
