@@ -88,7 +88,10 @@ static void usage(const char *msg) {
 
 // drop every other packet
 static bool packetloss_simulator(char *packet) {
-  return false;
+  if (tcp_conn->state != TCP_CONN_STATE_EST) {
+    return false;
+  }
+  //return false;
   (void)packet;
   static unsigned int i = 0;
   i++;
@@ -141,6 +144,7 @@ void tcp_net_main(void *argv, unsigned long argc) {
     if (dest_port == 0) usage("PORT must be > 0!\n");
     netdev->gn_ipaddr = source_ip;
     init_tcp_conn_client(&conn, dest_ip, dest_port);
+    conn.flags |= TCP_CONN_FLAG_KEEPALIVE;
   } else {
     usage("net_tcp, expected client|server OPTIONS\n");
   }
@@ -172,6 +176,9 @@ void tcp_net_main(void *argv, unsigned long argc) {
       tcp_data_sent = true;
     }
     kprintf("net_read...\n");
+    if (conn.state == TCP_CONN_STATE_EST && conn.seq_send_una > 0) {
+      kprintf("  expecting ACK-%u\n", conn.seq_send_una+1);
+    }
     int bytes_read = 0;
     if ((bytes_read = net_read(buf, 100)) < 0) {
       kprintf("ERR: Read from net device failed with code=%d\n", bytes_read);

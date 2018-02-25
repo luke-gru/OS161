@@ -44,12 +44,13 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 	struct net_softc *gdev = (struct net_softc*)lnet->ln_gdev;
 	DEBUG(DB_NETDEV|DB_INTERRUPT, "== LNET IRQ BEG\n");
 	spinlock_acquire(&lnet->ln_lock);
+	size_t bytes_copied_to_buf = 0;
+	int num_packets_in = 0;
 	if (lnet->ln_read_in_progress || !is_lnet_readbuf_full()) {
 		if (lnet_is_read_ready(lnet)) {
 			// read link-level packet header (8 bytes long)
 			bool can_read_more = true;
-			int num_packets = 0;
-			size_t bytes_copied_to_buf = 0;
+
 			while (can_read_more) {
 				unsigned char *buf = lnet->ln_readbuf + lnet->ln_readbuf_pos;
 				struct link_frame linkframe;
@@ -59,13 +60,17 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 				linkframe.mac_from = ntohs(linkframe.mac_from);
 				linkframe.packlen = ntohs(linkframe.packlen);
 				linkframe.mac_to = ntohs(linkframe.mac_to);
+				if (linkframe.frame_word == LINK_FRAME_WORD && linkframe.mac_from == lnet->ln_hwaddr) { // We sent this packet, no need to read it.
+					lnet->ln_readbuf_pos += linkframe.packlen-8;
+					continue;
+				}
 
 				if (linkframe.frame_word != LINK_FRAME_WORD || linkframe.packlen == 0) {
-					DEBUG(DB_NETDEV, "  lnet (irq): read finished after %d packets\n", num_packets);
+					DEBUG(DB_NETDEV, "  lnet (irq): read found %d inbound packets total\n", num_packets_in);
 					lnet_clear_read_status(sc);
 					break;
 				}
-				num_packets++;
+				num_packets_in++;
 
 				DEBUG(DB_NETDEV, "  lnet (irq) read: frame word: %d, mac_from: %d, packlen: %d, mac_to: %d\n",
 					linkframe.frame_word,
@@ -105,26 +110,24 @@ void lnet_irq(/*struct lnet_softc*/ void *sc) {
 					panic("readbuf_pos");
 					lnet_clear_read_status(sc);
 				}
-
-				if (lnet->ln_read_in_progress && bytes_copied_to_buf > 0) {
-					lnet->ln_read_in_progress = false;
-					gdev->gn_bytes_read = bytes_copied_to_buf;
-					V(gdev->gn_rsem);
-					DEBUG(DB_NETDEV, "  lnet (irq): read finished after %d packets\n", num_packets);
-					lnet_clear_read_status(sc);
-					break;
-				}
 			}
+		}
+		if (lnet->ln_read_in_progress && bytes_copied_to_buf > 0) {
+			lnet->ln_read_in_progress = false;
+			gdev->gn_bytes_read = bytes_copied_to_buf;
+			V(gdev->gn_rsem);
+			DEBUG(DB_NETDEV, "  lnet (irq): read finished after %d packets\n", num_packets_in);
+			lnet_clear_read_status(sc);
 		}
 	}
 	if (lnet->ln_transmit_in_progress) {
-			if (lnet_is_transmit_complete(sc)) {
-				DEBUG(DB_NETDEV, "  lnet: transmit complete\n");
-				lnet_clear_write_status(sc);
-				if (gdev->gn_waiting_for_write_complete) {
-					V(gdev->gn_wsem);
-				}
+		if (lnet_is_transmit_complete(sc)) {
+			DEBUG(DB_NETDEV, "  lnet: transmit complete\n");
+			lnet_clear_write_status(sc);
+			if (gdev->gn_waiting_for_write_complete) {
+				V(gdev->gn_wsem);
 			}
+		}
 	}
 	spinlock_release(&lnet->ln_lock);
 	DEBUG(DB_NETDEV|DB_INTERRUPT, "== LNET IRQ END\n");

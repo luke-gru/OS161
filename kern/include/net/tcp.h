@@ -3,6 +3,7 @@
 
 #include <types.h>
 #include <net/if_ether.h>
+#include <spinlock.h>
 
 #define TCP_OPTION_KIND_END 0
 #define TCP_OPTION_KIND_NOP 1
@@ -63,7 +64,7 @@ from: http://www.freesoft.org/CIE/Course/Section4/8.htm
 
 struct eth_hdr;
 struct generic_ipv4_hdr;
-struct timer_once;
+struct timer;
 
 // NOTE: variable width header (min 20 bytes), must be multiple of 4 bytes
 struct tcp_hdr {
@@ -96,11 +97,20 @@ struct tcp_unacked_packet {
   uint8_t times_sent;
   struct tcp_unacked_packet *next;
 };
+
 // timer node for unACKed packets, with seqno as the key
+enum tcp_timer_type {
+  TCP_TIMER_TYPE_ACK = 1,
+  TCP_TIMER_TYPE_KEEPALIVE,
+};
 #define TCP_ACK_TIMER_NSECS 5
+#define TCP_KEEPALIVE_TIMER_NSECS 10
+#define TCP_CONN_FLAG_KEEPALIVE 1
 struct tcp_conn_timer {
-  struct timer_once *timer;
-  uint32_t seqno;
+  struct timer *timer;
+  enum tcp_timer_type type;
+  uint32_t seqno; // first sequence number in packet, used for TCP_TIMER_TYPE_ACK
+  size_t datalen; // used for TCP_TIMER_TYPE_ACK
   struct tcp_conn_timer *next;
 };
 #define TCP_MAX_RECV_OOO_KEPT_PACKETS 20
@@ -128,13 +138,16 @@ struct tcp_conn {
   uint32_t ack_recv_latest; // the latest ACKno we received from peer. If less than ack_recv_max, we might need to re-send packets
   uint32_t ack_recv_max; // largest ACKno we've received
   uint8_t state;
-  time_t last_acktime_from_peer; // TODO: use
-  time_t rtt_est; // round-trip time estimate, estimated during handshake. TODO: use
+  time_t last_acktime_from_peer; // TODO: use for keepalive connections
+  time_t rtt_est_start; // round-trip time estimate, estimated during handshake. TODO: use
+  time_t rtt_est;
+  uint32_t flags; // socket flags (such as SO_KEEPALIVE)
   struct tcp_unacked_packet *unacked_packets; // linked list of unACKEed packets we might have to re-transmit
   uint8_t num_unacked_packets; // so we don't have to iterate over the list each time
   struct tcp_recv_ooo_packet *recv_ooo_packets; // received out of order packets we can't handle yet go in this list
   uint8_t num_recv_ooo_packets;
   struct tcp_conn_timer *timers; // timers to fire for packet re-transmission of unACKed packets
+  struct spinlock spinlk;
 };
 
 uint32_t tcp_gen_ISN(void);
@@ -157,8 +170,8 @@ int  tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr, struct 
 int  tcp_send_data(struct tcp_conn *conn, char *data, size_t datalen);
 
 /* lower level TCP conn functions */
-void init_tcp_conn(struct tcp_conn *conn, enum tcp_conn_type type, uint32_t dest_ip, uint16_t dest_port);
-int tcp_conn_transmit(struct tcp_conn *conn, struct eth_hdr *eth_hdr, uint32_t seqno, size_t datalen, size_t packlen);
+void init_tcp_conn(struct tcp_conn *conn, enum tcp_conn_type type, uint32_t dest_ip, uint16_t dest_port, int flags);
+int tcp_conn_transmit(struct tcp_conn *conn, struct eth_hdr *eth_hdr, uint32_t seqno, size_t datalen, size_t packlen, bool expect_ack, bool havelock);
 const char *tcp_conn_state_name(uint8_t conn_state);
 
 struct tcp_hdr *strip_tcp_ipv4_packet(struct eth_hdr*);

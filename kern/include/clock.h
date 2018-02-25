@@ -56,10 +56,16 @@ struct timeout_node {
 };
 extern struct timeout_node *timeout_list;
 
-struct timer_once; // forward decl
+struct timer; // forward decl
 // NOTE: timers are called by the clock thread, not the thread that set up the timer
-typedef void (*timer_cb)(void *data, struct timer_once *timer);
-struct timer_once {
+typedef void (*timer_cb)(void *data, struct timer *timer);
+enum timer_type {
+	TIMER_TYPE_ONCE = 1,
+	TIMER_TYPE_CONT,
+};
+struct timer {
+	enum timer_type type;
+	unsigned interval_nsecs;
 	struct timeval fire_at;
 	timer_cb callback_fn;
 	void *callback_arg;
@@ -68,10 +74,9 @@ struct timer_once {
 
 // linked list of timer nodes
 struct timer_node {
-	struct timer_once *timer;
+	struct timer *timer;
 	struct timer_node *next;
 };
-
 
 /*
  * hardclock() is called on every CPU HZ times a second, possibly only
@@ -118,8 +123,9 @@ int timeval_cmp(struct timeval *a, struct timeval *b);
  */
 void clocksleep(int seconds);
 
-struct timer_once *clock_set_single_timer(int nseconds, timer_cb cb, void *cb_arg);
-void clock_clear_single_timer(struct timer_once *timer);
-
+struct timer *clock_set_timer(enum timer_type type, int nseconds, timer_cb cb, void *cb_arg);
+void clock_reset_timer(struct timer *timer, int nseconds);
+// unlinks the timer_node from timer_list, and frees the node. NOTE: does NOT free the timer itself, caller is responsible
+void clock_clear_timer(struct timer *timer);
 
 #endif /* _CLOCK_H_ */
