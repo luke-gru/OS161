@@ -28,10 +28,17 @@
 // TCP server only
 #define TCP_CONN_STATE_SYN_RECV 3
 #define TCP_CONN_STATE_EST 4
-#define TCP_CONN_STATE_FIN_WAIT 5
-#define TCP_CONN_STATE_CLOSING 6
-#define TCP_CONN_STATE_LASTACK 7
-#define TCP_CONN_STATE_CLOSED 8
+// close initiator only (sent FIN)
+#define TCP_CONN_STATE_FIN_WAIT1 5
+// close initiator only (received ACK for fin)
+#define TCP_CONN_STATE_FIN_WAIT2 6
+// close initiator only (received FIN from peer, waiting 2xMSL)
+#define TCP_CONN_STATE_TIME_WAIT 7
+// close receiver only, received FIN, sent ACK, waiting for app response
+#define TCP_CONN_STATE_CLOSE_WAIT 8
+// close receiver only, sent FIN, wait for ACK
+#define TCP_CONN_STATE_LAST_ACK 9
+#define TCP_CONN_STATE_CLOSED 10
 
 #define TCP_PROTO 0x06
 
@@ -168,6 +175,7 @@ int  tcp_conn_server_bind(struct tcp_conn *conn, uint16_t port);
 int  start_tcp_handshake(struct tcp_conn *conn);
 int  tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr, struct tcp_hdr *tcp_hdr, size_t packlen, size_t datalen);
 int  tcp_send_data(struct tcp_conn *conn, char *data, size_t datalen);
+int  tcp_conn_close(struct tcp_conn *conn);
 
 /* lower level TCP conn functions */
 void init_tcp_conn(struct tcp_conn *conn, enum tcp_conn_type type, uint32_t dest_ip, uint16_t dest_port, int flags);

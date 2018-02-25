@@ -13,15 +13,17 @@ static const char *TCP_CONN_STATE_NAMES[] = {
   "SYN_SENT",
   "SYN_RECV",
   "ESTABLISHED",
-  "FIN_WAIT",
-  "CLOSING",
-  "LASTACK",
+  "FIN_WAIT1",
+  "FIN_WAIT2",
+  "TIME_WAIT",
+  "CLOSE_WAIT",
+  "LAST_ACK",
   "CLOSED",
   NULL,
 };
 
-static const char *tcp_conn_type_name(struct tcp_conn *conn) {
-  switch (conn->type) {
+static const char *tcp_conn_type_name(enum tcp_conn_type type) {
+  switch (type) {
     case TCP_CONN_TYPE_CLIENT:
     return "client";
     case TCP_CONN_TYPE_SERVER:
@@ -29,6 +31,54 @@ static const char *tcp_conn_type_name(struct tcp_conn *conn) {
     default:
     return "unknown?";
   }
+}
+
+static int tcp_conn_clear_timer(struct tcp_conn *conn, enum tcp_timer_type type, uint32_t seqno) {
+  struct tcp_conn_timer *ttimer = conn->timers;
+  struct tcp_conn_timer *ttimer_prev = NULL;
+  while (ttimer) {
+    if (ttimer->type == type && ttimer->seqno+ttimer->datalen == seqno) {
+      clock_clear_timer(ttimer->timer);
+      kfree(ttimer->timer);
+      if (ttimer_prev) {
+        ttimer_prev->next = ttimer->next;
+      } else {
+        conn->timers = ttimer->next;
+      }
+      kfree(ttimer);
+      return 0;
+    }
+    ttimer_prev = ttimer;
+    ttimer = ttimer->next;
+  }
+  return -1; // not found
+}
+
+static void tcp_conn_clear_timers(struct tcp_conn *conn) {
+  struct tcp_conn_timer *ttimer = conn->timers;
+  struct tcp_conn_timer *ttimer_next;
+  while (ttimer) {
+    ttimer_next = ttimer->next;
+    tcp_conn_clear_timer(conn, ttimer->type, ttimer->seqno+ttimer->datalen);
+    ttimer = ttimer_next;
+  }
+}
+
+static void tcp_conn_state_transition_to(struct tcp_conn *conn, uint8_t state) {
+  DEBUGASSERT(state != conn->state && state <= TCP_CONN_STATE_CLOSED);
+  const char *statename_old = tcp_conn_state_name(conn->state);
+  const char *statename_new = tcp_conn_state_name(state);
+  DEBUG(DB_TCP_CONN, "TCP %s state transition [%s] => [%s]\n",
+    tcp_conn_type_name(conn->type), statename_old, statename_new
+  );
+  conn->state = state;
+  if (state == TCP_CONN_STATE_CLOSED) {
+    tcp_conn_clear_timers(conn);
+  }
+}
+
+static bool tcp_conn_state_closing(struct tcp_conn *conn) {
+  return conn->state >= TCP_CONN_STATE_FIN_WAIT1 && conn->state <= TCP_CONN_STATE_LAST_ACK;
 }
 
 static struct tcp_unacked_packet *tcp_conn_find_first_unacked_packet_after(struct tcp_conn *conn, uint32_t seqno) {
@@ -59,7 +109,7 @@ static void tcp_conn_retransmit_packet(struct tcp_conn *conn, struct tcp_unacked
 }
 
 static void tcp_conn_send_keepalive_req(struct tcp_conn *conn) {
-  DEBUG(DB_TCP_CONN, "TCP %s sending keepalive request to peer after %d seconds\n", tcp_conn_type_name(conn), TCP_KEEPALIVE_TIMER_NSECS);
+  DEBUG(DB_TCP_CONN, "TCP %s sending keepalive request to peer after %d seconds\n", tcp_conn_type_name(conn->type), TCP_KEEPALIVE_TIMER_NSECS);
   tcp_send_data(conn, (char*)"", 1); // send NULL byte (datalen > 0) so peer acks us
 }
 
@@ -131,26 +181,7 @@ static void tcp_conn_set_ack_timer(struct tcp_conn *conn, uint32_t seqno, size_t
   tcp_conn_add_timer(conn, TCP_TIMER_TYPE_ACK, timer, seqno, datalen);
 }
 
-static int tcp_conn_clear_timer(struct tcp_conn *conn, enum tcp_timer_type type, uint32_t seqno) {
-  struct tcp_conn_timer *ttimer = conn->timers;
-  struct tcp_conn_timer *ttimer_prev = NULL;
-  while (ttimer) {
-    if (ttimer->type == type && ttimer->seqno+ttimer->datalen == seqno) {
-      clock_clear_timer(ttimer->timer);
-      kfree(ttimer->timer);
-      if (ttimer_prev) {
-        ttimer_prev->next = ttimer->next;
-      } else {
-        conn->timers = ttimer->next;
-      }
-      kfree(ttimer);
-      return 0;
-    }
-    ttimer_prev = ttimer;
-    ttimer = ttimer->next;
-  }
-  return -1; // not found
-}
+
 
 static struct tcp_conn_timer *tcp_conn_find_timer(struct tcp_conn *conn, enum tcp_timer_type type, uint32_t seqno) {
   struct tcp_conn_timer *ttimer = conn->timers;
@@ -183,15 +214,7 @@ static void tcp_conn_reset_keepalive_timer(struct tcp_conn *conn) {
   }
 }
 
-// static void tcp_conn_clear_timers(struct tcp_conn *conn) {
-//   struct tcp_conn_timer *timer = conn->timers;
-//   struct tcp_conn_timer *timer_next;
-//   while (timer) {
-//     timer_next = timer->next;
-//     tcp_conn_clear_ack_timer(conn, timer->seqno);
-//     timer = timer_next;
-//   }
-// }
+
 
 static uint32_t tcp_conn_lowest_una_seqno(struct tcp_conn *conn) {
   KASSERT(conn);
@@ -361,7 +384,7 @@ int start_tcp_handshake(struct tcp_conn *conn) {
   struct eth_hdr *eth_hdr = make_tcp_ipv4_packet(conn, opt_flags, NULL, 0, &packlen);
   KASSERT(eth_hdr);
   KASSERT(packlen > 0);
-  conn->state = TCP_CONN_STATE_SYN_SENT;
+  tcp_conn_state_transition_to(conn, TCP_CONN_STATE_SYN_SENT);
   conn->seq_send_next++;
   DEBUG(DB_TCP_CONN, "TCP client sending SYN to server (handshake step 1)\n");
   tcp_conn_transmit(conn, eth_hdr, seqno, 0, packlen, true, false);
@@ -410,6 +433,31 @@ static bool tcp_conn_set_received_seq(struct tcp_conn *conn, uint32_t seqno, siz
   return seq_in_order;
 }
 
+static int tcp_conn_send_fin(struct tcp_conn *conn) {
+  size_t packlen;
+  uint8_t opt_flags = (TCP_CTRL_ACK|TCP_CTRL_FIN);
+  uint32_t seqno = conn->seq_send_next;
+  struct eth_hdr *eth_hdr = make_tcp_ipv4_packet(
+    conn, opt_flags, NULL, 0, &packlen
+  );
+  conn->seq_send_next += 1;
+  conn->seq_send_una = seqno;
+  if (conn->state == TCP_CONN_STATE_EST) {
+    tcp_conn_state_transition_to(conn, TCP_CONN_STATE_FIN_WAIT1);
+  } else if (conn->state == TCP_CONN_STATE_CLOSE_WAIT) {
+    tcp_conn_state_transition_to(conn, TCP_CONN_STATE_LAST_ACK);
+  } else {
+    DEBUG(DB_TCP_ERR, "TCP %s cannot sent FIN request, in invalid state: %s\n",
+      tcp_conn_type_name(conn->type),
+      tcp_conn_state_name(conn->state)
+    );
+    kfree(eth_hdr);
+    return -1;
+  }
+  DEBUG(DB_TCP_CONN, "TCP %s sending FIN packet\n", tcp_conn_type_name(conn->type));
+  return tcp_conn_transmit(conn, eth_hdr, seqno, 0, packlen, true, false);
+}
+
 /*
   3-way handshake:
   1) client: SYN => SYN=1
@@ -448,7 +496,7 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
         conn, opt_flags, NULL, 0, &packlen_out
       );
       KASSERT(eth_hdr_out && packlen_out > 0);
-      conn->state = TCP_CONN_STATE_EST;
+      tcp_conn_state_transition_to(conn, TCP_CONN_STATE_EST);
       uint32_t seqno_out = conn->seq_send_next;
       conn->seq_send_una = seqno_out;
       conn->seq_send_next++;
@@ -472,7 +520,7 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
         );
         KASSERT(eth_hdr_out && packlen_out > 0);
         conn->seq_send_next++;
-        conn->state = TCP_CONN_STATE_SYN_RECV;
+        tcp_conn_state_transition_to(conn, TCP_CONN_STATE_SYN_RECV);
         DEBUG(DB_TCP_CONN, "TCP server sending SYN-ACK (handshake step 2) to client \n");
         tcp_conn_transmit(conn, eth_hdr_out, my_seqno_out, 0, packlen_out, true, false);
         return 0;
@@ -491,7 +539,7 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
         if (ntohl(tcp_hdr_in->seq_no) > 0) {
           KASSERT(tcp_conn_set_received_seq(conn, ntohl(tcp_hdr_in->seq_no), datalen_in));
         }
-        conn->state = TCP_CONN_STATE_EST;
+        tcp_conn_state_transition_to(conn, TCP_CONN_STATE_EST);
         KASSERT(datalen_in == 0);
         DEBUG(DB_TCP_CONN, "TCP server established connection with client!\n");
         tcp_conn_received_ack_for_seqno(conn, seqno_ack-1);
@@ -506,6 +554,7 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
         return -1;
       }
       uint32_t seqno_ack = ntohl(tcp_hdr_in->ack_no);
+
       // peer acked a previous packet we sent, maybe it was dropped in the network. If we receive 2 of these we
       // re-transmit that packet immediately. Otherwise we wait for the unacked packet timer to fire.
       if (conn->seq_send_una > 0 && seqno_ack != (conn->seq_send_una+1)) {
@@ -541,12 +590,51 @@ int tcp_handle_incoming(struct tcp_conn *conn, struct eth_hdr *eth_hdr_in, struc
           // TODO: ack it
         }
       }
-      if (datalen_in > 0) {
-        DEBUG(DB_TCP_DAT, "TCP %s received the following message:\n", conn_type_str);
-        DEBUG(DB_TCP_DAT, "  => %s\n", tcp_hdr_in->data); // NOTE: data expected to end in NULL byte
+      bool needs_ack = datalen_in > 0;
+      if (tcp_is_fin_set(tcp_hdr_in->control_bits)) {
+        DEBUG(DB_TCP_CONN, "TCP %s received FIN request\n", conn_type_str);
+        tcp_conn_state_transition_to(conn, TCP_CONN_STATE_CLOSE_WAIT);
+        needs_ack = true;
+      }
+      if (needs_ack) {
+        if (datalen_in > 0) {
+          DEBUG(DB_TCP_DAT, "TCP %s received the following message:\n", conn_type_str);
+          DEBUG(DB_TCP_DAT, "  => %s\n", tcp_hdr_in->data); // NOTE: data expected to end in NULL byte
+        }
         tcp_send_data(conn, NULL, 0); // send an ACK in response
+        if (conn->state == TCP_CONN_STATE_CLOSE_WAIT) {
+          KASSERT(tcp_conn_send_fin(conn) == 0);
+        }
       } else {
         DEBUG(DB_TCP_SEQ, "TCP %s received ACK-%u:\n", conn_type_str, seqno_ack);
+      }
+      return 0;
+    } else if (tcp_conn_state_closing(conn)) {
+      if (conn->state == TCP_CONN_STATE_FIN_WAIT1) {
+        if (tcp_is_ack_set(tcp_hdr_in->control_bits)) {
+          uint32_t ackno_recv = ntohl(tcp_hdr_in->ack_no);
+          bool fin_ack = conn->seq_send_una == ackno_recv-1;
+          tcp_conn_received_ack_for_seqno(conn, ackno_recv-1);
+          if (fin_ack) {
+            tcp_conn_state_transition_to(conn, TCP_CONN_STATE_FIN_WAIT2);
+          }
+        }
+        if (tcp_is_fin_set(tcp_hdr_in->control_bits) && conn->state == TCP_CONN_STATE_FIN_WAIT2) {
+          uint32_t seqno = ntohl(tcp_hdr_in->seq_no);
+          KASSERT(seqno > 0);
+          tcp_conn_set_received_seq(conn, seqno, datalen_in);
+          tcp_send_data(conn, NULL, 0); // ACK their FIN
+          tcp_conn_state_transition_to(conn, TCP_CONN_STATE_CLOSED);
+        }
+      } else if (conn->state == TCP_CONN_STATE_LAST_ACK) {
+        if (tcp_is_ack_set(tcp_hdr_in->control_bits)) {
+          uint32_t ackno_recv = ntohl(tcp_hdr_in->ack_no);
+          bool fin_ack = conn->seq_send_una == ackno_recv-1;
+          tcp_conn_received_ack_for_seqno(conn, ackno_recv-1);
+          if (fin_ack) {
+            tcp_conn_state_transition_to(conn, TCP_CONN_STATE_CLOSED);
+          }
+        }
       }
       return 0;
     } else {
@@ -576,6 +664,20 @@ int tcp_send_data(struct tcp_conn *conn, char *data, size_t datalen) {
     conn->seq_send_una = tcp_conn_lowest_una_seqno(conn);
   }
   return tcp_conn_transmit(conn, eth_hdr, seqno, datalen, packlen, expect_ack, false);
+}
+
+int tcp_conn_close(struct tcp_conn *conn) {
+  if (conn->state == TCP_CONN_STATE_CLOSED) {
+    return 0;
+  } else if (conn->state == TCP_CONN_STATE_EMPTY || conn->state == TCP_CONN_STATE_LISTEN) {
+    tcp_conn_state_transition_to(conn, TCP_CONN_STATE_CLOSED);
+    return 0;
+  }
+  if (conn->state == TCP_CONN_STATE_EST) {
+    return tcp_conn_send_fin(conn);
+  } else {
+    return -1; // currently connecting, must wait for established connection before closing.
+  }
 }
 
 // NOTE: conn->seq_send_next and conn->seq_recv_max+1 are used for SEQ and ACK fields, respectively
@@ -698,7 +800,7 @@ int tcp_conn_server_bind(struct tcp_conn *conn, uint16_t port) {
   KASSERT(conn->type == TCP_CONN_TYPE_SERVER);
   KASSERT(conn->state == TCP_CONN_STATE_EMPTY || conn->state == TCP_CONN_STATE_CLOSED);
   conn->source_port = port;
-  conn->state = TCP_CONN_STATE_LISTEN;
+  tcp_conn_state_transition_to(conn, TCP_CONN_STATE_LISTEN);
   return 0;
 }
 

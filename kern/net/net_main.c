@@ -165,6 +165,10 @@ void tcp_net_main(void *argv, unsigned long argc) {
 
   int handle_res;
   while (1) {
+    if (conn.type == TCP_CONN_STATE_CLOSED) {
+      kprintf("Connection closed\n");
+      break;
+    }
     if (conn.type == TCP_CONN_TYPE_CLIENT && arp_lookup_mac(conn.dest_ip) &&
         conn.state == TCP_CONN_STATE_EMPTY) {
       int res = start_tcp_handshake(&conn);
@@ -178,6 +182,9 @@ void tcp_net_main(void *argv, unsigned long argc) {
     kprintf("net_read...\n");
     if (conn.state == TCP_CONN_STATE_EST && conn.seq_send_una > 0) {
       kprintf("  expecting ACK-%u\n", conn.seq_send_una+1);
+    }
+    if (conn.type == TCP_CONN_TYPE_CLIENT && conn.state == TCP_CONN_STATE_EST && tcp_data_sent) {
+      tcp_conn_close(&conn);
     }
     int bytes_read = 0;
     if ((bytes_read = net_read(buf, 100)) < 0) {
@@ -193,6 +200,7 @@ void tcp_net_main(void *argv, unsigned long argc) {
       //print_hexdump(buf, bytes_read);
     }
   }
+  thread_exit(0);
 }
 
 void udp_net_main(void *argv, unsigned long argc) {
